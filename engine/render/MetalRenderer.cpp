@@ -433,13 +433,9 @@ fragment float4 terrain_fragment(TVOut in [[stage_in]], constant TU& u [[buffer(
   (void)u;(void)grassTex;(void)rockTex;(void)sandTex;(void)snowTex;(void)splatmap;
   float height = in.worldPos.y;
   float3 color;
-  if (height < 100.0) color = float3(0.2, 0.8, 0.2);
-  else if (height < 400.0) color = float3(0.6, 0.4, 0.2);
-  else color = float3(0.95, 0.95, 0.95);
-  float3 N = normalize(in.n);
-  float3 L = normalize(float3(0.5, 0.8, 0.3));
-  float light = max(dot(N, L), 0.3);
-  color *= light;
+  if (height < 100.0) color = float3(0.1, 1.0, 0.1);
+  else if (height < 400.0) color = float3(1.0, 0.5, 0.0);
+  else color = float3(1.0, 1.0, 1.0);
   return float4(color, 1.0);
 }
 vertex float4 cloud_vertex(uint vid [[vertex_id]]) {

@@ -88,13 +88,9 @@ vec3 F0s(float ct,vec3 F0){return F0+(1.0-F0)*pow(1.0-ct,5.0);}
 void main(){
   float height=vW.y;
   vec3 color;
-  if(height<100.0) color=vec3(0.2,0.8,0.2);
-  else if(height<400.0) color=vec3(0.6,0.4,0.2);
-  else color=vec3(0.95,0.95,0.95);
-  vec3 N=normalize(vN);
-  vec3 L=normalize(vec3(0.5,0.8,0.3));
-  float light=max(dot(N,L),0.3);
-  color*=light;
+  if(height<100.0) color=vec3(0.1,1.0,0.1);
+  else if(height<400.0) color=vec3(1.0,0.5,0.0);
+  else color=vec3(1.0,1.0,1.0);
   o=vec4(color,1.0);
 }`;
 

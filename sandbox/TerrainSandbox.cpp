@@ -80,7 +80,8 @@ int main(int argc, char** argv) {
                 hmax = max_of(hmax, h);
             }
         }
-        std::printf("[terrain] heightmap %ux%u nan/inf=%u min=%.2f max=%.2f textures=procedural_1x1\n",
+        std::printf("[terrain] heightmap %ux%u nan/inf=%u min=%.2f max=%.2f "
+                    "(legacy log: textures=procedural_1x1 unused — shader is emissive height bands)\n",
                     kMap, kMap, bad, hmin, hmax);
         std::fflush(stdout);
         if (bad > 0) {

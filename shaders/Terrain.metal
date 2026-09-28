@@ -115,22 +115,17 @@ fragment float4 terrain_fragment(TerrainVertexOut in [[stage_in]],
                                  texture2d<float> snowTex [[texture(3)]],
                                  texture2d<float> splatmap [[texture(4)]],
                                  sampler texSampler [[sampler(0)]]) {
-    (void)grassTex; (void)rockTex; (void)sandTex; (void)snowTex; (void)splatmap; (void)texSampler;
     (void)uniforms;
+    (void)grassTex; (void)rockTex; (void)sandTex; (void)snowTex; (void)splatmap; (void)texSampler;
 
     float height = in.worldPos.y;
     float3 color;
     if (height < 100.0) {
-        color = float3(0.2, 0.8, 0.2);
+        color = float3(0.1, 1.0, 0.1);
     } else if (height < 400.0) {
-        color = float3(0.6, 0.4, 0.2);
+        color = float3(1.0, 0.5, 0.0);
     } else {
-        color = float3(0.95, 0.95, 0.95);
+        color = float3(1.0, 1.0, 1.0);
     }
-
-    float3 N = normalize(in.normal);
-    float3 L = normalize(float3(0.5, 0.8, 0.3));
-    float light = max(dot(N, L), 0.3);
-    color *= light;
     return float4(color, 1.0);
 }
