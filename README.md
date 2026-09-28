@@ -9,7 +9,7 @@ A C++20 open-world simulation core built from scratch. No generic `Prop` / `Acto
   ██╔═══╝ ██╔══██╗██║   ██║██   ██║██╔══╝  ██║        ██║
   ██║     ██║  ██║╚██████╔╝╚█████╔╝███████╗╚██████╗   ██║
   ╚═╝     ╚═╝  ╚═╝ ╚═════╝  ╚════╝ ╚══════╝ ╚═════╝   ╚═╝
-  PHASE 15 — server-auth deathmatch · race anti-cheat · co-op revive
+  GOLD MASTER v1.0.0 — CI/CD · release packaging · certified
 ```
 
 ## Architecture
@@ -64,6 +64,7 @@ tools/.venv/bin/python tools/citygen/master_generate.py --size-km 2 --seed 42 --
 13. Tactical police, gang territories, civilian routines, danger-aware navigation  
 14. Binary world save/load (`LEONSAVE`), XOR payload, save-slot metadata  
 15. Server-authoritative deathmatch, racing, co-op revive (AOI replication)  
+16. Gold Master: GitHub Actions CI/CD, release tarball, asset manifest, benchmarks  
 
 ## Full sandbox (verified)
 

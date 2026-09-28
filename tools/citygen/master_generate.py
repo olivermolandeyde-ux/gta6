@@ -74,7 +74,31 @@ def main() -> int:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--coast", type=str, default="west")
     parser.add_argument("--out", type=str, default="output/city")
+    parser.add_argument("--output", type=str, default=None, help="Alias for --out (Gold Master packaging)")
+    parser.add_argument("--ai-only", action="store_true", help="Emit LEONAIDA AI data only")
+    parser.add_argument("--benchmark", action="store_true", help="Tiny citygen timing run")
     args = parser.parse_args()
+    if args.output:
+        args.out = args.output
+    if args.benchmark:
+        args.size_km = 0.064
+        print("[citygen] benchmark mode (64 m tile)")
+    if args.ai_only:
+        import shutil
+        os.makedirs(os.path.join(args.out, "ai"), exist_ok=True)
+        src = os.path.join(os.path.dirname(__file__), "..", "..", "data", "ai", "test_city.ai")
+        src = os.path.normpath(src)
+        dst = os.path.join(args.out, "ai", "test_city.ai")
+        if os.path.isfile(src):
+            shutil.copyfile(src, dst)
+            print(f"[citygen] AI data copied -> {dst}")
+        else:
+            with open(dst, "wb") as f:
+                f.write(b"LEONAIDA")
+                f.write((1).to_bytes(4, "little"))
+                f.write((0).to_bytes(4, "little") * 3)
+            print(f"[citygen] AI stub written -> {dst}")
+        return 0
 
     verify_layouts()
 

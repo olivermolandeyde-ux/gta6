@@ -1,4 +1,7 @@
 build/
+build_release/
+build-perf/
+release/
 *.o
 *.a
 .cache/
@@ -6,3 +9,5 @@ tools/.venv/
 output/
 __pycache__/
 *.pyc
+*.tar.gz
+*.sha256

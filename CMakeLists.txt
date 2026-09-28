@@ -101,6 +101,12 @@ target_compile_definitions(leonida_phase14_sandbox PRIVATE
 )
 leonida_sandbox(leonida_phase15_sandbox sandbox/phase15_multiplayer_sandbox.cpp)
 
+add_executable(leonida_engine sandbox/LeonidaEngineMain.cpp)
+target_link_libraries(leonida_engine PRIVATE leonida_core)
+target_compile_definitions(leonida_engine PRIVATE
+    LEONIDA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
+
 add_executable(leonida_full_sandbox
     sandbox/FullIntegrationSandbox.cpp
 )
