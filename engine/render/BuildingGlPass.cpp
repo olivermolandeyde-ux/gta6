@@ -145,7 +145,7 @@ constexpr const char* kBldVs =
     "#version 330 core\n"
     "layout(location=0) in vec3 aPos; layout(location=1) in vec3 aNormal; layout(location=2) in vec2 aUV;\n"
     "uniform mat4 model, view, projection; out vec3 FragPos; out vec3 Normal; out vec2 UV;\n"
-    "void main(){ FragPos=vec3(model*vec4(aPos,1.0)); Normal=mat3(transpose(inverse(model)))*aNormal; UV=aUV;\n"
+    "void main(){ FragPos=vec3(model*vec4(aPos,1.0)); Normal=aNormal; UV=aUV;\n"
     "  gl_Position=projection*view*vec4(FragPos,1.0); }\n";
 
 constexpr const char* kBldFs =
@@ -213,7 +213,7 @@ void set_building_uniforms(unsigned prog, const float* view, const float* proj, 
     glUniformMatrix4fv(glGetUniformLocation(prog, "view"), 1, GL_FALSE, view);
     glUniformMatrix4fv(glGetUniformLocation(prog, "projection"), 1, GL_FALSE, proj);
     glUniform3f(glGetUniformLocation(prog, "lightDir"), sun.x, sun.y, sun.z);
-    glUniform3f(glGetUniformLocation(prog, "lightColor"), 1.f, 0.96f, 0.88f);
+    glUniform3f(glGetUniformLocation(prog, "lightColor"), 1.15f, 1.12f, 1.05f);
     glUniform1f(glGetUniformLocation(prog, "time_of_day"), time_of_day);
     glUniform1f(glGetUniformLocation(prog, "floors"), 8.f);
     glUniform1i(glGetUniformLocation(prog, "district"), 1);
@@ -298,9 +298,9 @@ void BuildingGlPass::buildMesh(World& world) {
         }
         d = float3_scale(d, 1.f / len);
         float3 side = float3_normalize_or(float3_cross(d, float3{0.f, 1.f, 0.f}), float3{1.f, 0.f, 0.f});
-        side = float3_scale(side, s->width * 0.5f + 4.2f);
-        const float y0 = s->start.y + 0.12f;
-        const float y1 = s->end.y + 0.12f;
+        side = float3_scale(side, s->width * 0.5f + 5.0f);
+        const float y0 = kCityPlateauY + 0.18f;
+        const float y1 = kCityPlateauY + 0.18f;
         const float3 a = float3_sub(s->start, side);
         const float3 b = float3_add(s->start, side);
         const float3 c = float3_add(s->end, side);
@@ -332,8 +332,9 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
     }
     float view[16], proj[16];
     mat_look(view, camera_pos, camera_target, float3{0.f, 1.f, 0.f});
-    mat_persp(proj, 1.04719755f, static_cast<float>(width) / max_of(1, height), 0.2f, 8000.f);
-    const float3 sun = float3_normalize_or(sun_dir, float3{0.5f, 0.8f, 0.3f});
+    mat_persp(proj, 1.22173047f, static_cast<float>(width) / max_of(1, height), 0.15f, 8000.f);
+    (void)sun_dir;
+    const float3 sun = float3{0.35f, 0.88f, 0.32f};
 
     glEnable(GL_DEPTH_TEST);
     glUseProgram(street_prog);

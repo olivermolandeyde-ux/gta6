@@ -78,13 +78,13 @@ float3 masonry_color(u32 seed, u32 district) {
     const float u0 = unit(mix32(seed));
     const float u1 = unit(mix32(seed ^ 0x9E3779B9u));
     if (district == kDistrictDowntown) {
-        return float3{0.42f + u0 * 0.12f, 0.44f + u1 * 0.10f, 0.48f + u0 * 0.08f};
+        return float3{0.58f + u0 * 0.10f, 0.60f + u1 * 0.08f, 0.64f + u0 * 0.06f};
     }
     if (district == kDistrictIndustrial) {
-        return float3{0.38f + u0 * 0.10f, 0.37f + u1 * 0.06f, 0.34f};
+        return float3{0.50f + u0 * 0.08f, 0.48f + u1 * 0.05f, 0.44f};
     }
     const float3 pal[4] = {
-        {0.62f, 0.56f, 0.48f}, {0.72f, 0.70f, 0.64f}, {0.52f, 0.42f, 0.34f}, {0.58f, 0.58f, 0.56f},
+        {0.72f, 0.66f, 0.54f}, {0.78f, 0.74f, 0.66f}, {0.62f, 0.50f, 0.40f}, {0.70f, 0.70f, 0.68f},
     };
     return pal[seed % 4u];
 }
@@ -120,7 +120,7 @@ void spawn_front_window(World& world, const InstantiationRequest& req, const Bui
 
 void spawn_building(World& world, const InstantiationRequest& req, CityGenerator* gen, float cx, float cz,
                     float width, float depth, u32 floors, u32 district, u32 seed) {
-    const float gy = city_gpu_terrain_height(cx, cz);
+    const float gy = kCityPlateauY;
     BuildingComponent b{};
     b.building_id  = gen->buildings_spawned + 1;
     b.position     = float3{cx, gy, cz};
@@ -156,12 +156,12 @@ void spawn_building(World& world, const InstantiationRequest& req, CityGenerator
 } // namespace
 
 float city_urban_mask(float x, float z) {
-    const float ax = std::fabs(x - kCityCenterM);
-    const float az = std::fabs(z - kCityCenterM);
-    const float m  = ax > az ? ax : az;
-    float t        = (m - 900.f) / 120.f;
-    t              = t < 0.f ? 0.f : (t > 1.f ? 1.f : t);
-    t              = t * t * (3.f - 2.f * t);
+    const float dx = x < 0.f ? -x : (x > kCityExtentM ? x - kCityExtentM : 0.f);
+    const float dz = z < 0.f ? -z : (z > kCityExtentM ? z - kCityExtentM : 0.f);
+    const float outside = dx > dz ? dx : dz;
+    float t = outside / 80.f;
+    t       = t < 0.f ? 0.f : (t > 1.f ? 1.f : t);
+    t       = t * t * (3.f - 2.f * t);
     return 1.f - t;
 }
 
@@ -197,13 +197,11 @@ void CityGenerator::generateStreets(World& world, float3 city_center, float city
     streets_spawned      = 0;
 
     for (u32 i = 0; i <= kCityBlocks; ++i) {
-        const float z  = origin_z + static_cast<float>(i) * kCityBlockPitch;
-        const float y0 = city_gpu_terrain_height(origin_x, z);
-        const float y1 = city_gpu_terrain_height(origin_x + span, z);
+        const float z = origin_z + static_cast<float>(i) * kCityBlockPitch;
         StreetComponent s{};
         s.street_id         = streets_spawned + 1;
-        s.start             = float3{origin_x, y0, z};
-        s.end               = float3{origin_x + span, y1, z};
+        s.start             = float3{origin_x, kCityPlateauY, z};
+        s.end               = float3{origin_x + span, kCityPlateauY, z};
         s.width             = kCityStreetWidth;
         s.has_sidewalk      = 1;
         s.has_street_lights = 1;
@@ -221,13 +219,11 @@ void CityGenerator::generateStreets(World& world, float3 city_center, float city
         ++streets_spawned;
     }
     for (u32 i = 0; i <= kCityBlocks; ++i) {
-        const float x  = origin_x + static_cast<float>(i) * kCityBlockPitch;
-        const float y0 = city_gpu_terrain_height(x, origin_z);
-        const float y1 = city_gpu_terrain_height(x, origin_z + span);
+        const float x = origin_x + static_cast<float>(i) * kCityBlockPitch;
         StreetComponent s{};
         s.street_id         = streets_spawned + 1;
-        s.start             = float3{x, y0, origin_z};
-        s.end               = float3{x, y1, origin_z + span};
+        s.start             = float3{x, kCityPlateauY, origin_z};
+        s.end               = float3{x, kCityPlateauY, origin_z + span};
         s.width             = kCityStreetWidth;
         s.has_sidewalk      = 1;
         s.has_street_lights = 1;
@@ -294,7 +290,7 @@ void CityGenerator::generateCity(World& world, float3 city_center, float city_ra
                             break;
                         }
                         const u32 s = mix32(seed + ix * 17u + iz * 41u);
-                        const u32 floors = 20u + (s % 31u);
+                        const u32 floors = 16u + (s % 14u);
                         const float cx = lot_x0 + bw * 0.5f + static_cast<float>(ix) * (bw + gap);
                         const float cz = lot_z0 + bd * 0.5f + static_cast<float>(iz) * (bd + gap);
                         spawn_building(world, req, this, cx, cz, bw, bd, floors, district, s);
@@ -333,7 +329,7 @@ void CityGenerator::generateCity(World& world, float3 city_center, float city_ra
         for (u32 j = 0; j <= kCityBlocks; ++j) {
             const float x = origin_x + static_cast<float>(i) * kCityBlockPitch;
             const float z = origin_z + static_cast<float>(j) * kCityBlockPitch;
-            const float y = city_gpu_terrain_height(x, z);
+            const float y = kCityPlateauY;
             StreetLightSpawnDesc lamp{};
             lamp.light_handle        = 500u + lights_spawned;
             lamp.power_grid_node_id  = kPowerNode;

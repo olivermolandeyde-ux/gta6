@@ -42,11 +42,13 @@ int main(int argc, char** argv) {
     }
 
     const float3 city_center{kCityCenterM, 0.f, kCityCenterM};
-    const float eye_y        = city_gpu_terrain_height(kCityCenterM, 64.f) + 1.7f;
-    terrain.cameraPos        = float3{kCityCenterM, eye_y, 48.f};
-    terrain.cameraTarget     = float3{kCityCenterM, eye_y, 64.f};
+    terrain.cameraPos        = float3{kCityCenterM, kCityPlateauY + 2.f, 130.f};
+    terrain.cameraTarget     = float3{kCityCenterM, kCityPlateauY + 2.f, 280.f};
     float yaw                = 0.f;
-    float pitch              = -0.04f;
+    float pitch              = 0.0f;
+    std::printf("[city] STREET LEVEL cam=(%.1f, %.1f, %.1f) looking +Z down the avenue\n",
+                terrain.cameraPos.x, terrain.cameraPos.y, terrain.cameraPos.z);
+    std::fflush(stdout);
 
     MemoryBudget budget{};
     budget.world_arena_bytes     = 64ull * 1024ull * 1024ull;
@@ -72,9 +74,9 @@ int main(int argc, char** argv) {
     TerrainHeightmapGenerator heightGen{};
     heightGen.generateHeightmap(heights, kMap, kMap, 42);
     heightGen.generateNormalmap(heights, kMap, kMap, normals);
-    std::printf("[city] heightmap 256² sample(960,960)=%.2f gpu_ht=%.2f plateau=%.1f\n",
-                terrain_sample_height(heights, kMap, kMap, 960.f, 960.f),
-                city_gpu_terrain_height(960.f, 960.f), kCityPlateauY);
+    std::printf("[city] heightmap 256² sample(1200,1200)=%.2f gpu_ht=%.2f plateau=%.1f\n",
+                terrain_sample_height(heights, kMap, kMap, 1200.f, 1200.f),
+                city_gpu_terrain_height(1200.f, 1200.f), kCityPlateauY);
     (void)normals;
 
     SkyComponent sky{};

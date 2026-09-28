@@ -8,11 +8,11 @@ namespace engine {
 class World;
 
 inline constexpr u32   kCityBlocks      = 20;
-inline constexpr float kCityStreetWidth = 24.f;
-inline constexpr float kCityBlockPitch  = 96.f;
-inline constexpr float kCityExtentM     = 1920.f;
-inline constexpr float kCityPlateauY    = 16.f;
-inline constexpr float kCityCenterM     = 960.f;
+inline constexpr float kCityStreetWidth = 20.f;
+inline constexpr float kCityBlockPitch  = 120.f;
+inline constexpr float kCityExtentM     = 2400.f;
+inline constexpr float kCityPlateauY    = 5.f;
+inline constexpr float kCityCenterM     = 1200.f;
 
 // 0 downtown glass, 1 residential masonry, 2 industrial shed.
 inline constexpr u32 kDistrictDowntown    = 0;

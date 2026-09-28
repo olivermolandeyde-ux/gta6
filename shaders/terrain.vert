@@ -38,11 +38,13 @@ float htNatural(vec2 xz) {
     h *= smoothstep(0.22, 0.58, continent);
     return h + 3.0;
 }
+float cityMask(vec2 xz) {
+    vec2 d = min(xz, vec2(2400.0) - xz);
+    float edge = min(d.x, d.y);
+    return smoothstep(-80.0, 0.0, edge);
+}
 float ht(vec2 xz) {
-    float natural = htNatural(xz);
-    float m = max(abs(xz.x - 960.0), abs(xz.y - 960.0));
-    float urban = 1.0 - smoothstep(900.0, 1020.0, m);
-    return mix(natural, 16.0, urban);
+    return mix(htNatural(xz), 5.0, cityMask(xz));
 }
 
 void main() {

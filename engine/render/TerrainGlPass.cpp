@@ -223,7 +223,7 @@ constexpr const char* kTerVs =
     "float htN(vec2 xz){float continent=fbm(xz*0.0022); float rolling=fbm(xz*0.008);\n"
     "  float n=vn(xz*0.0031); float ridge=1.0-abs(n*2.0-1.0); ridge*=ridge;\n"
     "  float h=6.0+rolling*42.0+ridge*280.0+ridge*ridge*360.0; h*=smoothstep(0.22,0.58,continent); return h+3.0;}\n"
-    "float ht(vec2 xz){float m=max(abs(xz.x-960.0),abs(xz.y-960.0)); return mix(htN(xz),16.0,1.0-smoothstep(900.0,1020.0,m));}\n"
+    "float ht(vec2 xz){vec2 d=min(xz,vec2(2400.0)-xz); return mix(htN(xz),5.0,smoothstep(-80.0,0.0,min(d.x,d.y)));}\n"
     "void main(){ vec2 xz=vec2(uOx,uOz)+aUv*uChunk; float h=ht(xz); vec3 wp=vec3(xz.x,h,xz.y);\n"
     "  float e=2.0; vec3 n=normalize(vec3(ht(xz)-ht(xz+vec2(e,0)),e,ht(xz)-ht(xz+vec2(0,e))));\n"
     "  vWorld=wp; vWorld.y=h; vN=n; vH=vWorld.y; gl_Position=uVP*vec4(vWorld,1.0);}\n";
@@ -316,7 +316,7 @@ void TerrainGlPass::drawSky(const SkyComponent& sky) {
     }
     float view[16], proj[16], vp[16], inv[16];
     mat_look(view, cameraPos, cameraTarget, float3{0.f, 1.f, 0.f});
-    mat_persp(proj, 1.04719755f, static_cast<float>(width) / max_of(1, height), 0.25f, 8000.f);
+    mat_persp(proj, 1.22173047f, static_cast<float>(width) / max_of(1, height), 0.15f, 8000.f);
     mat_mul(vp, proj, view);
     mat_invert(inv, vp);
     glDisable(GL_DEPTH_TEST);
@@ -337,15 +337,15 @@ void TerrainGlPass::drawTerrain() {
     }
     float view[16], proj[16], vp[16];
     mat_look(view, cameraPos, cameraTarget, float3{0.f, 1.f, 0.f});
-    mat_persp(proj, 1.04719755f, static_cast<float>(width) / max_of(1, height), 0.25f, 8000.f);
+    mat_persp(proj, 1.22173047f, static_cast<float>(width) / max_of(1, height), 0.15f, 8000.f);
     mat_mul(vp, proj, view);
     glUseProgram(terrain_prog);
     glBindVertexArray(grid_vao);
     glUniformMatrix4fv(glGetUniformLocation(terrain_prog, "uVP"), 1, GL_FALSE, vp);
     glUniform1f(glGetUniformLocation(terrain_prog, "uChunk"), 64.f);
     u32 draws = 0;
-    for (u32 z = 0; z < 32; ++z) {
-        for (u32 x = 0; x < 32; ++x) {
+    for (u32 z = 0; z < 40; ++z) {
+        for (u32 x = 0; x < 40; ++x) {
             glUniform1f(glGetUniformLocation(terrain_prog, "uOx"), static_cast<float>(x) * 64.f);
             glUniform1f(glGetUniformLocation(terrain_prog, "uOz"), static_cast<float>(z) * 64.f);
             glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(grid_index_count), GL_UNSIGNED_INT,

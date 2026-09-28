@@ -9,19 +9,19 @@ void main() {
     float height = vWorld.y;
     vec3 wild;
     if (height < 100.0) {
-        wild = vec3(0.18, 0.42, 0.16);
+        wild = vec3(0.22, 0.40, 0.18);
     } else if (height < 400.0) {
         wild = vec3(0.45, 0.32, 0.18);
     } else {
         wild = vec3(0.86, 0.86, 0.88);
     }
-    float m = max(abs(vWorld.x - 960.0), abs(vWorld.z - 960.0));
-    float urban = 1.0 - smoothstep(900.0, 1020.0, m);
-    vec2 g = mod(vWorld.xz, 96.0);
-    float street = max(max(step(g.x, 12.0), step(84.0, g.x)), max(step(g.y, 12.0), step(84.0, g.y)));
-    vec3 lot = vec3(0.30, 0.30, 0.31);
-    vec3 road = vec3(0.20, 0.20, 0.21);
+    vec2 d = min(vWorld.xz, vec2(2400.0) - vWorld.xz);
+    float urban = smoothstep(-80.0, 0.0, min(d.x, d.y));
+    vec2 g = mod(vWorld.xz, 120.0);
+    float street = max(max(step(g.x, 10.0), step(110.0, g.x)),
+                       max(step(g.y, 10.0), step(110.0, g.y)));
+    vec3 lot = vec3(0.36, 0.36, 0.34);
+    vec3 road = vec3(0.22, 0.22, 0.22);
     vec3 city = mix(lot, road, street);
-    vec3 color = mix(wild, city, urban);
-    o = vec4(color, 1.0);
+    o = vec4(mix(wild, city, urban), 1.0);
 }
