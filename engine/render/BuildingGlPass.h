@@ -24,6 +24,7 @@ struct BuildingGlPass {
     unsigned shadow_fbo, shadow_tex, shadow_prog;
     unsigned tree_prog, tree_shadow_prog;
     TreeGlb  tree_glb[kTreeKindCount];
+    TreeGlb  sky_glb; // custom downtown skyscraper-2.glb
     unsigned street_count;
     u32      num_buildings;
     bool     ok;

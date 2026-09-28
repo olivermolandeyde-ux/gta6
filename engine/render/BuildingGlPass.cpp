@@ -363,30 +363,38 @@ void tree_yaw_mat(float* m, float x, float y, float z, float yaw, float sc) {
     m[15] = 1.f;
 }
 
-void draw_tree_glbs(TreeGlb* trees, unsigned prog) {
-    if (!prog) {
+void draw_instanced_glb(TreeGlb* g, unsigned prog) {
+    if (!prog || !g || g->instance_count == 0) {
         return;
     }
     glUseProgram(prog);
     glDisable(GL_CULL_FACE);
     glUniform1i(glGetUniformLocation(prog, "uAlbedo"), 0);
     glUniform1i(glGetUniformLocation(prog, "uShadow"), 2);
-    for (u32 k = 0; k < kTreeKindCount; ++k) {
-        if (trees[k].instance_count == 0) {
-            continue;
-        }
-        for (u32 p = 0; p < trees[k].nprims; ++p) {
-            TreePrim& pr = trees[k].prims[p];
-            glBindVertexArray(pr.vao);
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, pr.tex);
-            glUniform1i(glGetUniformLocation(prog, "uAlphaMask"), pr.alpha_mask);
-            glUniform1f(glGetUniformLocation(prog, "uAlphaCut"), pr.cutoff);
-            glDrawElementsInstanced(GL_TRIANGLES, static_cast<GLsizei>(pr.nidx), GL_UNSIGNED_INT, nullptr,
-                                    static_cast<GLsizei>(trees[k].instance_count));
-        }
+    for (u32 p = 0; p < g->nprims; ++p) {
+        TreePrim& pr = g->prims[p];
+        glBindVertexArray(pr.vao);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, pr.tex);
+        glUniform1i(glGetUniformLocation(prog, "uAlphaMask"), pr.alpha_mask);
+        glUniform1f(glGetUniformLocation(prog, "uAlphaCut"), pr.cutoff);
+        glDrawElementsInstanced(GL_TRIANGLES, static_cast<GLsizei>(pr.nidx), GL_UNSIGNED_INT, nullptr,
+                                static_cast<GLsizei>(g->instance_count));
     }
     glBindVertexArray(0);
+}
+
+void draw_tree_glbs(TreeGlb* trees, unsigned prog) {
+    if (!prog) {
+        return;
+    }
+    for (u32 k = 0; k < kTreeKindCount; ++k) {
+        draw_instanced_glb(&trees[k], prog);
+    }
+}
+
+[[nodiscard]] bool custom_sky_lot(const BuildingComponent* b) {
+    return b && b->district == kDistrictDowntown && (b->building_id % 10u) < 4u;
 }
 
 bool load_city_tree(const char* file, TreeGlb* dst) {
@@ -400,6 +408,7 @@ bool BuildingGlPass::init() {
     building_prog = street_prog = cloud_prog = 0;
     tree_prog = tree_shadow_prog = 0;
     std::memset(tree_glb, 0, sizeof(tree_glb));
+    std::memset(&sky_glb, 0, sizeof(sky_glb));
     cube_vao = cube_vbo = cube_ibo = 0;
     street_vao = street_vbo = 0;
     street_count = 0;
@@ -521,12 +530,23 @@ bool BuildingGlPass::init() {
         "#version 330 core\nin vec3 FragPos; in vec3 Normal; in vec2 UV; in vec4 LightPos; out vec4 FragColor;\n"
         "void main(){ FragColor=vec4(0.2,0.5,0.2,1.0); }\n";
     tree_prog = make_program("shaders/tree.vert", "shaders/tree.frag", kTreeFbVs, kTreeFbFs, "tree");
-    tree_shadow_prog = 0;
+    constexpr const char* kTshFbVs =
+        "#version 330 core\nlayout(location=0) in vec3 aPos; layout(location=3) in vec4 iM0;\n"
+        "layout(location=4) in vec4 iM1; layout(location=5) in vec4 iM2; layout(location=6) in vec4 iM3;\n"
+        "uniform mat4 uLightVP; void main(){ mat4 model=mat4(iM0,iM1,iM2,iM3); gl_Position=uLightVP*model*vec4(aPos,1.0); }\n";
+    constexpr const char* kTshFbFs = "#version 330 core\nvoid main(){}\n";
+    tree_shadow_prog =
+        make_program("shaders/tree_shadow.vert", "shaders/tree_shadow.frag", kTshFbVs, kTshFbFs, "tree_shadow");
     load_city_tree("oak_tree_realistic.glb", &tree_glb[0]);
     load_city_tree("pine_tree_realistic.glb", &tree_glb[1]);
     load_city_tree("palm_tree_realistic.glb", &tree_glb[2]);
     std::printf("[gl] Loaded 3 tree models: oak (%u verts), pine (%u verts), palm (%u verts)\n",
                 tree_glb[0].nverts, tree_glb[1].nverts, tree_glb[2].nverts);
+    if (load_city_tree("skyscraper-2.glb", &sky_glb)) {
+        std::printf("[gl] Loaded custom skyscraper model: skyscraper-2.glb (%u verts)\n", sky_glb.nverts);
+    } else {
+        std::printf("[gl] custom skyscraper-2.glb not found — downtown stays procedural\n");
+    }
     std::printf("[gl] tree shadows disabled (perf) — 3 instanced draws, spawn cap %u\n", kTreeSpawnCap);
     std::fflush(stdout);
 
@@ -641,6 +661,24 @@ void BuildingGlPass::buildMesh(World& world) {
     }
     std::printf("[city] Spawning %u trees with custom models\n", total_trees);
     std::fflush(stdout);
+
+    static float sky_mats[kTreeInstanceCap * 16];
+    u32 sky_n = 0;
+    if (sky_glb.nprims > 0) {
+        for (Entity e : world.query<BuildingComponent>()) {
+            BuildingComponent* b = world.get<BuildingComponent>(e);
+            if (!custom_sky_lot(b) || sky_n >= 16) {
+                continue;
+            }
+            const float yaw = static_cast<float>(b->building_id % 4u) * 1.5707963f;
+            const float sc  = 0.95f + static_cast<float>(b->building_id % 6u) * (0.10f / 5.f);
+            tree_yaw_mat(&sky_mats[sky_n * 16], b->position.x, kCityPlateauY + 0.05f, b->position.z, yaw, sc);
+            ++sky_n;
+        }
+        tree_glb_set_instances(&sky_glb, sky_mats, sky_n);
+    }
+    std::printf("[city] Placing %u custom skyscrapers in downtown\n", sky_n);
+    std::fflush(stdout);
 }
 
 void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target, int width, int height,
@@ -703,7 +741,7 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
         u32 sc = 0;
         for (Entity e : world.query<BuildingComponent>()) {
             BuildingComponent* b = world.get<BuildingComponent>(e);
-            if (!b || !near_xz(b->position, camera_pos, 140.f)) {
+            if (!b || !near_xz(b->position, camera_pos, 140.f) || custom_sky_lot(b)) {
                 continue;
             }
             model_trs(sm, b->position, b->width, b->height, b->depth);
@@ -726,6 +764,12 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
             glBindVertexArray(cyl_vao);
             glUniformMatrix4fv(glGetUniformLocation(shadow_prog, "model"), 1, GL_FALSE, sm);
             glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(cyl_count), GL_UNSIGNED_INT, nullptr);
+        }
+        if (tree_shadow_prog && sky_glb.instance_count > 0) {
+            glUseProgram(tree_shadow_prog);
+            glUniformMatrix4fv(glGetUniformLocation(tree_shadow_prog, "uLightVP"), 1, GL_FALSE, light_vp);
+            draw_instanced_glb(&sky_glb, tree_shadow_prog);
+            glUseProgram(shadow_prog);
         }
         glDisable(GL_POLYGON_OFFSET_FILL);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -759,7 +803,7 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
     u32 drawn = 0;
     for (Entity e : world.query<BuildingComponent>()) {
         BuildingComponent* b = world.get<BuildingComponent>(e);
-        if (!b) {
+        if (!b || custom_sky_lot(b)) {
             continue;
         }
         const float dx = b->position.x - camera_pos.x;
@@ -915,6 +959,7 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
         glActiveTexture(GL_TEXTURE2);
         glBindTexture(GL_TEXTURE_2D, shadow_tex);
         draw_tree_glbs(tree_glb, tree_prog);
+        draw_instanced_glb(&sky_glb, tree_prog);
         glUseProgram(building_prog);
     }
     const float sw = kCityStreetWidth * 0.5f + 1.6f;
@@ -1036,6 +1081,7 @@ void BuildingGlPass::shutdown() {
     for (u32 k = 0; k < kTreeKindCount; ++k) {
         tree_glb_shutdown(&tree_glb[k]);
     }
+    tree_glb_shutdown(&sky_glb);
     building_prog = street_prog = 0;
 }
 
