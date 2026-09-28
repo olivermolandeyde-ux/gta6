@@ -3,6 +3,8 @@ precision highp float;
 in vec3 vWorld;
 in vec3 vN;
 in float vH;
+uniform vec3 uCamPos;
+uniform vec3 uFogColor;
 out vec4 o;
 
 void main() {
@@ -18,5 +20,9 @@ void main() {
     vec2 d = min(vWorld.xz, vec2(2400.0) - vWorld.xz);
     float urban = smoothstep(-220.0, 0.0, min(d.x, d.y));
     vec3 city = vec3(0.34, 0.34, 0.32);
-    o = vec4(mix(wild, city, urban), 1.0);
+    vec3 color = mix(wild, city, urban);
+    float dist = length(vWorld.xz - uCamPos.xz);
+    float fog = 1.0 - exp(-max(dist - 300.0, 0.0) * 0.0028);
+    color = mix(color, uFogColor, clamp(fog, 0.0, 0.92));
+    o = vec4(color, 1.0);
 }

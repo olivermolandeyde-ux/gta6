@@ -343,6 +343,8 @@ void TerrainGlPass::drawTerrain() {
     glBindVertexArray(grid_vao);
     glUniformMatrix4fv(glGetUniformLocation(terrain_prog, "uVP"), 1, GL_FALSE, vp);
     glUniform1f(glGetUniformLocation(terrain_prog, "uChunk"), 64.f);
+    glUniform3f(glGetUniformLocation(terrain_prog, "uCamPos"), cameraPos.x, cameraPos.y, cameraPos.z);
+    glUniform3f(glGetUniformLocation(terrain_prog, "uFogColor"), 0.62f, 0.74f, 0.84f);
     u32 draws = 0;
     for (u32 z = 0; z < 40; ++z) {
         for (u32 x = 0; x < 40; ++x) {

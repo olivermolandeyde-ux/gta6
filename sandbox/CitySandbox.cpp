@@ -171,7 +171,7 @@ int main(int argc, char** argv) {
         const float tod = sky_now ? sky_now->time_of_day : 21.f;
         const float3 sun = sky_now ? sky_now->sun_direction : float3{0.5f, 0.8f, 0.3f};
         buildings.draw(world, terrain.cameraPos, terrain.cameraTarget, terrain.width, terrain.height, tod,
-                       sun);
+                       sun, static_cast<float>(frames) * dt);
         window.swap();
         ++frames;
 
