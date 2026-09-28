@@ -6,7 +6,6 @@
 #include "world/CloudSystem.h"
 #include "world/SkySystem.h"
 #include "world/TerrainSystem.h"
-#include "world/WorldStreamer.h"
 
 #include <cmath>
 #include <cstdio>
@@ -93,11 +92,8 @@ int main(int argc, char** argv) {
     clouds.noise_texture_id = 1;
     (void)world.instantiate(persistent, clouds);
 
-    StreamObserverComponent observer{};
-    observer.world_pos = city_center;
-    Entity player = world.instantiate(persistent, observer);
-    (void)instantiate_world_streamer(world, persistent, player, /*radius=*/8, kTerrainChunkSizeM);
-
+    // City is 1.9 km — fully resident. WorldStreamer (Phase 6) asserts once the
+    // resident-cell cap is exceeded; do not tick it here.
     CityGenerator cityGen{};
     cityGen.buildings_spawned = cityGen.streets_spawned = 0;
     cityGen.lights_spawned = cityGen.windows_spawned = 0;
@@ -143,16 +139,8 @@ int main(int argc, char** argv) {
         }
         terrain.cameraPos    = cam;
         terrain.cameraTarget = float3_add(cam, fwd);
-        if (StreamObserverComponent* obs = world.get<StreamObserverComponent>(player)) {
-            obs->world_pos = float3{cam.x < 0.f ? 0.f : cam.x, 0.f, cam.z < 0.f ? 0.f : cam.z};
-        }
 
         world.begin_frame(frames);
-        UpdateWorldStreamerSystem(world, dt, world.frame_commands());
-        world.frame_commands().playback(world);
-        world.frame_commands().reset();
-        UpdateTerrainStreamingSystem(world, dt, engine.memory().frame(), world.frame_commands());
-        world.frame_commands().playback(world);
         UpdateSkySystem(world, dt, world.frame_commands());
         UpdateCloudSystem(world, dt, world.frame_commands());
         SkyComponent* sky_now = find_sky(world);
