@@ -2,3 +2,5 @@ build/
 *.o
 *.a
 .cache/
+tools/.venv/
+output/

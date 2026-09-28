@@ -2,7 +2,7 @@
 
 Custom C++20 core for a 1:1 open-world simulation. **No CRT heap on the simulation path. No garbage collector. No generic `Prop` base class.**
 
-This repository contains **MICRO-PHASE 1–8**: memory, ECS, render, objects, vehicles, AI/IK, streaming, net AOI, spatial audio, weather/friction, and particles.
+This repository contains **MICRO-PHASE 1–9**: the C++20 engine (memory through weather/audio) plus a Python city generator that emits L7 binary `.cell` prefabs.
 
 ## Memory domains
 
@@ -55,4 +55,5 @@ Shaders live in `shaders/MasterPBR.hlsl` (GGX + Smith + Schlick, gamma 2.2) and 
 5. **MICRO-PHASE 5** — Pedestrian flee AI, two-bone IK, animation state machine
 6. **MICRO-PHASE 6** — World streaming, traffic, power grid
 7. **MICRO-PHASE 7** — Client-server AOI replication
-8. **MICRO-PHASE 8** — Spatial audio, weather/surface, particles *(this tree)*
+8. **MICRO-PHASE 8** — Spatial audio, weather/surface, particles
+9. **MICRO-PHASE 9** — Python procedural city toolchain *(this tree)*
