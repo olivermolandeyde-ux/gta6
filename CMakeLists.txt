@@ -38,6 +38,7 @@ add_library(leonida_core STATIC
     engine/world/TerrainSystem.cpp
     engine/world/SkySystem.cpp
     engine/world/CloudSystem.cpp
+    engine/world/CityGenerator.cpp
     engine/eco/TrafficSystem.cpp
     engine/eco/PowerGridSystem.cpp
     engine/network/NetworkCore.cpp
@@ -177,6 +178,30 @@ else()
 endif()
 if(APPLE)
     target_link_libraries(leonida_terrain PRIVATE "-framework OpenGL")
+endif()
+
+add_executable(leonida_city
+    sandbox/CitySandbox.cpp
+    engine/render/SdlGlWindow.cpp
+    engine/render/TerrainGlPass.cpp
+    engine/render/BuildingGlPass.cpp
+    engine/render/InputSystem.cpp
+)
+target_link_libraries(leonida_city PRIVATE leonida_core OpenGL::GL)
+target_compile_definitions(leonida_city PRIVATE
+    LEONIDA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
+if(TARGET SDL2::SDL2)
+    target_link_libraries(leonida_city PRIVATE SDL2::SDL2)
+elseif(SDL2_FOUND)
+    target_include_directories(leonida_city PRIVATE ${SDL2_INCLUDE_DIR})
+    target_link_libraries(leonida_city PRIVATE ${SDL2_LIBRARY})
+else()
+    message(FATAL_ERROR
+        "SDL2 is required for leonida_city. macOS: brew install sdl2")
+endif()
+if(APPLE)
+    target_link_libraries(leonida_city PRIVATE "-framework OpenGL")
 endif()
 
 add_executable(leonida_full_sandbox
