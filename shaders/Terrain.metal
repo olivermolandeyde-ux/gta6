@@ -100,10 +100,11 @@ vertex TerrainVertexOut terrain_vertex(TerrainVertexIn in [[stage_in]],
     float hz = sample_height(xz + float2(0.0, eps));
     float3 n = normalize(float3(h - hx, eps, h - hz));
     out.worldPos = wp;
+    out.worldPos.y = h;
     out.normal = n;
     out.uv = in.uv;
-    out.height = h;
-    out.position = uniforms.viewProjection * float4(wp, 1.0);
+    out.height = out.worldPos.y;
+    out.position = uniforms.viewProjection * float4(out.worldPos, 1.0);
     return out;
 }
 
@@ -115,17 +116,9 @@ fragment float4 terrain_fragment(TerrainVertexOut in [[stage_in]],
                                  texture2d<float> snowTex [[texture(3)]],
                                  texture2d<float> splatmap [[texture(4)]],
                                  sampler texSampler [[sampler(0)]]) {
+    (void)in;
     (void)uniforms;
     (void)grassTex; (void)rockTex; (void)sandTex; (void)snowTex; (void)splatmap; (void)texSampler;
-
-    float height = in.worldPos.y;
-    float3 color;
-    if (height < 100.0) {
-        color = float3(0.1, 1.0, 0.1);
-    } else if (height < 400.0) {
-        color = float3(1.0, 0.5, 0.0);
-    } else {
-        color = float3(1.0, 1.0, 1.0);
-    }
-    return float4(color, 1.0);
+    // FORCE PINK TO PROVE SHADER IS RUNNING
+    return float4(1.0, 0.0, 1.0, 1.0);
 }

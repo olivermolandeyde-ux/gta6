@@ -422,21 +422,19 @@ float ht(float2 xz){ float continent=fbm2(xz*0.0022); float rolling=fbm2(xz*0.00
   float h=6.0+rolling*42.0+ridge*280.0+ridge*ridge*360.0; h*=smoothstep(0.22,0.58,continent); return h+3.0; }
 vertex TVOut terrain_vertex(TVIn in [[stage_in]], constant TU& u [[buffer(1)]]) {
   TVOut o; float2 xz=float2(u.ox,u.oz)+in.uv*u.chunk; float h=ht(xz);
-  float3 wp=float3(xz.x,h,xz.y); float e=2.0;
+  float3 wp=float3(xz.x, h, xz.y);
+  float e=2.0;
   o.n=normalize(float3(ht(xz)-ht(xz+float2(e,0)), e, ht(xz)-ht(xz+float2(0,e))));
-  o.worldPos=wp; o.uv=in.uv; o.h=h; o.position=u.vp*float4(wp,1.0); return o;
+  o.worldPos=wp;
+  o.worldPos.y=h;
+  o.h=o.worldPos.y;
+  o.uv=in.uv;
+  o.position=u.vp*float4(o.worldPos,1.0);
+  return o;
 }
-fragment float4 terrain_fragment(TVOut in [[stage_in]], constant TU& u [[buffer(1)]],
-    texture2d<float> grassTex [[texture(0)]], texture2d<float> rockTex [[texture(1)]],
-    texture2d<float> sandTex [[texture(2)]], texture2d<float> snowTex [[texture(3)]],
-    texture2d<float> splatmap [[texture(4)]]) {
-  (void)u;(void)grassTex;(void)rockTex;(void)sandTex;(void)snowTex;(void)splatmap;
-  float height = in.worldPos.y;
-  float3 color;
-  if (height < 100.0) color = float3(0.1, 1.0, 0.1);
-  else if (height < 400.0) color = float3(1.0, 0.5, 0.0);
-  else color = float3(1.0, 1.0, 1.0);
-  return float4(color, 1.0);
+fragment float4 terrain_fragment(TVOut in [[stage_in]], constant TU& u [[buffer(1)]]) {
+  (void)in; (void)u;
+  return float4(1.0, 0.0, 1.0, 1.0);
 }
 vertex float4 cloud_vertex(uint vid [[vertex_id]]) {
   float2 p=float2((vid<<1)&2, vid&2); return float4(p*2.0-1.0, 0.999, 1.0);
@@ -456,25 +454,58 @@ fragment float4 cloud_fragment() { return float4(1.0,1.0,1.0,0.0); }
         std::printf("[metal] sky/terrain shader library loaded\n");
         std::fflush(stdout);
         auto pso_named = [&](NSString* vs, NSString* fs, MTLVertexDescriptor* vdesc, const char* tag) -> void* {
+            id<MTLFunction> vf = [passLib newFunctionWithName:vs];
+            id<MTLFunction> ff = [passLib newFunctionWithName:fs];
+            if (vf == nil || ff == nil) {
+                std::printf("[metal] %s SHADER FAILED: missing function vs=%s fs=%s\n", tag,
+                            vf ? "ok" : "nil", ff ? "ok" : "nil");
+                std::fflush(stdout);
+                if (std::strcmp(tag, "terrain") == 0) {
+                    std::printf("[metal] TERRAIN SHADER FAILED: missing vertex or fragment function\n");
+                    std::fflush(stdout);
+                    NSLog(@"METAL ERROR: terrain function missing vs=%@ fs=%@", vs, fs);
+                }
+                return nullptr;
+            }
             MTLRenderPipelineDescriptor* d = [[MTLRenderPipelineDescriptor alloc] init];
-            d.vertexFunction = [passLib newFunctionWithName:vs];
-            d.fragmentFunction = [passLib newFunctionWithName:fs];
+            d.vertexFunction = vf;
+            d.fragmentFunction = ff;
             d.vertexDescriptor = vdesc;
             d.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
-            d.colorAttachments[0].blendingEnabled = YES;
+            const bool blend = std::strcmp(tag, "terrain") != 0 && std::strcmp(tag, "sky") != 0;
+            d.colorAttachments[0].blendingEnabled = blend ? YES : NO;
             d.colorAttachments[0].sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
             d.colorAttachments[0].destinationRGBBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
             d.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
-            NSError* e = nil;
-            id<MTLRenderPipelineState> p = [dev newRenderPipelineStateWithDescriptor:d error:&e];
+            NSError* error = nil;
+            id<MTLRenderPipelineState> p = [dev newRenderPipelineStateWithDescriptor:d error:&error];
             if (p == nil) {
-                std::printf("[metal] %s pipeline FAILED: %s\n", tag,
-                            e ? [[e localizedDescription] UTF8String] : "(unknown)");
+                const char* msg = error ? [[error localizedDescription] UTF8String] : "(unknown)";
+                std::printf("[metal] %s pipeline FAILED: %s\n", tag, msg);
                 std::fflush(stdout);
+                NSLog(@"METAL ERROR: Failed to create %s pipeline: %@",
+                      [NSString stringWithUTF8String:tag], error.localizedDescription);
+                if (std::strcmp(tag, "terrain") == 0) {
+                    std::printf("[metal] TERRAIN SHADER FAILED: %s\n", msg);
+                    std::fflush(stdout);
+                }
                 return nullptr;
             }
             std::printf("[metal] %s pipeline created\n", tag);
             std::fflush(stdout);
+            if (std::strcmp(tag, "terrain") == 0) {
+                std::printf("[metal] TERRAIN SHADER COMPILED SUCCESSFULLY\n");
+                std::fflush(stdout);
+                NSLog(@"[metal] TERRAIN SHADER COMPILED SUCCESSFULLY");
+            }
+            if (std::strcmp(tag, "sky") == 0) {
+                std::printf("[metal] SKY SHADER COMPILED SUCCESSFULLY\n");
+                std::fflush(stdout);
+            }
+            if (std::strcmp(tag, "cloud") == 0) {
+                std::printf("[metal] CLOUD SHADER COMPILED SUCCESSFULLY\n");
+                std::fflush(stdout);
+            }
             return (__bridge_retained void*)p;
         };
         skyPipeline = pso_named(@"sky_vertex", @"sky_fragment", nil, "sky");
@@ -776,6 +807,13 @@ void MetalRenderer::renderTerrain(World& world, FrameAllocator& frame_alloc, con
     }
     recorded_terrain = draws;
     (void)packets;
+    static bool logged_draw = false;
+    if (!logged_draw) {
+        std::printf("[metal] drawing %u terrain chunks with HOT PINK fragment (shader is bound)\n",
+                    draws);
+        std::fflush(stdout);
+        logged_draw = true;
+    }
 }
 
 #else
