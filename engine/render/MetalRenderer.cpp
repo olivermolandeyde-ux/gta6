@@ -430,15 +430,17 @@ fragment float4 terrain_fragment(TVOut in [[stage_in]], constant TU& u [[buffer(
     texture2d<float> grassTex [[texture(0)]], texture2d<float> rockTex [[texture(1)]],
     texture2d<float> sandTex [[texture(2)]], texture2d<float> snowTex [[texture(3)]],
     texture2d<float> splatmap [[texture(4)]]) {
-  (void)grassTex;(void)rockTex;(void)sandTex;(void)snowTex;(void)splatmap;
-  float3 base=float3(0.2,0.6,0.2);
-  base=mix(base, float3(0.5,0.3,0.1), smoothstep(100.0,140.0,in.h));
-  base=mix(base, float3(0.9,0.9,0.9), smoothstep(400.0,480.0,in.h));
-  float3 N=normalize(in.n);
-  float3 L=length(u.sunDir)<1e-4 ? normalize(float3(0.5,0.8,0.3)) : normalize(u.sunDir);
-  float ndl=max(dot(N,L),0.0);
-  float3 c=base*(0.35+0.65*ndl)*max(u.sunColor, float3(0.6));
-  return float4(pow(max(c,0.0), float3(1.0/2.2)), 1.0);
+  (void)u;(void)grassTex;(void)rockTex;(void)sandTex;(void)snowTex;(void)splatmap;
+  float height = in.worldPos.y;
+  float3 color;
+  if (height < 100.0) color = float3(0.2, 0.8, 0.2);
+  else if (height < 400.0) color = float3(0.6, 0.4, 0.2);
+  else color = float3(0.95, 0.95, 0.95);
+  float3 N = normalize(in.n);
+  float3 L = normalize(float3(0.5, 0.8, 0.3));
+  float light = max(dot(N, L), 0.3);
+  color *= light;
+  return float4(color, 1.0);
 }
 vertex float4 cloud_vertex(uint vid [[vertex_id]]) {
   float2 p=float2((vid<<1)&2, vid&2); return float4(p*2.0-1.0, 0.999, 1.0);

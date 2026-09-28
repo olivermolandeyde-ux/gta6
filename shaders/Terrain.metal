@@ -116,25 +116,21 @@ fragment float4 terrain_fragment(TerrainVertexOut in [[stage_in]],
                                  texture2d<float> splatmap [[texture(4)]],
                                  sampler texSampler [[sampler(0)]]) {
     (void)grassTex; (void)rockTex; (void)sandTex; (void)snowTex; (void)splatmap; (void)texSampler;
+    (void)uniforms;
 
-    // Height-band debug colors (bypass 1x1 stub textures).
-    float3 baseColor = float3(0.2, 0.6, 0.2);           // < 100 m grass
-    baseColor = mix(baseColor, float3(0.5, 0.3, 0.1),     // 100–400 m rock/dirt
-                    smoothstep(100.0, 140.0, in.height));
-    baseColor = mix(baseColor, float3(0.9, 0.9, 0.9),     // > 400 m snow
-                    smoothstep(400.0, 480.0, in.height));
+    float height = in.worldPos.y;
+    float3 color;
+    if (height < 100.0) {
+        color = float3(0.2, 0.8, 0.2);
+    } else if (height < 400.0) {
+        color = float3(0.6, 0.4, 0.2);
+    } else {
+        color = float3(0.95, 0.95, 0.95);
+    }
 
     float3 N = normalize(in.normal);
-    float3 V = normalize(uniforms.cameraPos - in.worldPos);
-    float3 L = uniforms.sunDir;
-    if (any(isnan(L)) || length(L) < 1e-4) {
-        L = float3(0.5, 0.8, 0.3);
-    }
-    L = normalize(L);
-    float NdotL = max(dot(N, L), 0.0);
-    float3 ambient = baseColor * 0.25;
-    float3 finalColor = baseColor * (0.35 + 0.65 * NdotL) * max(uniforms.sunColor, float3(0.6));
-    finalColor = max(finalColor, ambient);
-    finalColor = pow(max(finalColor, float3(0.0)), float3(1.0 / 2.2));
-    return float4(finalColor, 1.0);
+    float3 L = normalize(float3(0.5, 0.8, 0.3));
+    float light = max(dot(N, L), 0.3);
+    color *= light;
+    return float4(color, 1.0);
 }
