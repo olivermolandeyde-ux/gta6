@@ -23,6 +23,9 @@ struct PacketBuffer {
 
 inline constexpr u32 kRpcShoot           = 0;
 inline constexpr u32 kRpcWindowShattered = 1;
+inline constexpr u32 kRpcKillFeed        = 2;
+inline constexpr u32 kRpcRaceCheckpoint  = 3;
+inline constexpr u32 kRpcCoopRevive      = 4;
 
 struct NetworkRPC {
     u32    target_entity_network_id;

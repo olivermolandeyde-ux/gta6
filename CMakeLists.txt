@@ -63,6 +63,10 @@ add_library(leonida_core STATIC
     engine/save/WorldSerializer.cpp
     engine/save/WorldDeserializer.cpp
     engine/save/SaveSlotManager.cpp
+    engine/multiplayer/GameModeCore.cpp
+    engine/multiplayer/DeathmatchMode.cpp
+    engine/multiplayer/RaceMode.cpp
+    engine/multiplayer/CoopMissionMode.cpp
 )
 
 target_include_directories(leonida_core PUBLIC
@@ -95,6 +99,7 @@ leonida_sandbox(leonida_phase14_sandbox sandbox/phase14_save_sandbox.cpp)
 target_compile_definitions(leonida_phase14_sandbox PRIVATE
     LEONIDA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
 )
+leonida_sandbox(leonida_phase15_sandbox sandbox/phase15_multiplayer_sandbox.cpp)
 
 add_executable(leonida_full_sandbox
     sandbox/FullIntegrationSandbox.cpp

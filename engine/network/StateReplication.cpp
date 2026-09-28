@@ -123,7 +123,10 @@ void UpdateStateReplicationSystem(World& world, float delta_time, FrameAllocator
             shattered.rpc_type                 = kRpcWindowShattered;
             shattered.payload_pos              = hit.impact_point;
             deliver_rpc_to_aoi(world, shattered, srcs[i], frame_alloc);
-        } else if (rpcs[i].rpc_type == kRpcWindowShattered) {
+        } else if (rpcs[i].rpc_type == kRpcWindowShattered
+                   || rpcs[i].rpc_type == kRpcKillFeed
+                   || rpcs[i].rpc_type == kRpcRaceCheckpoint
+                   || rpcs[i].rpc_type == kRpcCoopRevive) {
             deliver_rpc_to_aoi(world, rpcs[i], srcs[i], frame_alloc);
         }
     }

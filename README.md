@@ -9,7 +9,7 @@ A C++20 open-world simulation core built from scratch. No generic `Prop` / `Acto
   ██╔═══╝ ██╔══██╗██║   ██║██   ██║██╔══╝  ██║        ██║
   ██║     ██║  ██║╚██████╔╝╚█████╔╝███████╗╚██████╗   ██║
   ╚═╝     ╚═╝  ╚═╝ ╚═════╝  ╚════╝ ╚══════╝ ╚═════╝   ╚═╝
-  PHASE 14 — LEONSAVE world serialization · XOR payload · slot scan
+  PHASE 15 — server-auth deathmatch · race anti-cheat · co-op revive
 ```
 
 ## Architecture
@@ -63,6 +63,7 @@ tools/.venv/bin/python tools/citygen/master_generate.py --size-km 2 --seed 42 --
 12. Data-driven missions (`LEONMISS`), dialog trees, objective trackers, rewards  
 13. Tactical police, gang territories, civilian routines, danger-aware navigation  
 14. Binary world save/load (`LEONSAVE`), XOR payload, save-slot metadata  
+15. Server-authoritative deathmatch, racing, co-op revive (AOI replication)  
 
 ## Full sandbox (verified)
 
