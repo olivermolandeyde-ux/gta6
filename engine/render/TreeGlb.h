@@ -15,6 +15,7 @@ struct TreePrim {
     unsigned vbo;
     unsigned ibo;
     unsigned tex;
+    unsigned tex_emit;
     unsigned nidx;
     int      alpha_mask;
     float    cutoff;

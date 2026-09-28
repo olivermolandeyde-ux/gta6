@@ -439,11 +439,19 @@ bool imageio_decode_rgba(const u8* src, u32 slen, u8** out_rgba, u32* out_w, u32
         return false;
     }
     CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
-    CGContextRef ctx = CGBitmapContextCreate(rgba, w, h, 8, static_cast<size_t>(w) * 4, cs,
-                                             static_cast<CGBitmapInfo>(kCGImageAlphaPremultipliedLast)
-                                                 | kCGBitmapByteOrder32Big);
+    const CGBitmapInfo kInfos[3] = {
+        static_cast<CGBitmapInfo>(kCGImageAlphaPremultipliedLast) | kCGBitmapByteOrder32Little,
+        static_cast<CGBitmapInfo>(kCGImageAlphaPremultipliedLast),
+        static_cast<CGBitmapInfo>(kCGImageAlphaNoneSkipLast) | kCGBitmapByteOrder32Little,
+    };
+    CGContextRef ctx = nullptr;
+    for (u32 i = 0; i < 3 && !ctx; ++i) {
+        ctx = CGBitmapContextCreate(rgba, w, h, 8, static_cast<size_t>(w) * 4, cs, kInfos[i]);
+    }
     CGColorSpaceRelease(cs);
     if (!ctx) {
+        std::printf("[glb] ImageIO bitmap context failed %ux%u\n", w, h);
+        std::fflush(stdout);
         std::free(rgba);
         CGImageRelease(img);
         return false;
@@ -863,6 +871,35 @@ float read_f32(const u8* p) {
     return v;
 }
 
+float read_acc_f(const u8* p, u32 comp, int normalized) {
+    if (comp == 5126) {
+        return read_f32(p);
+    }
+    if (comp == 5125) {
+        u32 v;
+        std::memcpy(&v, p, 4);
+        return normalized ? static_cast<float>(v) / 4294967295.f : static_cast<float>(v);
+    }
+    if (comp == 5123) {
+        u16 v;
+        std::memcpy(&v, p, 2);
+        return normalized ? static_cast<float>(v) / 65535.f : static_cast<float>(v);
+    }
+    if (comp == 5122) {
+        i16 v;
+        std::memcpy(&v, p, 2);
+        return normalized ? std::fmax(static_cast<float>(v) / 32767.f, -1.f) : static_cast<float>(v);
+    }
+    if (comp == 5121) {
+        return normalized ? static_cast<float>(p[0]) / 255.f : static_cast<float>(p[0]);
+    }
+    if (comp == 5120) {
+        const i8 v = static_cast<i8>(p[0]);
+        return normalized ? std::fmax(static_cast<float>(v) / 127.f, -1.f) : static_cast<float>(v);
+    }
+    return 0.f;
+}
+
 u32 read_index(const u8* p, u32 comp) {
     if (comp == 5125) {
         u32 v;
@@ -877,9 +914,65 @@ u32 read_index(const u8* p, u32 comp) {
     return p[0];
 }
 
-unsigned white_tex() {
-    const u8 px[4] = {220, 220, 220, 255};
+unsigned solid_tex(u8 r, u8 g, u8 b, u8 a) {
+    const u8 px[4] = {r, g, b, a};
     return upload_rgba(px, 1, 1);
+}
+
+unsigned white_tex() {
+    return solid_tex(220, 220, 220, 255);
+}
+
+unsigned black_tex() {
+    return solid_tex(0, 0, 0, 255);
+}
+
+u8 slen_sig(const u8* s, u32 bl, u32 i) {
+    return i < bl ? s[i] : 0;
+}
+
+unsigned decode_view_image(const JDoc* d, u32 img, const u8* bin, u32 bin_len, u32* out_w, u32* out_h) {
+    *out_w = *out_h = 0;
+    if (!img) {
+        return 0;
+    }
+    const JNode* bv_n = j_field(d, img, "bufferView");
+    if (!bv_n || bv_n->kind != JK_NUM) {
+        std::printf("[glb] WARNING: image has no bufferView (uri-only?)\n");
+        std::fflush(stdout);
+        return 0;
+    }
+    const u32 bv = static_cast<u32>(bv_n->num);
+    const JNode* views = j_field(d, d->root, "bufferViews");
+    u32 view = j_arr_at(d, views, bv);
+    if (!view) {
+        std::printf("[glb] WARNING: image bufferView %u missing\n", bv);
+        std::fflush(stdout);
+        return 0;
+    }
+    const u32 off = j_idx(d, view, "byteOffset");
+    const u32 bl = j_idx(d, view, "byteLength");
+    if (bl == 0 || off + bl > bin_len) {
+        std::printf("[glb] WARNING: image bytes out of range off=%u len=%u bin=%u\n", off, bl, bin_len);
+        std::fflush(stdout);
+        return 0;
+    }
+    u8* rgba = nullptr;
+    u32 w = 0, h = 0;
+    if (!decode_image_rgba(bin + off, bl, &rgba, &w, &h) || !rgba) {
+        const u8* s = bin + off;
+        std::printf("[glb] WARNING: Failed to decode image (%u bytes, sig %02x %02x %02x %02x)\n", bl,
+                    slen_sig(s, bl, 0), slen_sig(s, bl, 1), slen_sig(s, bl, 2), slen_sig(s, bl, 3));
+        std::fflush(stdout);
+        return 0;
+    }
+    unsigned tex = upload_rgba(rgba, w, h);
+    std::printf("[glb] Created OpenGL texture ID %u (%ux%u pixels, %u src bytes)\n", tex, w, h, bl);
+    std::fflush(stdout);
+    std::free(rgba);
+    *out_w = w;
+    *out_h = h;
+    return tex;
 }
 
 bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const u8* bin, u32 bin_len,
@@ -909,6 +1002,24 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
     if (!pb || pc == 0) {
         return false;
     }
+    u32 uv_es = 4;
+    int uv_norm = 0;
+    if (uacc) {
+        if (ucomp == 5123 || ucomp == 5122) {
+            uv_es = 2;
+        } else if (ucomp == 5121 || ucomp == 5120) {
+            uv_es = 1;
+        } else if (ucomp == 5125) {
+            uv_es = 4;
+        }
+        const JNode* accessors = j_field(d, d->root, "accessors");
+        u32 uacc_n = accessors ? j_arr_at(d, accessors, static_cast<u32>(uacc->num)) : 0;
+        const JNode* nrmn = uacc_n ? j_field(d, uacc_n, "normalized") : nullptr;
+        uv_norm = (ucomp != 5126) || (nrmn && nrmn->kind == JK_BOOL && nrmn->num != 0);
+        if (ucomp != 5126) {
+            uv_norm = 1;
+        }
+    }
     TreeVert* verts = static_cast<TreeVert*>(std::malloc(sizeof(TreeVert) * pc));
     if (!verts) {
         return false;
@@ -936,8 +1047,8 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
         float u = 0, v = 0;
         if (ub && i < uc) {
             const u8* up = ub + i * us;
-            u = read_f32(up);
-            v = read_f32(up + 4);
+            u = read_acc_f(up, ucomp, uv_norm);
+            v = 1.f - read_acc_f(up + uv_es, ucomp, uv_norm);
         }
         verts[i] = TreeVert{ox, oy, oz, nx, ny, nz, u, v};
     }
@@ -990,10 +1101,13 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
     pr.alpha_mask = 0;
     pr.cutoff = 0.5f;
     pr.tex = 0;
+    pr.tex_emit = 0;
     const JNode* matn = j_field(d, prim, "material");
+    u32 mat_i = 0;
     if (matn && matn->kind == JK_NUM) {
+        mat_i = static_cast<u32>(matn->num);
         const JNode* materials = j_field(d, d->root, "materials");
-        u32 mat = j_arr_at(d, materials, static_cast<u32>(matn->num));
+        u32 mat = j_arr_at(d, materials, mat_i);
         if (mat) {
             const JNode* am = j_field(d, mat, "alphaMode");
             if (str_eq(am, "MASK") || str_eq(am, "BLEND")) {
@@ -1005,17 +1119,63 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
                 u32 pbr_id = static_cast<u32>(pbr - d->nodes);
                 const JNode* bct = j_field(d, pbr_id, "baseColorTexture");
                 if (bct) {
-                    u32 bct_id = static_cast<u32>(bct - d->nodes);
-                    const u32 tex_i = j_idx(d, bct_id, "index");
-                    if (tex_i < ntex) {
+                    const u32 tex_i = j_idx(d, static_cast<u32>(bct - d->nodes), "index");
+                    if (tex_i < ntex && tex_cache[tex_i]) {
                         pr.tex = tex_cache[tex_i];
+                        std::printf("[glb] Loaded material %u with texture %u\n", mat_i, tex_i);
+                        std::fflush(stdout);
+                    } else {
+                        std::printf("[glb] WARNING: Failed to load texture for material %u (tex index %u ntex=%u)\n",
+                                    mat_i, tex_i, ntex);
+                        std::fflush(stdout);
+                    }
+                }
+                if (!pr.tex) {
+                    const JNode* bcf = j_field(d, pbr_id, "baseColorFactor");
+                    if (bcf && bcf->kind == JK_ARR) {
+                        float f[4] = {1.f, 1.f, 1.f, 1.f};
+                        u32 ci = 0;
+                        for (u32 c = bcf->child; c != 0 && ci < 4; c = d->nodes[c].next, ++ci) {
+                            f[ci] = static_cast<float>(d->nodes[c].num);
+                        }
+                        pr.tex = solid_tex(static_cast<u8>(clampf(f[0], 0.f, 1.f) * 255.f),
+                                           static_cast<u8>(clampf(f[1], 0.f, 1.f) * 255.f),
+                                           static_cast<u8>(clampf(f[2], 0.f, 1.f) * 255.f),
+                                           static_cast<u8>(clampf(f[3], 0.f, 1.f) * 255.f));
+                    }
+                }
+            }
+            const JNode* emt = j_field(d, mat, "emissiveTexture");
+            if (emt) {
+                const u32 tex_i = j_idx(d, static_cast<u32>(emt - d->nodes), "index");
+                if (tex_i < ntex) {
+                    pr.tex_emit = tex_cache[tex_i];
+                }
+            }
+            if (!pr.tex_emit) {
+                const JNode* emf = j_field(d, mat, "emissiveFactor");
+                if (emf && emf->kind == JK_ARR) {
+                    float f[3] = {0, 0, 0};
+                    u32 ci = 0;
+                    for (u32 c = emf->child; c != 0 && ci < 3; c = d->nodes[c].next, ++ci) {
+                        f[ci] = static_cast<float>(d->nodes[c].num);
+                    }
+                    if (f[0] + f[1] + f[2] > 0.01f) {
+                        pr.tex_emit = solid_tex(static_cast<u8>(clampf(f[0], 0.f, 1.f) * 255.f),
+                                                static_cast<u8>(clampf(f[1], 0.f, 1.f) * 255.f),
+                                                static_cast<u8>(clampf(f[2], 0.f, 1.f) * 255.f), 255);
                     }
                 }
             }
         }
     }
     if (!pr.tex) {
+        std::printf("[glb] WARNING: Failed to load texture for material %u — using gray\n", mat_i);
+        std::fflush(stdout);
         pr.tex = white_tex();
+    }
+    if (!pr.tex_emit) {
+        pr.tex_emit = black_tex();
     }
     out->nverts += pc;
     out->nprims++;
@@ -1140,34 +1300,35 @@ bool load_tree_glb(const char* path, TreeGlb* out) {
     }
     doc.root = root;
 
-    unsigned tex_cache[32];
+    unsigned tex_cache[64];
     std::memset(tex_cache, 0, sizeof(tex_cache));
     u32 ntex = 0;
     const JNode* textures = j_field(&doc, root, "textures");
     const JNode* images = j_field(&doc, root, "images");
-    if (textures && textures->kind == JK_ARR) {
-        for (u32 c = textures->child; c != 0 && ntex < 32; c = doc.nodes[c].next) {
+    if (textures && textures->kind == JK_ARR && textures->child != 0) {
+        for (u32 c = textures->child; c != 0 && ntex < 64; c = doc.nodes[c].next) {
             const u32 src_i = j_idx(&doc, c, "source");
             unsigned tex = 0;
+            u32 w = 0, h = 0;
             if (images) {
                 u32 img = j_arr_at(&doc, images, src_i);
-                const u32 bv = j_idx(&doc, img, "bufferView");
-                const JNode* views = j_field(&doc, root, "bufferViews");
-                u32 view = j_arr_at(&doc, views, bv);
-                const u32 off = j_idx(&doc, view, "byteOffset");
-                const u32 bl = j_idx(&doc, view, "byteLength");
-                if (off + bl <= bin_len) {
-                    u8* rgba = nullptr;
-                    u32 w = 0, h = 0;
-                    if (decode_image_rgba(bin + off, bl, &rgba, &w, &h)) {
-                        tex = upload_rgba(rgba, w, h);
-                        std::free(rgba);
-                    }
-                }
+                tex = decode_view_image(&doc, img, bin, bin_len, &w, &h);
             }
-            tex_cache[ntex++] = tex ? tex : white_tex();
+            if (!tex) {
+                std::printf("[glb] WARNING: Failed to load texture %u (image source %u)\n", ntex, src_i);
+                std::fflush(stdout);
+            }
+            tex_cache[ntex++] = tex;
+        }
+    } else if (images && images->kind == JK_ARR) {
+        for (u32 c = images->child; c != 0 && ntex < 64; c = doc.nodes[c].next) {
+            u32 w = 0, h = 0;
+            unsigned tex = decode_view_image(&doc, c, bin, bin_len, &w, &h);
+            tex_cache[ntex++] = tex;
         }
     }
+    std::printf("[glb] textures decoded=%u json_nodes=%u bin=%u\n", ntex, doc.n, bin_len);
+    std::fflush(stdout);
 
     float ident[16];
     mat_ident(ident);
@@ -1308,6 +1469,9 @@ void tree_glb_shutdown(TreeGlb* t) {
         }
         if (t->prims[i].tex) {
             glDeleteTextures(1, &t->prims[i].tex);
+        }
+        if (t->prims[i].tex_emit && t->prims[i].tex_emit != t->prims[i].tex) {
+            glDeleteTextures(1, &t->prims[i].tex_emit);
         }
     }
     if (t->instance_vbo) {

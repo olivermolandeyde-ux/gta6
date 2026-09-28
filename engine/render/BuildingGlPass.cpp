@@ -370,12 +370,15 @@ void draw_instanced_glb(TreeGlb* g, unsigned prog) {
     glUseProgram(prog);
     glDisable(GL_CULL_FACE);
     glUniform1i(glGetUniformLocation(prog, "uAlbedo"), 0);
+    glUniform1i(glGetUniformLocation(prog, "uEmissive"), 1);
     glUniform1i(glGetUniformLocation(prog, "uShadow"), 2);
     for (u32 p = 0; p < g->nprims; ++p) {
         TreePrim& pr = g->prims[p];
         glBindVertexArray(pr.vao);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, pr.tex);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, pr.tex_emit ? pr.tex_emit : pr.tex);
         glUniform1i(glGetUniformLocation(prog, "uAlphaMask"), pr.alpha_mask);
         glUniform1f(glGetUniformLocation(prog, "uAlphaCut"), pr.cutoff);
         glDrawElementsInstanced(GL_TRIANGLES, static_cast<GLsizei>(pr.nidx), GL_UNSIGNED_INT, nullptr,
