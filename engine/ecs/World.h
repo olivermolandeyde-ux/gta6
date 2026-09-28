@@ -25,6 +25,7 @@ public:
     [[nodiscard]] ComponentRegistry&  registry() noexcept { return registry_; }
     [[nodiscard]] u16                 world_id() const noexcept { return world_id_; }
     [[nodiscard]] u32                 live_entity_count() const noexcept { return live_entities_; }
+    [[nodiscard]] u32                 entity_count() const noexcept { return live_entities_; }
     [[nodiscard]] u32                 archetype_count() const noexcept { return archetype_count_; }
     [[nodiscard]] u64                 frame_index() const noexcept { return frame_index_; }
 
@@ -57,6 +58,9 @@ public:
 
     template <typename Fn>
     void for_each_chunk(const Query& query, Fn&& fn);
+
+    template <typename... Cs>
+    [[nodiscard]] EntityQueryRange query();
 
     [[nodiscard]] Archetype* find_archetype(const Signature& signature) const noexcept;
     [[nodiscard]] Archetype& archetype_at(u32 index) noexcept;
@@ -99,6 +103,8 @@ private:
     CommandBuffer      frame_commands_{};
     void*              cmd_block_ = nullptr;
     void*              cmd_payload_ = nullptr;
+    void*              cmd_gpu_ = nullptr;
+    void*              cmd_gpu_payload_ = nullptr;
 };
 
 } // namespace engine
@@ -155,6 +161,15 @@ Entity World::instantiate(const InstantiationRequest& request, const Cs&... comp
         add_component<StreamingCellId>(entity, request.cell);
     }
     return entity;
+}
+
+template <typename... Cs>
+EntityQueryRange World::query() {
+    Query q{};
+    q.required.clear();
+    q.excluded.clear();
+    (q.required.set(registry_.id_of<Cs>()), ...);
+    return EntityQueryRange{this, q};
 }
 
 template <typename Fn>

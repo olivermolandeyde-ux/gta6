@@ -26,6 +26,14 @@ public:
     [[nodiscard]] void* allocate(usize bytes, usize alignment);
     [[nodiscard]] Allocator as_allocator();
 
+    template <typename T>
+    [[nodiscard]] T* allocate_array(u32 count) {
+        if (count == 0) {
+            return nullptr;
+        }
+        return static_cast<T*>(allocate(sizeof(T) * count, alignof(T)));
+    }
+
     [[nodiscard]] u64   frame_index() const noexcept { return frame_index_; }
     [[nodiscard]] usize used() const noexcept { return arenas_[current_].used(); }
 

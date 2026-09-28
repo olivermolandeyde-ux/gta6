@@ -42,9 +42,14 @@ void World::boot(MemorySystem& memory, u16 world_id, u32 entity_capacity) {
 
     constexpr usize kCmdBytes     = 256 * 1024;
     constexpr usize kPayloadBytes = 1 * 1024 * 1024;
-    cmd_block_   = world_alloc.allocate(kCmdBytes, alignof(CommandBuffer::Command));
-    cmd_payload_ = world_alloc.allocate(kPayloadBytes, 16);
+    constexpr usize kGpuBytes     = 512 * 1024;
+    constexpr usize kGpuPayload   = 2 * 1024 * 1024;
+    cmd_block_        = world_alloc.allocate(kCmdBytes, alignof(CommandBuffer::Command));
+    cmd_payload_      = world_alloc.allocate(kPayloadBytes, 16);
+    cmd_gpu_          = world_alloc.allocate(kGpuBytes, alignof(CommandBuffer::GpuCommand));
+    cmd_gpu_payload_  = world_alloc.allocate(kGpuPayload, 16);
     frame_commands_.bind(cmd_block_, kCmdBytes, cmd_payload_, kPayloadBytes);
+    frame_commands_.bind_gpu(cmd_gpu_, kGpuBytes, cmd_gpu_payload_, kGpuPayload);
 }
 
 void World::shutdown() {

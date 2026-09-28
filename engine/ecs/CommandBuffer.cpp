@@ -19,9 +19,23 @@ void CommandBuffer::bind(void* command_memory, usize command_bytes,
     payload_off_   = 0;
 }
 
+void CommandBuffer::bind_gpu(void* gpu_memory, usize gpu_bytes, void* gpu_payload,
+                             usize gpu_payload_bytes) {
+    ENGINE_ASSERT(gpu_memory != nullptr, "gpu command storage");
+    ENGINE_ASSERT(gpu_payload != nullptr, "gpu payload storage");
+    gpu_commands_     = static_cast<GpuCommand*>(gpu_memory);
+    gpu_cap_          = static_cast<u32>(gpu_bytes / sizeof(GpuCommand));
+    gpu_count_        = 0;
+    gpu_payload_      = static_cast<u8*>(gpu_payload);
+    gpu_payload_cap_  = gpu_payload_bytes;
+    gpu_payload_off_  = 0;
+}
+
 void CommandBuffer::reset() noexcept {
-    command_count_ = 0;
-    payload_off_   = 0;
+    command_count_    = 0;
+    payload_off_      = 0;
+    gpu_count_        = 0;
+    gpu_payload_off_  = 0;
 }
 
 void CommandBuffer::destroy_entity(Entity entity) {
@@ -60,6 +74,49 @@ void CommandBuffer::remove_component(Entity entity, u32 component_id) {
     cmd.payload_size  = 0;
 }
 
+void CommandBuffer::record_gpu(GpuCommand::Kind kind, u32 handle, u32 extra, const void* data,
+                               u32 size, const char* name) {
+    ENGINE_ASSERT(gpu_commands_ != nullptr, "gpu command stream not bound");
+    ENGINE_ASSERT(gpu_count_ < gpu_cap_, "gpu command buffer overflow");
+
+    u32 payload_off = 0;
+    if (data && size > 0) {
+        const usize aligned = align_up(gpu_payload_off_, static_cast<usize>(16));
+        ENGINE_ASSERT(aligned + size <= gpu_payload_cap_, "gpu payload overflow");
+        std::memcpy(gpu_payload_ + aligned, data, size);
+        payload_off       = static_cast<u32>(aligned);
+        gpu_payload_off_  = aligned + size;
+    }
+
+    GpuCommand& gpu   = gpu_commands_[gpu_count_++];
+    gpu.kind          = kind;
+    gpu.handle        = handle;
+    gpu.extra         = extra;
+    gpu.payload_off   = payload_off;
+    gpu.payload_size  = size;
+    gpu.name          = name;
+}
+
+void CommandBuffer::bind_pipeline(PipelineType type) {
+    record_gpu(GpuCommand::Kind::BindPipeline, static_cast<u32>(type), 0, nullptr, 0, nullptr);
+}
+
+void CommandBuffer::bind_descriptor_set(u32 set) {
+    record_gpu(GpuCommand::Kind::BindDescriptorSet, set, 0, nullptr, 0, nullptr);
+}
+
+void CommandBuffer::push_constants(const char* name, const void* data, usize size) {
+    record_gpu(GpuCommand::Kind::PushConstants, 0, 0, data, static_cast<u32>(size), name);
+}
+
+void CommandBuffer::bind_material(u32 material_id) {
+    record_gpu(GpuCommand::Kind::BindMaterial, material_id, 0, nullptr, 0, nullptr);
+}
+
+void CommandBuffer::draw_mesh(u32 mesh_id) {
+    record_gpu(GpuCommand::Kind::DrawMesh, mesh_id, 0, nullptr, 0, nullptr);
+}
+
 void CommandBuffer::playback(World& world) {
     const u32 count = command_count_;
     for (u32 i = 0; i < count; ++i) {
@@ -80,7 +137,8 @@ void CommandBuffer::playback(World& world) {
             break;
         }
     }
-    reset();
+    command_count_ = 0;
+    payload_off_   = 0;
 }
 
 } // namespace engine

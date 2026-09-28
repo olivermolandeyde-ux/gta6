@@ -18,6 +18,44 @@ struct Query {
     }
 };
 
+class World;
+
+class EntityQueryIterator {
+public:
+    EntityQueryIterator() = default;
+    EntityQueryIterator(World* world, Query query, bool is_end);
+
+    [[nodiscard]] Entity operator*() const noexcept { return value_; }
+    EntityQueryIterator& operator++();
+    [[nodiscard]] bool operator!=(const EntityQueryIterator& other) const noexcept;
+    [[nodiscard]] bool operator==(const EntityQueryIterator& other) const noexcept {
+        return !(*this != other);
+    }
+
+private:
+    void seek();
+
+    World* world_ = nullptr;
+    Query  query_{};
+    u32    arch_  = 0;
+    u16    chunk_ = 0;
+    u16    row_   = 0;
+    bool   end_   = true;
+    Entity value_{};
+};
+
+struct EntityQueryRange {
+    World* world = nullptr;
+    Query  query{};
+
+    [[nodiscard]] EntityQueryIterator begin() const {
+        return EntityQueryIterator(world, query, false);
+    }
+    [[nodiscard]] EntityQueryIterator end() const {
+        return EntityQueryIterator(world, query, true);
+    }
+};
+
 struct ChunkView {
     Archetype* archetype = nullptr;
     Chunk*     chunk     = nullptr;

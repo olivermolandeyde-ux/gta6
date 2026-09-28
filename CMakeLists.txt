@@ -23,8 +23,10 @@ add_library(leonida_core STATIC
     engine/ecs/Chunk.cpp
     engine/ecs/Archetype.cpp
     engine/ecs/CommandBuffer.cpp
+    engine/ecs/Query.cpp
     engine/ecs/World.cpp
     engine/ecs/SystemScheduler.cpp
+    engine/render/RenderPipeline.cpp
 )
 
 target_include_directories(leonida_core PUBLIC
@@ -34,9 +36,56 @@ target_include_directories(leonida_core PUBLIC
 add_executable(leonida_phase1_sandbox
     sandbox/phase1_ecs_sandbox.cpp
 )
-
 target_link_libraries(leonida_phase1_sandbox PRIVATE leonida_core)
+
+add_executable(leonida_phase2_sandbox
+    sandbox/phase2_render_sandbox.cpp
+)
+target_link_libraries(leonida_phase2_sandbox PRIVATE leonida_core)
 
 if(UNIX)
     target_link_libraries(leonida_core PUBLIC pthread)
 endif()
+
+# ---------------------------------------------------------------------------
+# HLSL shader compilation / staging
+# ---------------------------------------------------------------------------
+set(SHADER_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/shaders)
+set(SHADER_OUTPUT_DIR ${CMAKE_BINARY_DIR}/shaders)
+file(MAKE_DIRECTORY ${SHADER_OUTPUT_DIR})
+
+set(SHADER_SOURCES
+    ${SHADER_SOURCE_DIR}/MasterPBR.hlsl
+    ${SHADER_SOURCE_DIR}/SkinSSS.hlsl
+)
+
+set(SHADER_STAGED)
+foreach(SHADER_FILE ${SHADER_SOURCES})
+    get_filename_component(SHADER_NAME ${SHADER_FILE} NAME)
+    set(STAGED ${SHADER_OUTPUT_DIR}/${SHADER_NAME})
+    add_custom_command(
+        OUTPUT ${STAGED}
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${SHADER_FILE} ${STAGED}
+        DEPENDS ${SHADER_FILE}
+        COMMENT "Stage shader ${SHADER_NAME}"
+    )
+    list(APPEND SHADER_STAGED ${STAGED})
+endforeach()
+
+find_program(DXC_EXECUTABLE NAMES dxc dxc.exe)
+if(DXC_EXECUTABLE)
+    add_custom_command(
+        OUTPUT ${SHADER_OUTPUT_DIR}/MasterPBR.ps.cso
+        COMMAND ${DXC_EXECUTABLE}
+                -T ps_6_0
+                -E PS_Main
+                -Fo ${SHADER_OUTPUT_DIR}/MasterPBR.ps.cso
+                ${SHADER_SOURCE_DIR}/MasterPBR.hlsl
+        DEPENDS ${SHADER_SOURCE_DIR}/MasterPBR.hlsl
+        COMMENT "DXC compile MasterPBR.hlsl (ps_6_0 PS_Main)"
+    )
+    list(APPEND SHADER_STAGED ${SHADER_OUTPUT_DIR}/MasterPBR.ps.cso)
+endif()
+
+add_custom_target(leonida_shaders ALL DEPENDS ${SHADER_STAGED})
+add_dependencies(leonida_core leonida_shaders)
