@@ -34,6 +34,9 @@ add_library(leonida_core STATIC
     engine/ai/PedestrianBehavior.cpp
     engine/animation/TwoBoneIK.cpp
     engine/animation/AnimationStateMachine.cpp
+    engine/world/WorldStreamer.cpp
+    engine/eco/TrafficSystem.cpp
+    engine/eco/PowerGridSystem.cpp
 )
 
 target_include_directories(leonida_core PUBLIC
@@ -64,6 +67,11 @@ add_executable(leonida_phase5_sandbox
     sandbox/phase5_pedestrian_sandbox.cpp
 )
 target_link_libraries(leonida_phase5_sandbox PRIVATE leonida_core)
+
+add_executable(leonida_phase6_sandbox
+    sandbox/phase6_world_sandbox.cpp
+)
+target_link_libraries(leonida_phase6_sandbox PRIVATE leonida_core)
 
 if(UNIX)
     target_link_libraries(leonida_core PUBLIC pthread)
