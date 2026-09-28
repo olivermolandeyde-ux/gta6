@@ -14,6 +14,7 @@
 
 int main(int argc, char** argv) {
     using namespace engine;
+    setvbuf(stdout, nullptr, _IOLBF, 0);
     bool forever = true;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--once") == 0) {
@@ -89,6 +90,7 @@ int main(int argc, char** argv) {
         if (!announced && frames >= 8) {
             std::printf("VISUAL AWAKENING COMPLETE — A rotating PBR cube is now rendering on screen "
                         "with real-time lighting\n");
+            std::fflush(stdout);
             announced = true;
             if (!forever) {
                 break;

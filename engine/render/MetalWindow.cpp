@@ -158,6 +158,7 @@ void MetalWindow::create(const char* title, int w, int h) {
     const int flags = fcntl(listen_fd, F_GETFL, 0);
     fcntl(listen_fd, F_SETFL, flags | O_NONBLOCK);
     std::printf("[visual] hosting PBR cube on 0.0.0.0:%u\n", listen_port);
+    std::fflush(stdout);
 }
 
 void MetalWindow::pollEvents() {
