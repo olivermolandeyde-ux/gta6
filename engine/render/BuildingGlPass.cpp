@@ -390,14 +390,7 @@ void draw_tree_glbs(TreeGlb* trees, unsigned prog) {
 }
 
 bool load_city_tree(const char* file, TreeGlb* dst) {
-    char p0[512];
-    char p1[512];
-    std::snprintf(p0, sizeof(p0), "%s/%s", LEONIDA_SOURCE_DIR, file);
-    std::snprintf(p1, sizeof(p1), "%s", file);
-    if (load_tree_glb(p0, dst)) {
-        return true;
-    }
-    return load_tree_glb(p1, dst);
+    return find_and_load_tree_glb(file, dst);
 }
 
 } // namespace
@@ -529,9 +522,9 @@ bool BuildingGlPass::init() {
         "void main(){ FragColor=vec4(0.2,0.5,0.2,1.0); }\n";
     tree_prog = make_program("shaders/tree.vert", "shaders/tree.frag", kTreeFbVs, kTreeFbFs, "tree");
     tree_shadow_prog = 0;
-    load_city_tree("assets/models/oak_tree_realistic.glb", &tree_glb[0]);
-    load_city_tree("assets/models/pine_tree_realistic.glb", &tree_glb[1]);
-    load_city_tree("assets/models/palm_tree_realistic.glb", &tree_glb[2]);
+    load_city_tree("oak_tree_realistic.glb", &tree_glb[0]);
+    load_city_tree("pine_tree_realistic.glb", &tree_glb[1]);
+    load_city_tree("palm_tree_realistic.glb", &tree_glb[2]);
     std::printf("[gl] Loaded 3 tree models: oak (%u verts), pine (%u verts), palm (%u verts)\n",
                 tree_glb[0].nverts, tree_glb[1].nverts, tree_glb[2].nverts);
     std::printf("[gl] tree shadows disabled (perf) — 3 instanced draws, spawn cap %u\n", kTreeSpawnCap);

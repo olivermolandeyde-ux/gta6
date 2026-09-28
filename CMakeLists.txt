@@ -203,7 +203,8 @@ else()
         "SDL2 is required for leonida_city. macOS: brew install sdl2")
 endif()
 if(APPLE)
-    target_link_libraries(leonida_city PRIVATE "-framework OpenGL")
+    target_link_libraries(leonida_city PRIVATE
+        "-framework OpenGL" "-framework ImageIO" "-framework CoreGraphics" "-framework CoreFoundation")
 endif()
 
 add_executable(leonida_full_sandbox

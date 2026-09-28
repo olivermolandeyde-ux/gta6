@@ -5,14 +5,23 @@
 #include <cstdlib>
 #include <cstring>
 
+#ifndef LEONIDA_SOURCE_DIR
+#define LEONIDA_SOURCE_DIR "."
+#endif
+
 #if defined(__APPLE__)
 #define GL_SILENCE_DEPRECATION
 #include <OpenGL/gl3.h>
+#include <CoreFoundation/CoreFoundation.h>
+#include <CoreGraphics/CoreGraphics.h>
+#include <ImageIO/ImageIO.h>
+#include <mach-o/dyld.h>
 #else
 #include <SDL.h>
 #define GL_GLEXT_PROTOTYPES 1
 #include <SDL_opengl.h>
 #endif
+#include <unistd.h>
 
 namespace engine {
 namespace {
@@ -400,6 +409,63 @@ bool png_decode_rgba(const u8* src, u32 slen, u8** out_rgba, u32* out_w, u32* ou
     *out_w = w;
     *out_h = h;
     return true;
+}
+
+#if defined(__APPLE__)
+bool imageio_decode_rgba(const u8* src, u32 slen, u8** out_rgba, u32* out_w, u32* out_h) {
+    CFDataRef data = CFDataCreate(kCFAllocatorDefault, src, static_cast<CFIndex>(slen));
+    if (!data) {
+        return false;
+    }
+    CGImageSourceRef isrc = CGImageSourceCreateWithData(data, nullptr);
+    CFRelease(data);
+    if (!isrc) {
+        return false;
+    }
+    CGImageRef img = CGImageSourceCreateImageAtIndex(isrc, 0, nullptr);
+    CFRelease(isrc);
+    if (!img) {
+        return false;
+    }
+    const u32 w = static_cast<u32>(CGImageGetWidth(img));
+    const u32 h = static_cast<u32>(CGImageGetHeight(img));
+    if (!w || !h) {
+        CGImageRelease(img);
+        return false;
+    }
+    u8* rgba = static_cast<u8*>(std::malloc(w * h * 4));
+    if (!rgba) {
+        CGImageRelease(img);
+        return false;
+    }
+    CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+    CGContextRef ctx = CGBitmapContextCreate(rgba, w, h, 8, static_cast<size_t>(w) * 4, cs,
+                                             static_cast<CGBitmapInfo>(kCGImageAlphaPremultipliedLast)
+                                                 | kCGBitmapByteOrder32Big);
+    CGColorSpaceRelease(cs);
+    if (!ctx) {
+        std::free(rgba);
+        CGImageRelease(img);
+        return false;
+    }
+    std::memset(rgba, 0, w * h * 4);
+    CGContextDrawImage(ctx, CGRectMake(0, 0, w, h), img);
+    CGContextRelease(ctx);
+    CGImageRelease(img);
+    *out_rgba = rgba;
+    *out_w = w;
+    *out_h = h;
+    return true;
+}
+#endif
+
+bool decode_image_rgba(const u8* src, u32 slen, u8** out_rgba, u32* out_w, u32* out_h) {
+#if defined(__APPLE__)
+    if (imageio_decode_rgba(src, slen, out_rgba, out_w, out_h)) {
+        return true;
+    }
+#endif
+    return png_decode_rgba(src, slen, out_rgba, out_w, out_h);
 }
 
 // --- tiny JSON ---
@@ -1052,28 +1118,35 @@ bool load_tree_glb(const char* path, TreeGlb* out) {
     }
     std::memcpy(json_z, json, json_len);
     json_z[json_len] = 0;
-    JNode nodes[8192];
+    const u32 jcap = 65536;
+    JNode* nodes = static_cast<JNode*>(std::malloc(sizeof(JNode) * jcap));
+    if (!nodes) {
+        std::free(json_z);
+        std::free(file);
+        return false;
+    }
     JDoc doc{};
     doc.nodes = nodes;
-    doc.cap = 8192;
+    doc.cap = jcap;
     doc.n = 1; // 0 unused so child=0 means empty
     const char* jp = json_z;
     u32 root = 0;
     if (!j_parse_value(&doc, &jp, &root)) {
         std::printf("[gl] tree glb JSON parse failed %s\n", path);
+        std::free(nodes);
         std::free(json_z);
         std::free(file);
         return false;
     }
     doc.root = root;
 
-    unsigned tex_cache[8];
+    unsigned tex_cache[32];
     std::memset(tex_cache, 0, sizeof(tex_cache));
     u32 ntex = 0;
     const JNode* textures = j_field(&doc, root, "textures");
     const JNode* images = j_field(&doc, root, "images");
     if (textures && textures->kind == JK_ARR) {
-        for (u32 c = textures->child; c != 0 && ntex < 8; c = doc.nodes[c].next) {
+        for (u32 c = textures->child; c != 0 && ntex < 32; c = doc.nodes[c].next) {
             const u32 src_i = j_idx(&doc, c, "source");
             unsigned tex = 0;
             if (images) {
@@ -1086,7 +1159,7 @@ bool load_tree_glb(const char* path, TreeGlb* out) {
                 if (off + bl <= bin_len) {
                     u8* rgba = nullptr;
                     u32 w = 0, h = 0;
-                    if (png_decode_rgba(bin + off, bl, &rgba, &w, &h)) {
+                    if (decode_image_rgba(bin + off, bl, &rgba, &w, &h)) {
                         tex = upload_rgba(rgba, w, h);
                         std::free(rgba);
                     }
@@ -1130,9 +1203,93 @@ bool load_tree_glb(const char* path, TreeGlb* out) {
         }
     }
     glBindVertexArray(0);
+    std::free(nodes);
     std::free(json_z);
     std::free(file);
+    std::printf("[gl] tree glb %s prims=%u verts=%u bytes=%ld\n", path, out->nprims, out->nverts,
+                static_cast<long>(sz));
+    std::fflush(stdout);
     return out->nprims > 0;
+}
+
+bool try_load_path(const char* path, TreeGlb* out) {
+    FILE* f = std::fopen(path, "rb");
+    if (!f) {
+        return false;
+    }
+    std::fclose(f);
+    std::printf("[gl] found tree model %s\n", path);
+    std::fflush(stdout);
+    return load_tree_glb(path, out);
+}
+
+void dir_of(const char* path, char* dst, u32 cap) {
+    dst[0] = 0;
+    if (!path) {
+        return;
+    }
+    u32 last = 0;
+    u32 n = 0;
+    while (path[n] && n + 1 < cap) {
+        if (path[n] == '/') {
+            last = n;
+        }
+        ++n;
+    }
+    if (n >= cap) {
+        n = cap - 1;
+    }
+    const u32 len = last > 0 ? last : n;
+    std::memcpy(dst, path, len);
+    dst[len] = 0;
+}
+
+bool find_and_load_tree_glb(const char* filename, TreeGlb* out) {
+    char cwd[512];
+    cwd[0] = 0;
+    if (!getcwd(cwd, sizeof(cwd))) {
+        cwd[0] = '.';
+        cwd[1] = 0;
+    }
+    char exe_dir[512];
+    exe_dir[0] = 0;
+#if defined(__APPLE__)
+    char exe[512];
+    u32 esz = sizeof(exe);
+    if (_NSGetExecutablePath(exe, &esz) == 0) {
+        dir_of(exe, exe_dir, sizeof(exe_dir));
+    }
+#endif
+    const char* cands[12];
+    char buf[12][768];
+    u32 n = 0;
+    auto add = [&](const char* fmt, const char* a) {
+        if (n >= 12) {
+            return;
+        }
+        std::snprintf(buf[n], sizeof(buf[n]), fmt, a, filename);
+        cands[n] = buf[n];
+        ++n;
+    };
+    add("%s/assets/models/%s", LEONIDA_SOURCE_DIR);
+    add("%s/assets/models/%s", cwd);
+    add("%s/../assets/models/%s", cwd);
+    add("%s/assets/models/%s", ".");
+    add("%s/assets/models/%s", "..");
+    if (exe_dir[0]) {
+        add("%s/assets/models/%s", exe_dir);
+        add("%s/../assets/models/%s", exe_dir);
+        add("%s/../../assets/models/%s", exe_dir);
+    }
+    add("%s/build/assets/models/%s", LEONIDA_SOURCE_DIR);
+    for (u32 i = 0; i < n; ++i) {
+        if (try_load_path(cands[i], out)) {
+            return true;
+        }
+    }
+    std::printf("[gl] tree glb not found: %s (drop it in assets/models/)\n", filename);
+    std::fflush(stdout);
+    return false;
 }
 
 void tree_glb_shutdown(TreeGlb* t) {

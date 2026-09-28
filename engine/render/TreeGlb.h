@@ -4,7 +4,7 @@
 
 namespace engine {
 
-inline constexpr u32 kTreePrimCap     = 8;
+inline constexpr u32 kTreePrimCap     = 32;
 inline constexpr u32 kTreeKindCount   = 3;
 inline constexpr u32 kTreeInstanceCap = 300;
 inline constexpr u32 kTreeSpawnCap    = 280;
@@ -29,6 +29,8 @@ struct TreeGlb {
 };
 
 [[nodiscard]] bool load_tree_glb(const char* path, TreeGlb* out);
+// Searches cwd, LEONIDA_SOURCE_DIR, exe-relative, and build/assets for name.
+[[nodiscard]] bool find_and_load_tree_glb(const char* filename, TreeGlb* out);
 void               tree_glb_shutdown(TreeGlb* t);
 void               tree_glb_set_instances(TreeGlb* t, const float* mats16, u32 count);
 
