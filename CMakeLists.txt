@@ -40,6 +40,9 @@ add_library(leonida_core STATIC
     engine/network/NetworkCore.cpp
     engine/network/InterestManagement.cpp
     engine/network/StateReplication.cpp
+    engine/audio/AudioEngine.cpp
+    engine/eco/WeatherSystem.cpp
+    engine/vfx/ParticleSystem.cpp
 )
 
 target_include_directories(leonida_core PUBLIC
@@ -80,6 +83,11 @@ add_executable(leonida_phase7_sandbox
     sandbox/phase7_network_sandbox.cpp
 )
 target_link_libraries(leonida_phase7_sandbox PRIVATE leonida_core)
+
+add_executable(leonida_phase8_sandbox
+    sandbox/phase8_audio_weather_sandbox.cpp
+)
+target_link_libraries(leonida_phase8_sandbox PRIVATE leonida_core)
 
 if(UNIX)
     target_link_libraries(leonida_core PUBLIC pthread)

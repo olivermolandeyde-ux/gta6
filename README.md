@@ -2,7 +2,7 @@
 
 Custom C++20 core for a 1:1 open-world simulation. **No CRT heap on the simulation path. No garbage collector. No generic `Prop` base class.**
 
-This repository contains **MICRO-PHASE 1–7**: memory, ECS, render, unique objects, vehicle dynamics, pedestrian AI/IK, streaming/traffic/power, and client-server AOI replication (server authority, client prediction).
+This repository contains **MICRO-PHASE 1–8**: memory, ECS, render, objects, vehicles, AI/IK, streaming, net AOI, spatial audio, weather/friction, and particles.
 
 ## Memory domains
 
@@ -39,6 +39,7 @@ cmake --build build
 ./build/leonida_phase5_sandbox
 ./build/leonida_phase6_sandbox
 ./build/leonida_phase7_sandbox
+./build/leonida_phase8_sandbox
 ```
 
 Shaders live in `shaders/MasterPBR.hlsl` (GGX + Smith + Schlick, gamma 2.2) and `shaders/SkinSSS.hlsl` (wrapped-Lambert + pre-integrated LUT). CMake stages them into the build directory and, if `dxc` is on PATH, compiles `PS_Main` to `MasterPBR.ps.cso`.
@@ -53,4 +54,5 @@ Shaders live in `shaders/MasterPBR.hlsl` (GGX + Smith + Schlick, gamma 2.2) and 
 4. **MICRO-PHASE 4** — Vehicle suspension / Ackermann + clearcoat & tire shaders
 5. **MICRO-PHASE 5** — Pedestrian flee AI, two-bone IK, animation state machine
 6. **MICRO-PHASE 6** — World streaming, traffic, power grid
-7. **MICRO-PHASE 7** — Client-server AOI replication *(this tree)*
+7. **MICRO-PHASE 7** — Client-server AOI replication
+8. **MICRO-PHASE 8** — Spatial audio, weather/surface, particles *(this tree)*
