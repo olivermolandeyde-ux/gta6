@@ -49,6 +49,12 @@ add_library(leonida_core STATIC
     engine/gameplay/InventorySystem.cpp
     engine/gameplay/PlayerController.cpp
     engine/ui/HUDSystem.cpp
+    engine/mission/MissionSystem.cpp
+    engine/mission/DialogSystem.cpp
+    engine/mission/ObjectiveTracker.cpp
+    engine/mission/MissionMarker.cpp
+    engine/mission/RewardSystem.cpp
+    engine/mission/MissionDataLoader.cpp
 )
 
 target_include_directories(leonida_core PUBLIC
@@ -69,6 +75,10 @@ leonida_sandbox(leonida_phase6_sandbox sandbox/phase6_world_sandbox.cpp)
 leonida_sandbox(leonida_phase7_sandbox sandbox/phase7_network_sandbox.cpp)
 leonida_sandbox(leonida_phase8_sandbox sandbox/phase8_audio_weather_sandbox.cpp)
 leonida_sandbox(leonida_phase11_sandbox sandbox/phase11_gameplay_sandbox.cpp)
+leonida_sandbox(leonida_phase12_sandbox sandbox/phase12_mission_sandbox.cpp)
+target_compile_definitions(leonida_phase12_sandbox PRIVATE
+    LEONIDA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
 
 add_executable(leonida_full_sandbox
     sandbox/FullIntegrationSandbox.cpp

@@ -9,7 +9,7 @@ A C++20 open-world simulation core built from scratch. No generic `Prop` / `Acto
   ██╔═══╝ ██╔══██╗██║   ██║██   ██║██╔══╝  ██║        ██║
   ██║     ██║  ██║╚██████╔╝╚█████╔╝███████╗╚██████╗   ██║
   ╚═╝     ╚═╝  ╚═╝ ╚═════╝  ╚════╝ ╚══════╝ ╚═════╝   ╚═╝
-  PHASE 11 — 9mm ballistics · inventory grid · armor-first damage · HUD
+  PHASE 12 — LEONMISS missions · dialog trees · objective trackers · HUD blips
 ```
 
 ## Architecture
@@ -60,6 +60,7 @@ tools/.venv/bin/python tools/citygen/master_generate.py --size-km 2 --seed 42 --
 9. Python citygen → `LEONCELL` binary prefabs  
 10. Master build + 600-frame full integration sandbox  
 11. Ballistics, dedicated weapons, vehicle enter/exit, grid inventory, HUD  
+12. Data-driven missions (`LEONMISS`), dialog trees, objective trackers, rewards  
 
 ## Full sandbox (verified)
 
