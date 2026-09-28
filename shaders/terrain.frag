@@ -16,7 +16,7 @@ void main() {
         wild = vec3(0.86, 0.86, 0.88);
     }
     vec2 d = min(vWorld.xz, vec2(2400.0) - vWorld.xz);
-    float urban = smoothstep(-80.0, 0.0, min(d.x, d.y));
+    float urban = smoothstep(-220.0, 0.0, min(d.x, d.y));
     vec3 city = vec3(0.34, 0.34, 0.32);
     o = vec4(mix(wild, city, urban), 1.0);
 }

@@ -236,6 +236,7 @@ void set_building_uniforms(unsigned prog, const float* view, const float* proj, 
     glUniform1f(glGetUniformLocation(prog, "time_of_day"), time_of_day);
     glUniform1f(glGetUniformLocation(prog, "floors"), 8.f);
     glUniform1i(glGetUniformLocation(prog, "district"), 1);
+    glUniform1i(glGetUniformLocation(prog, "windowStyle"), 0);
 }
 
 } // namespace
@@ -317,6 +318,16 @@ void BuildingGlPass::buildMesh(World& world) {
             const float cz = static_cast<float>(j) * pitch;
             emit_aabb_quad(verts, &n, cx - half_w, cz - half_w, cx + half_w, cz + half_w, y, 0.22f, 0.f,
                            0.22f, 0.f, 0.22f, 0.f, 0.22f, 0.f);
+            const float yx = y + 0.04f;
+            const float hw = 4.0f;
+            emit_aabb_quad(verts, &n, cx - half_w - 3.2f, cz - hw, cx - half_w, cz + hw, yx, 0.f, -1.f, 1.f,
+                           -1.f, 1.f, -1.f, 0.f, -1.f);
+            emit_aabb_quad(verts, &n, cx + half_w, cz - hw, cx + half_w + 3.2f, cz + hw, yx, 0.f, -1.f, 1.f,
+                           -1.f, 1.f, -1.f, 0.f, -1.f);
+            emit_aabb_quad(verts, &n, cx - hw, cz - half_w - 3.2f, cx + hw, cz - half_w, yx, 0.f, -1.f, 1.f,
+                           -1.f, 1.f, -1.f, 0.f, -1.f);
+            emit_aabb_quad(verts, &n, cx - hw, cz + half_w, cx + hw, cz + half_w + 3.2f, yx, 0.f, -1.f, 1.f,
+                           -1.f, 1.f, -1.f, 0.f, -1.f);
         }
     }
     for (u32 j = 0; j < nline; ++j) {
@@ -392,7 +403,20 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
         glUniform1f(glGetUniformLocation(building_prog, "emissionBoost"), 0.f);
         glUniform1f(glGetUniformLocation(building_prog, "floors"), static_cast<float>(b->num_floors));
         glUniform1i(glGetUniformLocation(building_prog, "district"), static_cast<int>(b->district));
+        glUniform1i(glGetUniformLocation(building_prog, "windowStyle"), static_cast<int>(b->window_style));
         glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, nullptr);
+        if (b->roof_style == 1) {
+            float3 ridge{b->position.x, b->position.y + b->height, b->position.z};
+            model_trs(model, ridge, b->width * 0.55f, 3.2f, b->depth * 0.55f);
+            glUniformMatrix4fv(glGetUniformLocation(building_prog, "model"), 1, GL_FALSE, model);
+            glUniform1i(glGetUniformLocation(building_prog, "district"), 3);
+            glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, nullptr);
+        } else if (b->roof_style == 2) {
+            float3 step{b->position.x, b->position.y + b->height, b->position.z};
+            model_trs(model, step, b->width * 0.62f, 10.f, b->depth * 0.62f);
+            glUniformMatrix4fv(glGetUniformLocation(building_prog, "model"), 1, GL_FALSE, model);
+            glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, nullptr);
+        }
         if (b->height > 14.f) {
             float3 hvac{b->position.x + b->width * 0.18f, b->position.y + b->height,
                         b->position.z - b->depth * 0.16f};
@@ -433,6 +457,37 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
         glUniform3f(glGetUniformLocation(building_prog, "albedo"), 1.f, 0.85f, 0.4f);
         glUniform1f(glGetUniformLocation(building_prog, "emissionBoost"), 1.4f);
         glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, nullptr);
+    }
+    glUniform1f(glGetUniformLocation(building_prog, "emissionBoost"), 0.f);
+    glUniform1i(glGetUniformLocation(building_prog, "district"), 3);
+    const float tree_y = kCityPlateauY;
+    for (u32 edge = 0; edge < 4; ++edge) {
+        for (float t = 40.f; t < kCityExtentM - 40.f; t += 48.f) {
+            const float g = t / kCityBlockPitch;
+            const float f = g - std::floor(g);
+            if (f < 0.18f || f > 0.82f) {
+                continue;
+            }
+            float3 p{};
+            if (edge == 0) {
+                p = float3{t, tree_y, 12.5f};
+            } else if (edge == 1) {
+                p = float3{t, tree_y, kCityExtentM - 12.5f};
+            } else if (edge == 2) {
+                p = float3{12.5f, tree_y, t};
+            } else {
+                p = float3{kCityExtentM - 12.5f, tree_y, t};
+            }
+            model_trs(model, p, 0.45f, 4.5f, 0.45f);
+            glUniformMatrix4fv(glGetUniformLocation(building_prog, "model"), 1, GL_FALSE, model);
+            glUniform3f(glGetUniformLocation(building_prog, "albedo"), 0.32f, 0.22f, 0.12f);
+            glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, nullptr);
+            float3 canopy{p.x, p.y + 5.5f, p.z};
+            model_trs(model, canopy, 4.2f, 3.6f, 4.2f);
+            glUniformMatrix4fv(glGetUniformLocation(building_prog, "model"), 1, GL_FALSE, model);
+            glUniform3f(glGetUniformLocation(building_prog, "albedo"), 0.20f, 0.42f, 0.18f);
+            glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, nullptr);
+        }
     }
     glBindVertexArray(0);
     static bool logged = false;

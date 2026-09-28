@@ -16,7 +16,8 @@ vec3 skyColor(vec3 V, vec3 S, float turb) {
     float mie = (1.0 - g * g) / max(pow(1.0 + g * g - 2.0 * g * ct, 1.5), 1e-4);
     vec3 c = (betaR * ray + betaM * mie) * 1000.0;
     c += vec3(1.0, 0.9, 0.7) * smoothstep(0.9995, 0.9999, ct) * 10.0;
-    c *= mix(0.3, 1.0, pow(max(V.y, 0.0), 0.4));
+    c *= mix(0.45, 1.15, pow(max(V.y, 0.0), 0.35));
+    c = mix(vec3(0.62, 0.72, 0.88), c, clamp(V.y * 1.4 + 0.15, 0.0, 1.0));
     if (V.y < 0.0) c *= 0.15;
     return c;
 }

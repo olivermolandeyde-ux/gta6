@@ -110,7 +110,7 @@ int main(int argc, char** argv) {
         terrain.height = window.height;
 
         if (frames >= 8) {
-            yaw += window.mouseDeltaX * 0.005f;
+            yaw -= window.mouseDeltaX * 0.005f;
             pitch -= window.mouseDeltaY * 0.005f;
             pitch = clampf(pitch, -0.6f, 1.2f);
         }
@@ -130,10 +130,10 @@ int main(int argc, char** argv) {
             cam = float3_sub(cam, float3_scale(fwd, move * dt));
         }
         if (window.isKeyDown('a') || window.isKeyDown('A')) {
-            cam = float3_sub(cam, float3_scale(right, move * dt));
+            cam = float3_add(cam, float3_scale(right, move * dt));
         }
         if (window.isKeyDown('d') || window.isKeyDown('D')) {
-            cam = float3_add(cam, float3_scale(right, move * dt));
+            cam = float3_sub(cam, float3_scale(right, move * dt));
         }
         if (window.isKeyDown('q') || window.isKeyDown('Q')) {
             cam.y -= move * dt;

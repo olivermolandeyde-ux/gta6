@@ -76,32 +76,55 @@ float fbm(float x, float z) {
 
 float3 masonry_color(u32 seed, u32 district) {
     const float u0 = unit(mix32(seed));
-    const float u1 = unit(mix32(seed ^ 0x9E3779B9u));
+    const float3 downtown[3]  = {{0.62f, 0.64f, 0.70f}, {0.55f, 0.57f, 0.60f}, {0.72f, 0.74f, 0.76f}};
+    const float3 commercial[3] = {{0.70f, 0.68f, 0.62f}, {0.58f, 0.60f, 0.64f}, {0.66f, 0.58f, 0.50f}};
+    const float3 apt[4] = {{0.74f, 0.68f, 0.56f}, {0.78f, 0.74f, 0.68f}, {0.62f, 0.48f, 0.40f},
+                           {0.72f, 0.72f, 0.70f}};
+    const float3 house[5] = {{0.76f, 0.62f, 0.48f}, {0.82f, 0.80f, 0.74f}, {0.55f, 0.42f, 0.34f},
+                             {0.70f, 0.58f, 0.46f}, {0.62f, 0.70f, 0.78f}};
+    const float3 shed[2]  = {{0.48f, 0.46f, 0.42f}, {0.42f, 0.44f, 0.40f}};
+    const float3 shop[3]  = {{0.80f, 0.55f, 0.42f}, {0.55f, 0.62f, 0.70f}, {0.78f, 0.72f, 0.52f}};
     if (district == kDistrictDowntown) {
-        return float3{0.58f + u0 * 0.10f, 0.60f + u1 * 0.08f, 0.64f + u0 * 0.06f};
+        return downtown[seed % 3u];
+    }
+    if (district == kDistrictCommercial) {
+        return commercial[seed % 3u];
     }
     if (district == kDistrictIndustrial) {
-        return float3{0.50f + u0 * 0.08f, 0.48f + u1 * 0.05f, 0.44f};
+        return shed[seed % 2u];
     }
-    const float3 pal[4] = {
-        {0.72f, 0.66f, 0.54f}, {0.78f, 0.74f, 0.66f}, {0.62f, 0.50f, 0.40f}, {0.70f, 0.70f, 0.68f},
-    };
-    return pal[seed % 4u];
+    if (district == kDistrictSuburban) {
+        return house[seed % 5u];
+    }
+    if (district == kDistrictRetail) {
+        return shop[seed % 3u];
+    }
+    (void)u0;
+    return apt[seed % 4u];
 }
 
 u32 district_for_block(u32 bx, u32 bz) {
-    const i32 dx = static_cast<i32>(bx) - 10;
-    const i32 dz = static_cast<i32>(bz) - 10;
-    const i32 cheb = dx < 0 ? -dx : dx;
-    const i32 cz = dz < 0 ? -dz : dz;
-    const i32 m = cheb > cz ? cheb : cz;
-    if (m <= 3) {
-        return kDistrictDowntown;
-    }
-    if (bx <= 2 || bz <= 2 || bx >= 17 || bz >= 17) {
+    if (bx >= 16 && bz <= 4) {
         return kDistrictIndustrial;
     }
-    return kDistrictResidential;
+    if (bx >= 8 && bx <= 11 && bz >= 8 && bz <= 11) {
+        return kDistrictDowntown;
+    }
+    if (bx == 10 || bz == 10) {
+        return kDistrictRetail;
+    }
+    const i32 dx = static_cast<i32>(bx) - 10;
+    const i32 dz = static_cast<i32>(bz) - 10;
+    const i32 adx = dx < 0 ? -dx : dx;
+    const i32 adz = dz < 0 ? -dz : dz;
+    const i32 m = adx > adz ? adx : adz;
+    if (m <= 4) {
+        return kDistrictCommercial;
+    }
+    if (m <= 7) {
+        return kDistrictResidential;
+    }
+    return kDistrictSuburban;
 }
 
 void spawn_front_window(World& world, const InstantiationRequest& req, const BuildingComponent& b,
@@ -119,20 +142,23 @@ void spawn_front_window(World& world, const InstantiationRequest& req, const Bui
 }
 
 void spawn_building(World& world, const InstantiationRequest& req, CityGenerator* gen, float cx, float cz,
-                    float width, float depth, u32 floors, u32 district, u32 seed) {
+                    float width, float depth, float height, u32 floors, u32 district, u32 seed, u32 roof,
+                    u32 windows) {
     const float gy = kCityPlateauY + 0.5f;
     BuildingComponent b{};
-    b.building_id  = gen->buildings_spawned + 1;
-    b.position     = float3{cx, gy, cz};
-    b.width        = width;
-    b.depth        = depth;
-    b.height       = static_cast<float>(floors) * kFloorH;
-    b.num_floors   = floors;
-    b.window_rows  = floors;
-    b.window_cols  = 6 + (floors > 20 ? 4 : 0);
-    b.albedo_color = masonry_color(seed, district);
-    b.roughness    = district == kDistrictDowntown ? 0.18f : 0.62f;
-    b.district     = district;
+    b.building_id   = gen->buildings_spawned + 1;
+    b.position      = float3{cx, gy, cz};
+    b.width         = width;
+    b.depth         = depth;
+    b.height        = height;
+    b.num_floors    = floors;
+    b.window_rows   = floors;
+    b.window_cols   = 6 + (floors > 20 ? 4 : 0);
+    b.albedo_color  = masonry_color(seed, district);
+    b.roughness     = district == kDistrictDowntown ? 0.18f : 0.62f;
+    b.district      = district;
+    b.roof_style    = roof;
+    b.window_style  = windows;
 
     TransformComponent xf{};
     xf.position[0] = cx;
@@ -159,7 +185,7 @@ float city_urban_mask(float x, float z) {
     const float dx = x < 0.f ? -x : (x > kCityExtentM ? x - kCityExtentM : 0.f);
     const float dz = z < 0.f ? -z : (z > kCityExtentM ? z - kCityExtentM : 0.f);
     const float outside = dx > dz ? dx : dz;
-    float t = outside / 80.f;
+    float t = outside / 220.f;
     t       = t < 0.f ? 0.f : (t > 1.f ? 1.f : t);
     t       = t * t * (3.f - 2.f * t);
     return 1.f - t;
@@ -280,35 +306,55 @@ void CityGenerator::generateCity(World& world, float3 city_center, float city_ra
                 origin_z + static_cast<float>(bz) * kCityBlockPitch + kCityStreetWidth * 0.5f + kSetback;
             const u32 seed = mix32(bx * 73856093u ^ bz * 19349663u ^ 83492791u);
 
+            const float cx0 = lot_x0 + lot * 0.5f;
+            const float cz0 = lot_z0 + lot * 0.5f;
             if (district == kDistrictDowntown) {
                 const u32 s      = mix32(seed + 3u);
-                const float bw   = lot * 0.92f;
-                const float bd   = lot * 0.92f;
-                const u32 floors = 15u + (s % 14u); // 63–118 m
-                const float cx   = lot_x0 + lot * 0.5f;
-                const float cz   = lot_z0 + lot * 0.5f;
-                spawn_building(world, req, this, cx, cz, bw, bd, floors, district, s);
+                const u32 floors = 15u + (s % 14u);
+                spawn_building(world, req, this, cx0, cz0, lot * 0.90f, lot * 0.90f,
+                               static_cast<float>(floors) * kFloorH, floors, district, s, 2u, 1u);
+            } else if (district == kDistrictCommercial) {
+                const u32 s      = mix32(seed + 11u);
+                const u32 floors = 6u + (s % 5u); // 25–42 m
+                spawn_building(world, req, this, cx0, cz0, lot * 0.78f, lot * 0.70f,
+                               static_cast<float>(floors) * kFloorH, floors, district, s, 0u, 0u);
             } else if (district == kDistrictIndustrial) {
-                const u32 s      = mix32(seed + 9u);
-                const float bw   = lot * (0.72f + unit(s) * 0.18f);
-                const float bd   = lot * (0.55f + unit(mix32(s + 3)) * 0.25f);
-                const u32 floors = 5u + (s % 4u);
-                const float cx   = lot_x0 + lot * 0.5f;
-                const float cz   = lot_z0 + lot * 0.5f;
-                spawn_building(world, req, this, cx, cz, bw, bd, floors, district, s);
-            } else {
-                const float gap = 2.0f;
+                const u32 s = mix32(seed + 9u);
+                spawn_building(world, req, this, cx0, cz0, lot * 0.82f, lot * 0.60f,
+                               8.f + unit(s) * 7.f, 3u, district, s, 0u, 2u);
+            } else if (district == kDistrictRetail) {
+                for (u32 ix = 0; ix < 3 && buildings_spawned < num_buildings; ++ix) {
+                    const u32 s = mix32(seed + ix * 19u);
+                    const float w = 16.f + unit(s) * 8.f;
+                    const float d = 12.f + unit(mix32(s + 2)) * 6.f;
+                    const float cx = lot_x0 + 8.f + static_cast<float>(ix) * (w + 4.f);
+                    spawn_building(world, req, this, cx, lot_z0 + d * 0.5f, w, d, 4.f + unit(s) * 4.f, 2u,
+                                   district, s, 0u, 0u);
+                }
+            } else if (district == kDistrictResidential) {
+                const float gap = 3.0f;
                 const float bw  = (lot - gap) * 0.5f;
-                const float bd  = lot * (0.42f + unit(seed) * 0.18f);
-                for (u32 ix = 0; ix < 2; ++ix) {
-                    if (buildings_spawned >= num_buildings) {
-                        break;
-                    }
+                for (u32 ix = 0; ix < 2 && buildings_spawned < num_buildings; ++ix) {
                     const u32 s      = mix32(seed + ix * 23u);
-                    const u32 floors = 5u + (s % 6u);
+                    const u32 floors = 4u + (s % 4u); // 17–29 m
                     const float cx   = lot_x0 + bw * 0.5f + static_cast<float>(ix) * (bw + gap);
-                    const float cz   = lot_z0 + bd * 0.5f + unit(mix32(s + 5)) * (lot - bd) * 0.35f;
-                    spawn_building(world, req, this, cx, cz, bw, bd, floors, district, s);
+                    spawn_building(world, req, this, cx, cz0, bw, lot * 0.55f,
+                                   static_cast<float>(floors) * kFloorH, floors, district, s, 0u, 0u);
+                }
+            } else {
+                // Suburban: skip some lots so the edge thins into parks.
+                if (unit(seed) < 0.38f) {
+                    continue;
+                }
+                const u32 n_homes = 1u + (mix32(seed) % 2u);
+                for (u32 ix = 0; ix < n_homes && buildings_spawned < num_buildings; ++ix) {
+                    const u32 s = mix32(seed + ix * 29u);
+                    const float w = 10.f + unit(s) * 6.f;
+                    const float d = 8.f + unit(mix32(s + 4)) * 5.f;
+                    const float cx = lot_x0 + 8.f + static_cast<float>(ix) * 28.f + unit(s) * 6.f;
+                    const float cz = lot_z0 + 10.f + unit(mix32(s + 7)) * 20.f;
+                    spawn_building(world, req, this, cx, cz, w, d, 5.5f + unit(s) * 4.5f, 2u, district, s,
+                                   1u, 2u);
                 }
             }
         }
@@ -317,31 +363,55 @@ void CityGenerator::generateCity(World& world, float3 city_center, float city_ra
     InstantiationRequest lamp_req{};
     lamp_req.domain      = InstantiationDomain::PersistentWorld;
     lamp_req.debug_label = "city_lamp";
+    const float sidewalk = kCityStreetWidth * 0.5f + 1.6f;
+    const float span     = kCityBlockPitch * static_cast<float>(kCityBlocks);
+    auto spawn_lamp = [&](float x, float z) {
+        StreetLightSpawnDesc lamp{};
+        lamp.light_handle        = 500u + lights_spawned;
+        lamp.power_grid_node_id  = kPowerNode;
+        lamp.flicker_probability = 0.01f;
+        Entity e                 = instantiate_street_light(world, lamp_req, lamp);
+        TransformComponent xf{};
+        xf.position[0] = x;
+        xf.position[1] = kCityPlateauY;
+        xf.position[2] = z;
+        xf.rotation[3] = 1.f;
+        xf.scale[0]    = 0.18f;
+        xf.scale[1]    = 6.4f;
+        xf.scale[2]    = 0.18f;
+        RenderableComponent rc{};
+        rc.mesh_id      = 402;
+        rc.material_id  = 22;
+        rc.transform_id = 500u + lights_spawned;
+        world.add_component(e, xf);
+        world.add_component(e, rc);
+        ++lights_spawned;
+    };
+    auto near_crossing = [](float t) {
+        const float g = t / kCityBlockPitch;
+        const float f = g - std::floor(g);
+        return f < 0.16f || f > 0.84f;
+    };
+    for (u32 j = 0; j <= kCityBlocks; ++j) {
+        const float z = origin_z + static_cast<float>(j) * kCityBlockPitch;
+        u32 k = 0;
+        for (float x = origin_x + 24.f; x < origin_x + span - 24.f; x += 36.f, ++k) {
+            if (near_crossing(x - origin_x)) {
+                continue;
+            }
+            const float side = (k & 1u) ? sidewalk : -sidewalk;
+            spawn_lamp(x, z + side);
+        }
+    }
     for (u32 i = 0; i <= kCityBlocks; ++i) {
-        for (u32 j = 0; j <= kCityBlocks; ++j) {
-            const float x = origin_x + static_cast<float>(i) * kCityBlockPitch;
-            const float z = origin_z + static_cast<float>(j) * kCityBlockPitch;
-            const float y = kCityPlateauY;
-            StreetLightSpawnDesc lamp{};
-            lamp.light_handle        = 500u + lights_spawned;
-            lamp.power_grid_node_id  = kPowerNode;
-            lamp.flicker_probability = 0.01f;
-            Entity e                 = instantiate_street_light(world, lamp_req, lamp);
-            TransformComponent xf{};
-            xf.position[0] = x + 8.5f;
-            xf.position[1] = y;
-            xf.position[2] = z + 8.5f;
-            xf.rotation[3] = 1.f;
-            xf.scale[0]    = 0.22f;
-            xf.scale[1]    = 7.2f;
-            xf.scale[2]    = 0.22f;
-            RenderableComponent rc{};
-            rc.mesh_id      = 402;
-            rc.material_id  = 22;
-            rc.transform_id = 500u + lights_spawned;
-            world.add_component(e, xf);
-            world.add_component(e, rc);
-            ++lights_spawned;
+        const float x = origin_x + static_cast<float>(i) * kCityBlockPitch;
+        u32 k = 0;
+        for (float z = origin_z + 24.f; z < origin_z + span - 24.f; z += 36.f, ++k) {
+            if (near_crossing(z - origin_z)) {
+                continue;
+            }
+            const float side = (k & 1u) ? sidewalk : -sidewalk;
+            spawn_lamp(x + side, z);
         }
     }
 

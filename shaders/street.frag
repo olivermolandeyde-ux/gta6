@@ -12,6 +12,13 @@ void main() {
     // 26 m total: 20 m asphalt + 3 m sidewalk each side → sidewalk at ax > 10/26.
     float sidewalkMask = step(0.385, ax);
     float curbMask = step(0.365, ax) * (1.0 - sidewalkMask);
+    float asphaltNoise = 0.04 * fract(sin(dot(UV, vec2(12.9898, 78.233))) * 43758.5453);
+    asphalt *= (0.92 + asphaltNoise);
+    if (UV.y < 0.0) {
+        float stripe = step(0.45, fract(UV.x * 7.0));
+        FragColor = vec4(mix(asphalt, white, stripe), 1.0);
+        return;
+    }
     float centerDash = (1.0 - step(0.014, abs(UV.x - 0.5))) * step(0.42, fract(UV.y * 5.0));
     float lane = (1.0 - step(0.010, abs(ax - 0.12))) * 0.55;
     vec3 c = mix(asphalt, curb, curbMask);

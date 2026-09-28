@@ -107,7 +107,7 @@ int main(int argc, char** argv) {
         pass.width = window.width;
         pass.height = window.height;
 
-        yaw += window.mouseDeltaX * 0.005f;
+        yaw -= window.mouseDeltaX * 0.005f;
         pitch -= window.mouseDeltaY * 0.005f;
         pitch = clampf(pitch, -1.5f, 1.5f);
         const float cy = std::cos(yaw);
@@ -126,10 +126,10 @@ int main(int argc, char** argv) {
             cam = float3_sub(cam, float3_scale(fwd, move * dt));
         }
         if (window.isKeyDown('a') || window.isKeyDown('A')) {
-            cam = float3_sub(cam, float3_scale(right, move * dt));
+            cam = float3_add(cam, float3_scale(right, move * dt));
         }
         if (window.isKeyDown('d') || window.isKeyDown('D')) {
-            cam = float3_add(cam, float3_scale(right, move * dt));
+            cam = float3_sub(cam, float3_scale(right, move * dt));
         }
         if (window.isKeyDown('q') || window.isKeyDown('Q')) {
             cam.y -= move * dt;

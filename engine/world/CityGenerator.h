@@ -14,10 +14,12 @@ inline constexpr float kCityExtentM     = 2400.f;
 inline constexpr float kCityPlateauY    = 5.f;
 inline constexpr float kCityCenterM     = 1200.f;
 
-// 0 downtown glass, 1 residential masonry, 2 industrial shed.
 inline constexpr u32 kDistrictDowntown    = 0;
-inline constexpr u32 kDistrictResidential = 1;
-inline constexpr u32 kDistrictIndustrial  = 2;
+inline constexpr u32 kDistrictCommercial  = 1;
+inline constexpr u32 kDistrictResidential = 2;
+inline constexpr u32 kDistrictSuburban    = 3;
+inline constexpr u32 kDistrictIndustrial  = 4;
+inline constexpr u32 kDistrictRetail      = 5;
 
 // Lot / facade massing. Not a generic Prop / Actor.
 struct BuildingComponent {
@@ -32,6 +34,8 @@ struct BuildingComponent {
     float3 albedo_color;
     float  roughness;
     u32    district;
+    u32    roof_style;   // 0 flat, 1 peaked, 2 stepped
+    u32    window_style; // 0 grid, 1 vertical, 2 sparse
 };
 
 // Carriageway segment. Not a generic Path.

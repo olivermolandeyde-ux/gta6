@@ -41,7 +41,7 @@ float htNatural(vec2 xz) {
 float cityMask(vec2 xz) {
     vec2 d = min(xz, vec2(2400.0) - xz);
     float edge = min(d.x, d.y);
-    return smoothstep(-80.0, 0.0, edge);
+    return smoothstep(-220.0, 0.0, edge);
 }
 float ht(vec2 xz) {
     return mix(htNatural(xz), 5.0, cityMask(xz));
