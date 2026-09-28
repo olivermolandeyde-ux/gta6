@@ -7,8 +7,10 @@
 #include "world/TerrainSystem.h"
 #include "world/WorldStreamer.h"
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <exception>
 
 #if !defined(__APPLE__)
 #include <unistd.h>
@@ -30,7 +32,10 @@ int main(int argc, char** argv) {
 
     MetalRenderer renderer{};
     renderer.init(window.getMetalLayer(), 1280, 720);
-    renderer.cameraPos = float3{48.f, 62.f, -96.f};
+    renderer.cameraPos = float3{80.f, 72.f, -140.f};
+    std::printf("[terrain] renderer pipeline_ok=%d fallback=%d\n", renderer.pipeline_ok ? 1 : 0,
+                renderer.fallback_mode ? 1 : 0);
+    std::fflush(stdout);
 
     InputSystem input{};
     std::memset(&input.currentState, 0, sizeof(input.currentState));
@@ -60,6 +65,27 @@ int main(int argc, char** argv) {
     TerrainHeightmapGenerator heightGen{};
     heightGen.generateHeightmap(heights, kMap, kMap, 42);
     heightGen.generateNormalmap(heights, kMap, kMap, normals);
+    {
+        u32 bad = 0;
+        float hmin = heights[0];
+        float hmax = heights[0];
+        for (u32 i = 0; i < kMap * kMap; ++i) {
+            const float h = heights[i];
+            if (!std::isfinite(h)) {
+                ++bad;
+            } else {
+                hmin = min_of(hmin, h);
+                hmax = max_of(hmax, h);
+            }
+        }
+        std::printf("[terrain] heightmap %ux%u nan/inf=%u min=%.2f max=%.2f textures=procedural_1x1\n",
+                    kMap, kMap, bad, hmin, hmax);
+        std::fflush(stdout);
+        if (bad > 0) {
+            std::printf("[terrain] heightmap invalid — enabling fallback quad\n");
+            renderer.fallback_mode = true;
+        }
+    }
 
     SkyComponent sky{};
     sky.time_of_day = 10.0f;
@@ -84,6 +110,7 @@ int main(int argc, char** argv) {
     u32 frames = 0;
     bool announced = false;
     while (!window.shouldClose) {
+        try {
         window.pollEvents();
         input.update();
 
@@ -108,7 +135,9 @@ int main(int argc, char** argv) {
         }
         renderer.cameraPos = cam;
         if (StreamObserverComponent* obs = world.get<StreamObserverComponent>(player)) {
-            obs->world_pos = float3{cam.x, 0.f, cam.z < 0.f ? 0.f : cam.z};
+            const float ox = cam.x < 0.f ? 0.f : cam.x;
+            const float oz = cam.z < 0.f ? 96.f : cam.z;
+            obs->world_pos = float3{ox, 0.f, oz};
         }
 
         world.begin_frame(frames);
@@ -128,6 +157,10 @@ int main(int argc, char** argv) {
         renderer.beginFrame();
         if (sky_now) {
             renderer.renderSky(*sky_now);
+        } else {
+            std::printf("[terrain] frame %u: SkyComponent missing, fallback clear\n", frames);
+            renderer.fallback_mode = true;
+            renderer.ensurePass();
         }
         if (clouds_now && sky_now) {
             renderer.renderClouds(*clouds_now, *sky_now);
@@ -135,6 +168,13 @@ int main(int argc, char** argv) {
         renderer.renderTerrain(world, engine.memory().frame(), heights, kMap, kMap);
         renderer.endFrame();
         ++frames;
+
+        if ((frames % 60u) == 0u) {
+            std::printf("[terrain] frame %u chunks=%u sky=%u clouds=%u fallback=%d\n", frames,
+                        renderer.recorded_terrain, renderer.recorded_sky, renderer.recorded_clouds,
+                        renderer.fallback_mode ? 1 : 0);
+            std::fflush(stdout);
+        }
 
         if (!announced && frames >= 8) {
             std::printf("TERRAIN & SKY COMPLETE — A procedurally generated landscape with dynamic "
@@ -150,6 +190,20 @@ int main(int argc, char** argv) {
 #endif
         if (frames > 60u * 60u * 8u) {
             break;
+        }
+        } catch (const std::exception& ex) {
+            std::printf("[terrain] CRASH frame %u: %s — switching to fallback quad\n", frames,
+                        ex.what());
+            std::fflush(stdout);
+            renderer.fallback_mode = true;
+            renderer.ensurePass();
+            renderer.endFrame();
+        } catch (...) {
+            std::printf("[terrain] CRASH frame %u: unknown exception — fallback quad\n", frames);
+            std::fflush(stdout);
+            renderer.fallback_mode = true;
+            renderer.ensurePass();
+            renderer.endFrame();
         }
     }
 

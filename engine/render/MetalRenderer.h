@@ -45,6 +45,21 @@ struct MetalRenderer {
     void* groundIndexBuffer;
     void* uniformBuffer;
     void* depthTexture;
+    void* skyPipeline;
+    void* cloudPipeline;
+    void* terrainPipeline;
+    void* fallbackPipeline;
+    void* currentCommandBuffer;
+    void* currentEncoder;
+    void* terrainGridVB;
+    void* terrainGridIB;
+    void* stubGrass;
+    void* stubRock;
+    void* stubSand;
+    void* stubSnow;
+    void* stubSplat;
+    void* skyUniformBuffer;
+    u32   terrainGridIndexCount;
 #else
     void* device;
     void* commandQueue;
@@ -68,6 +83,9 @@ struct MetalRenderer {
     u32   recorded_sky;
     u32   recorded_clouds;
     u32   recorded_terrain;
+    bool  pipeline_ok;
+    bool  fallback_mode;
+    bool  frame_presented;
 
     void init(void* windowHandle, int width, int height);
     void beginFrame();
@@ -78,6 +96,7 @@ struct MetalRenderer {
                        u32 hh);
     void endFrame();
     void shutdown();
+    void ensurePass();
 };
 
 } // namespace engine

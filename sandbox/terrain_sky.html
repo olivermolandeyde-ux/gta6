@@ -20,6 +20,8 @@ const gl=canvas.getContext('webgl2',{antialias:true,alpha:false});
 if(!gl) document.body.innerHTML='WebGL2 required';
 function resize(){canvas.width=innerWidth*devicePixelRatio;canvas.height=innerHeight*devicePixelRatio;gl.viewport(0,0,canvas.width,canvas.height);}
 addEventListener('resize',resize);resize();
+gl.clearColor(0.5, 0.7, 1.0, 1.0);
+gl.clear(gl.COLOR_BUFFER_BIT);
 
 const vsSky=`#version 300 es
 void main(){vec2 p=vec2((gl_VertexID<<1)&2, gl_VertexID&2); gl_Position=vec4(p*2.0-1.0,1.0,1.0);}`;
@@ -28,11 +30,11 @@ precision highp float;
 uniform vec3 uSunDir,uSunColor; uniform float uTurb; uniform vec3 uCam; uniform mat4 uInvVP; uniform vec2 uRes;
 out vec4 o;
 vec3 skyColor(vec3 V, vec3 S, float turb){
-  float ct=dot(V,S); float ct2=ct*ct;
+  float ct=clamp(dot(V,S),-1.0,1.0); float ct2=ct*ct;
   vec3 betaR=vec3(5.5e-6,13.0e-6,22.4e-6);
   vec3 betaM=vec3(21e-6)*turb;
   float ray=0.75*(1.0+ct2);
-  float g=0.76; float mie=(1.0-g*g)/pow(1.0+g*g-2.0*g*ct,1.5);
+  float g=0.76; float mie=(1.0-g*g)/max(pow(1.0+g*g-2.0*g*ct,1.5),1e-4);
   vec3 c=(betaR*ray+betaM*mie)*1000.0;
   c+=vec3(1.0,0.9,0.7)*smoothstep(0.9995,0.9999,ct)*10.0;
   c*=mix(0.3,1.0,pow(max(V.y,0.0),0.4));
@@ -143,7 +145,18 @@ function compile(t,src){const s=gl.createShader(t);gl.shaderSource(s,src);gl.com
 function prog(vs,fs){const p=gl.createProgram();gl.attachShader(p,compile(gl.VERTEX_SHADER,vs));
   gl.attachShader(p,compile(gl.FRAGMENT_SHADER,fs));gl.linkProgram(p);
   if(!gl.getProgramParameter(p,gl.LINK_STATUS)) throw gl.getProgramInfoLog(p); return p;}
-const pSky=prog(vsSky,fsSky), pT=prog(vsT,fsT), pC=prog(vsC,fsC);
+const vsFb=`#version 300 es
+void main(){vec2 p=vec2((gl_VertexID<<1)&2, gl_VertexID&2); gl_Position=vec4(p*2.0-1.0,0.0,1.0);}`;
+const fsFb=`#version 300 es
+precision mediump float; out vec4 o; void main(){ o=vec4(0.20,0.55,0.28,1.0); }`;
+let pSky,pT,pC,pFb,useFallback=false;
+try {
+  pSky=prog(vsSky,fsSky); pT=prog(vsT,fsT); pC=prog(vsC,fsC); pFb=prog(vsFb,fsFb);
+} catch (err) {
+  useFallback=true;
+  console.error('shader compile', err);
+  try { pFb=prog(vsFb,fsFb); } catch(e2) { console.error(e2); }
+}
 
 const N=96;
 const uvs=new Float32Array((N+1)*(N+1)*2);
@@ -207,6 +220,7 @@ gl.enable(gl.DEPTH_TEST);
 gl.enable(gl.BLEND);
 
 function loop(now){
+try {
   const dt=1/60, sp=keys['shift']?48:18;
   if(keys['w']) cam[2]+=sp*dt; if(keys['s']) cam[2]-=sp*dt;
   if(keys['a']) cam[0]-=sp*dt; if(keys['d']) cam[0]+=sp*dt;
@@ -226,7 +240,14 @@ function loop(now){
   const res=[canvas.width,canvas.height];
 
   gl.disable(gl.BLEND); gl.depthMask(true);
+  gl.clearColor(0.5, 0.7, 1.0, 1.0);
   gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+  if (useFallback) {
+    gl.useProgram(pFb);
+    gl.drawArrays(gl.TRIANGLES,0,3);
+    requestAnimationFrame(loop);
+    return;
+  }
   gl.useProgram(pSky);
   gl.uniform3fv(gl.getUniformLocation(pSky,'uSunDir'),sun);
   gl.uniform3fv(gl.getUniformLocation(pSky,'uSunColor'),sunCol);
@@ -262,6 +283,13 @@ function loop(now){
   gl.uniform1f(gl.getUniformLocation(pC,'uThick'),500);
   gl.drawArrays(gl.TRIANGLES,0,3);
   gl.depthMask(true);
+} catch (err) {
+  console.error('frame', err);
+  useFallback = true;
+  gl.clearColor(0.5, 0.7, 1.0, 1.0);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  if (pFb) { gl.useProgram(pFb); gl.drawArrays(gl.TRIANGLES,0,3); }
+}
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);

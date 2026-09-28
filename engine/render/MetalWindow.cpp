@@ -176,7 +176,7 @@ void MetalWindow::pollEvents() {
     }
     char req[1024];
     (void)recv(c, req, sizeof(req) - 1, 0);
-    char html[kHtmlMax];
+    static char html[kHtmlMax];
     const u32 n = load_html(html, kHtmlMax, hosted_html_relpath);
     serve_one(c, html, n);
     ::close(c);
