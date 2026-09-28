@@ -43,6 +43,12 @@ add_library(leonida_core STATIC
     engine/audio/AudioEngine.cpp
     engine/eco/WeatherSystem.cpp
     engine/vfx/ParticleSystem.cpp
+    engine/gameplay/BallisticsSystem.cpp
+    engine/gameplay/WeaponSystem.cpp
+    engine/gameplay/VehicleInteraction.cpp
+    engine/gameplay/InventorySystem.cpp
+    engine/gameplay/PlayerController.cpp
+    engine/ui/HUDSystem.cpp
 )
 
 target_include_directories(leonida_core PUBLIC
@@ -62,6 +68,7 @@ leonida_sandbox(leonida_phase5_sandbox sandbox/phase5_pedestrian_sandbox.cpp)
 leonida_sandbox(leonida_phase6_sandbox sandbox/phase6_world_sandbox.cpp)
 leonida_sandbox(leonida_phase7_sandbox sandbox/phase7_network_sandbox.cpp)
 leonida_sandbox(leonida_phase8_sandbox sandbox/phase8_audio_weather_sandbox.cpp)
+leonida_sandbox(leonida_phase11_sandbox sandbox/phase11_gameplay_sandbox.cpp)
 
 add_executable(leonida_full_sandbox
     sandbox/FullIntegrationSandbox.cpp

@@ -21,6 +21,11 @@ using usize = std::size_t;
 using isize = std::ptrdiff_t;
 using byte = std::byte;
 
+struct float2 {
+    f32 x;
+    f32 y;
+};
+
 struct float3 {
     f32 x;
     f32 y;

@@ -1,6 +1,6 @@
 # Leonida Engine
 
-**PROJECT COMPLETE.** A C++20 open-world simulation core built from scratch across 10 micro-phases. No generic `Prop` / `Actor` / `Vehicle` bases. No CRT heap on the simulation path after `MemorySystem::boot()`.
+A C++20 open-world simulation core built from scratch. No generic `Prop` / `Actor` / `Vehicle` / `Weapon` / `Item` bases. No CRT heap on the simulation path after `MemorySystem::boot()`.
 
 ```
   ██████╗ ██████╗  ██████╗      ██╗███████╗ ██████╗████████╗
@@ -9,7 +9,7 @@
   ██╔═══╝ ██╔══██╗██║   ██║██   ██║██╔══╝  ██║        ██║
   ██║     ██║  ██║╚██████╔╝╚█████╔╝███████╗╚██████╗   ██║
   ╚═╝     ╚═╝  ╚═╝ ╚═════╝  ╚════╝ ╚══════╝ ╚═════╝   ╚═╝
-  COMPLETE — 10 phases · 8 systems · 36,864 windows · 0 CRT mallocs
+  PHASE 11 — 9mm ballistics · inventory grid · armor-first damage · HUD
 ```
 
 ## Architecture
@@ -59,6 +59,7 @@ tools/.venv/bin/python tools/citygen/master_generate.py --size-km 2 --seed 42 --
 8. Doppler/occlusion audio, rain friction, wind particles  
 9. Python citygen → `LEONCELL` binary prefabs  
 10. Master build + 600-frame full integration sandbox  
+11. Ballistics, dedicated weapons, vehicle enter/exit, grid inventory, HUD  
 
 ## Full sandbox (verified)
 
