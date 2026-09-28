@@ -115,53 +115,26 @@ fragment float4 terrain_fragment(TerrainVertexOut in [[stage_in]],
                                  texture2d<float> snowTex [[texture(3)]],
                                  texture2d<float> splatmap [[texture(4)]],
                                  sampler texSampler [[sampler(0)]]) {
-    float slope = 1.0 - in.normal.y;
+    (void)grassTex; (void)rockTex; (void)sandTex; (void)snowTex; (void)splatmap; (void)texSampler;
 
-    float4 splat = splatmap.sample(texSampler, in.uv);
-
-    float snowFactor = smoothstep(500.0, 600.0, in.height);
-    float sandFactor = 1.0 - smoothstep(5.0, 15.0, in.height);
-    float rockFactor = smoothstep(0.3, 0.6, slope);
-
-    float4 grass = grassTex.sample(texSampler, in.uv * 32.0);
-    float4 rock  = rockTex.sample(texSampler, in.uv * 16.0);
-    float4 sand  = sandTex.sample(texSampler, in.uv * 24.0);
-    float4 snow  = snowTex.sample(texSampler, in.uv * 8.0);
-
-    // Procedural fallback when splat textures are 1x1 stubs.
-    float3 pgrass = float3(0.18, 0.38, 0.12) * (0.85 + 0.15 * splat.r);
-    float3 prock  = float3(0.28, 0.26, 0.24);
-    float3 psand  = float3(0.62, 0.54, 0.34);
-    float3 psnow  = float3(0.92, 0.95, 0.98);
-    float3 baseColor = mix(grass.rgb, pgrass, 0.65);
-    baseColor = mix(baseColor, mix(rock.rgb, prock, 0.65), rockFactor);
-    baseColor = mix(baseColor, mix(sand.rgb, psand, 0.65), sandFactor * (1.0 - rockFactor));
-    baseColor = mix(baseColor, mix(snow.rgb, psnow, 0.65), snowFactor);
+    // Height-band debug colors (bypass 1x1 stub textures).
+    float3 baseColor = float3(0.2, 0.6, 0.2);           // < 100 m grass
+    baseColor = mix(baseColor, float3(0.5, 0.3, 0.1),     // 100–400 m rock/dirt
+                    smoothstep(100.0, 140.0, in.height));
+    baseColor = mix(baseColor, float3(0.9, 0.9, 0.9),     // > 400 m snow
+                    smoothstep(400.0, 480.0, in.height));
 
     float3 N = normalize(in.normal);
     float3 V = normalize(uniforms.cameraPos - in.worldPos);
-    float3 L = normalize(-uniforms.sunDir);
-    if (dot(L, float3(0, 1, 0)) < 0.0) {
-        L = normalize(uniforms.sunDir);
+    float3 L = uniforms.sunDir;
+    if (any(isnan(L)) || length(L) < 1e-4) {
+        L = float3(0.5, 0.8, 0.3);
     }
-    float3 H = normalize(V + L);
-
-    float NdotV = max(dot(N, V), 0.0);
+    L = normalize(L);
     float NdotL = max(dot(N, L), 0.0);
-    float NdotH = max(dot(N, H), 0.0);
-    float VdotH = max(dot(V, H), 0.0);
-
-    float roughness = mix(0.85, 0.35, snowFactor);
-    float metallic  = 0.02;
-    float3 F0 = mix(float3(0.04), baseColor, metallic);
-    float3 F = F_Schlick(VdotH, F0);
-    float D = D_GGX(NdotH, roughness);
-    float G = G_Smith(NdotV, NdotL, roughness);
-    float3 spec = (D * G * F) / max(4.0 * NdotV * NdotL, 0.001);
-    float3 kD = (1.0 - F) * (1.0 - metallic);
-    float3 diff = kD * baseColor / 3.14159265;
-    float3 ambient = baseColor * 0.1;
-    float3 finalColor = (diff + spec) * NdotL * uniforms.sunColor + ambient * uniforms.sunColor;
+    float3 ambient = baseColor * 0.25;
+    float3 finalColor = baseColor * (0.35 + 0.65 * NdotL) * max(uniforms.sunColor, float3(0.6));
+    finalColor = max(finalColor, ambient);
     finalColor = pow(max(finalColor, float3(0.0)), float3(1.0 / 2.2));
     return float4(finalColor, 1.0);
 }

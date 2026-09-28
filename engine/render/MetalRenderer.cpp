@@ -258,7 +258,8 @@ void MetalRenderer::init(void* windowHandle, int w, int h) {
     height = h;
     time_s = 0.f;
     cube_yaw = 0.f;
-    cameraPos = float3{0.f, 2.f, -5.f};
+    cameraPos = float3{96.f, 800.f, -704.f};
+    cameraTarget = float3{96.f, 0.f, 96.f};
     recorded_sky = recorded_clouds = recorded_terrain = 0;
     metalLayer = windowHandle;
     id<MTLDevice> dev = MTLCreateSystemDefaultDevice();
@@ -378,22 +379,28 @@ vertex float4 sky_vertex(uint vid [[vertex_id]]) {
   return float4(p * 2.0 - 1.0, 1.0, 1.0);
 }
 fragment float4 sky_fragment(float4 pos [[position]], constant SkyU& u [[buffer(0)]]) {
+  float3 blue = float3(0.5, 0.7, 1.0);
   float2 res = u.res.x > 1.0 ? u.res : float2(1280.0, 720.0);
   float2 uv = pos.xy / res;
   float4 clip = float4(uv * 2.0 - 1.0, 1.0, 1.0);
   float4 w = u.invVP * clip;
-  float3 V = normalize(w.xyz / max(w.w, 1e-4));
-  float ct = clamp(dot(V, normalize(u.sunDir)), -1.0, 1.0);
+  if (abs(w.w) < 1e-6 || any(isnan(w.xyz))) return float4(blue, 1.0);
+  float3 V = normalize(w.xyz / w.w);
+  if (any(isnan(V))) return float4(blue, 1.0);
+  float3 S = length(u.sunDir) < 1e-4 ? float3(0.5, 0.8, 0.3) : normalize(u.sunDir);
+  float ct = clamp(dot(V, S), -1.0, 1.0);
   float3 betaR = float3(5.5e-6, 13.0e-6, 22.4e-6);
-  float3 betaM = float3(21e-6) * u.turb;
+  float3 betaM = float3(21e-6) * max(u.turb, 2.0);
   float g = 0.76;
   float mie = (1.0 - g*g) / max(pow(1.0 + g*g - 2.0*g*ct, 1.5), 1e-4);
   float3 c = (betaR * (0.75*(1.0+ct*ct)) + betaM * mie) * 1000.0;
   c += float3(1.0, 0.9, 0.7) * smoothstep(0.9995, 0.9999, ct) * 10.0;
   c *= mix(0.3, 1.0, pow(max(V.y, 0.0), 0.4));
-  if (V.y < 0.0) c *= 0.12;
+  if (V.y < 0.0) c *= 0.15;
+  if (any(isnan(c)) || dot(c,c) < 1e-8) return float4(blue, 1.0);
   c = c / (c + 1.0);
-  return float4(pow(c, float3(1.0/2.2)), 1.0);
+  c = max(pow(c, float3(1.0/2.2)), blue * 0.35);
+  return float4(c, 1.0);
 }
 vertex float4 fallback_vertex(uint vid [[vertex_id]]) {
   float2 p[6] = { float2(-0.6,-0.4), float2(0.6,-0.4), float2(0.6,0.4),
@@ -421,17 +428,14 @@ fragment float4 terrain_fragment(TVOut in [[stage_in]], constant TU& u [[buffer(
     texture2d<float> grassTex [[texture(0)]], texture2d<float> rockTex [[texture(1)]],
     texture2d<float> sandTex [[texture(2)]], texture2d<float> snowTex [[texture(3)]],
     texture2d<float> splatmap [[texture(4)]]) {
-  constexpr sampler samp(address::repeat, filter::linear);
-  float slope=1.0-in.n.y; float snow=smoothstep(500.0,600.0,in.h);
-  float sand=1.0-smoothstep(5.0,15.0,in.h); float rock=smoothstep(0.3,0.6,slope);
-  float3 base=mix(grassTex.sample(samp,in.uv).rgb, float3(0.18,0.38,0.12), 0.5);
-  base=mix(base, mix(rockTex.sample(samp,in.uv).rgb, float3(0.3,0.27,0.24), 0.5), rock);
-  base=mix(base, mix(sandTex.sample(samp,in.uv).rgb, float3(0.62,0.54,0.34), 0.5), sand*(1.0-rock));
-  base=mix(base, mix(snowTex.sample(samp,in.uv).rgb, float3(0.92,0.95,0.98), 0.5), snow);
-  (void)splatmap;
-  float3 N=normalize(in.n); float3 V=normalize(u.cam-in.worldPos); float3 L=normalize(u.sunDir);
+  (void)grassTex;(void)rockTex;(void)sandTex;(void)snowTex;(void)splatmap;
+  float3 base=float3(0.2,0.6,0.2);
+  base=mix(base, float3(0.5,0.3,0.1), smoothstep(100.0,140.0,in.h));
+  base=mix(base, float3(0.9,0.9,0.9), smoothstep(400.0,480.0,in.h));
+  float3 N=normalize(in.n);
+  float3 L=length(u.sunDir)<1e-4 ? normalize(float3(0.5,0.8,0.3)) : normalize(u.sunDir);
   float ndl=max(dot(N,L),0.0);
-  float3 c=(base/3.14159)*ndl*u.sunColor + base*0.12*u.sunColor;
+  float3 c=base*(0.35+0.65*ndl)*max(u.sunColor, float3(0.6));
   return float4(pow(max(c,0.0), float3(1.0/2.2)), 1.0);
 }
 vertex float4 cloud_vertex(uint vid [[vertex_id]]) {
@@ -658,7 +662,7 @@ void MetalRenderer::renderSky(const SkyComponent& sky) {
     }
     id<MTLRenderCommandEncoder> enc = (__bridge id<MTLRenderCommandEncoder>)currentEncoder;
     float view[16], proj[16], vp[16], inv[16];
-    mat_look(view, cameraPos, float3{64.f, 20.f, 64.f}, float3{0.f, 1.f, 0.f});
+    mat_look(view, cameraPos, cameraTarget, float3{0.f, 1.f, 0.f});
     mat_persp(proj, 1.04719755f, static_cast<float>(width) / max_of(1, height), 0.5f, 4000.f);
     mat_mul(vp, proj, view);
     mat_invert(inv, vp);
@@ -728,7 +732,7 @@ void MetalRenderer::renderTerrain(World& world, FrameAllocator& frame_alloc, con
     [enc setFragmentTexture:(__bridge id<MTLTexture>)stubSnow atIndex:3];
     [enc setFragmentTexture:(__bridge id<MTLTexture>)stubSplat atIndex:4];
     float view[16], proj[16], vp[16];
-    mat_look(view, cameraPos, float3{64.f, 20.f, 64.f}, float3{0.f, 1.f, 0.f});
+    mat_look(view, cameraPos, cameraTarget, float3{0.f, 1.f, 0.f});
     mat_persp(proj, 1.04719755f, static_cast<float>(width) / max_of(1, height), 0.5f, 4000.f);
     mat_mul(vp, proj, view);
     SkyComponent* sky = find_sky(world);
@@ -769,7 +773,8 @@ void MetalRenderer::init(void* windowHandle, int w, int h) {
     height = h;
     time_s = 0.f;
     cube_yaw = 0.f;
-    cameraPos = float3{0.f, 2.f, -5.f};
+    cameraPos = float3{96.f, 800.f, -704.f};
+    cameraTarget = float3{96.f, 0.f, 96.f};
     recorded_draws = 0;
     recorded_sky = recorded_clouds = recorded_terrain = 0;
     pipeline_ok = true;

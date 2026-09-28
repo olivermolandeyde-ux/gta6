@@ -32,7 +32,9 @@ int main(int argc, char** argv) {
 
     MetalRenderer renderer{};
     renderer.init(window.getMetalLayer(), 1280, 720);
-    renderer.cameraPos = float3{80.f, 72.f, -140.f};
+    // Above the 648 m peaks, looking down 45° at the streamed terrain origin.
+    renderer.cameraPos    = float3{96.f, 800.f, -704.f};
+    renderer.cameraTarget = float3{96.f, 0.f, 96.f};
     std::printf("[terrain] renderer pipeline_ok=%d fallback=%d\n", renderer.pipeline_ok ? 1 : 0,
                 renderer.fallback_mode ? 1 : 0);
     std::fflush(stdout);
@@ -90,7 +92,7 @@ int main(int argc, char** argv) {
     SkyComponent sky{};
     sky.time_of_day = 10.0f;
     sky.turbidity   = 3.0f;
-    sky.sun_direction = float3{0.f, 1.f, 0.3f};
+    sky.sun_direction = float3_normalize_or(float3{0.5f, 0.8f, 0.3f}, float3{0.f, 1.f, 0.f});
     sky.sun_color     = float3{1.f, 0.95f, 0.85f};
     (void)world.instantiate(persistent, sky);
 
@@ -134,6 +136,7 @@ int main(int argc, char** argv) {
             cam.y += 0.8f;
         }
         renderer.cameraPos = cam;
+        renderer.cameraTarget = float3{cam.x, 0.f, cam.z + 800.f};
         if (StreamObserverComponent* obs = world.get<StreamObserverComponent>(player)) {
             const float ox = cam.x < 0.f ? 0.f : cam.x;
             const float oz = cam.z < 0.f ? 96.f : cam.z;
@@ -150,6 +153,15 @@ int main(int argc, char** argv) {
 
         UpdateSkySystem(world, 1.f / 60.f, world.frame_commands());
         UpdateCloudSystem(world, 1.f / 60.f, world.frame_commands());
+        if (SkyComponent* s = find_sky(world)) {
+            const float sl = float3_length(s->sun_direction);
+            if (sl < 0.01f || !std::isfinite(sl)) {
+                s->sun_direction =
+                    float3_normalize_or(float3{0.5f, 0.8f, 0.3f}, float3{0.f, 1.f, 0.f});
+            } else {
+                s->sun_direction = float3_scale(s->sun_direction, 1.f / sl);
+            }
+        }
 
         SkyComponent* sky_now = find_sky(world);
         CloudLayerComponent* clouds_now = find_cloud_layer(world);
