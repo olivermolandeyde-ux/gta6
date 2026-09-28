@@ -35,6 +35,9 @@ add_library(leonida_core STATIC
     engine/animation/TwoBoneIK.cpp
     engine/animation/AnimationStateMachine.cpp
     engine/world/WorldStreamer.cpp
+    engine/world/TerrainSystem.cpp
+    engine/world/SkySystem.cpp
+    engine/world/CloudSystem.cpp
     engine/eco/TrafficSystem.cpp
     engine/eco/PowerGridSystem.cpp
     engine/network/NetworkCore.cpp
@@ -122,9 +125,25 @@ if(APPLE)
         engine/render/MetalRenderer.cpp
         engine/render/MetalWindow.cpp
         sandbox/VisualSandbox.cpp
+        sandbox/TerrainSandbox.cpp
         PROPERTIES COMPILE_FLAGS "-x objective-c++"
     )
     target_link_libraries(leonida_visual PRIVATE
+        "-framework Metal -framework QuartzCore -framework Cocoa")
+endif()
+
+add_executable(leonida_terrain
+    sandbox/TerrainSandbox.cpp
+    engine/render/MetalRenderer.cpp
+    engine/render/MetalWindow.cpp
+    engine/render/InputSystem.cpp
+)
+target_link_libraries(leonida_terrain PRIVATE leonida_core)
+target_compile_definitions(leonida_terrain PRIVATE
+    LEONIDA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
+if(APPLE)
+    target_link_libraries(leonida_terrain PRIVATE
         "-framework Metal -framework QuartzCore -framework Cocoa")
 endif()
 

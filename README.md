@@ -9,7 +9,7 @@ A C++20 open-world simulation core built from scratch. No generic `Prop` / `Acto
   ██╔═══╝ ██╔══██╗██║   ██║██   ██║██╔══╝  ██║        ██║
   ██║     ██║  ██║╚██████╔╝╚█████╔╝███████╗╚██████╗   ██║
   ╚═╝     ╚═╝  ╚═╝ ╚═════╝  ╚════╝ ╚══════╝ ╚═════╝   ╚═╝
-  PHASE 17 — Metal PBR cube · GGX/Smith/Schlick · WASD camera
+  PHASE 18 — Terrain · Preetham sky · volumetric clouds · day/night
 ```
 
 ## Architecture

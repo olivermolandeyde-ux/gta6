@@ -89,14 +89,13 @@ void MetalWindow::destroy() {
 
 namespace {
 
-constexpr u32 kHtmlMax = 64u * 1024u;
+constexpr u32 kHtmlMax = 256u * 1024u;
 
-u32 load_html(char* dst, u32 cap) {
-    const char* paths[] = {
-        "sandbox/visual_awakening.html",
-        LEONIDA_SOURCE_DIR "/sandbox/visual_awakening.html",
-        nullptr,
-    };
+u32 load_html(char* dst, u32 cap, const char* rel) {
+    const char* use = rel && rel[0] ? rel : "sandbox/visual_awakening.html";
+    char abs_path[512];
+    std::snprintf(abs_path, sizeof(abs_path), "%s/%s", LEONIDA_SOURCE_DIR, use);
+    const char* paths[] = {use, abs_path, nullptr};
     for (u32 i = 0; paths[i]; ++i) {
         FILE* f = std::fopen(paths[i], "rb");
         if (!f) {
@@ -109,7 +108,7 @@ u32 load_html(char* dst, u32 cap) {
     }
     const char* fallback =
         "<html><body style='background:#111;color:#eee;font-family:sans-serif'>"
-        "<h1>Leonida Visual Awakening</h1><p>PBR cube host is up.</p></body></html>";
+        "<h1>Leonida Terrain & Sky</h1><p>Host is up.</p></body></html>";
     const u32 n = static_cast<u32>(std::strlen(fallback));
     std::memcpy(dst, fallback, n + 1);
     return n;
@@ -138,6 +137,9 @@ void MetalWindow::create(const char* title, int w, int h) {
     window = nullptr;
     contentView = nullptr;
     metalLayer = nullptr;
+    if (!hosted_html_relpath) {
+        hosted_html_relpath = "sandbox/visual_awakening.html";
+    }
     listen_port = 8080;
 
     listen_fd = static_cast<int>(::socket(AF_INET, SOCK_STREAM, 0));
@@ -157,7 +159,7 @@ void MetalWindow::create(const char* title, int w, int h) {
     ENGINE_ASSERT(::listen(listen_fd, 16) == 0, "listen visual");
     const int flags = fcntl(listen_fd, F_GETFL, 0);
     fcntl(listen_fd, F_SETFL, flags | O_NONBLOCK);
-    std::printf("[visual] hosting PBR cube on 0.0.0.0:%u\n", listen_port);
+    std::printf("[visual] hosting on 0.0.0.0:%u\n", listen_port);
     std::fflush(stdout);
 }
 
@@ -175,7 +177,7 @@ void MetalWindow::pollEvents() {
     char req[1024];
     (void)recv(c, req, sizeof(req) - 1, 0);
     char html[kHtmlMax];
-    const u32 n = load_html(html, kHtmlMax);
+    const u32 n = load_html(html, kHtmlMax, hosted_html_relpath);
     serve_one(c, html, n);
     ::close(c);
 }

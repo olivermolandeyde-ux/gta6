@@ -6,6 +6,9 @@
 
 namespace engine {
 
+struct SkyComponent;
+struct CloudLayerComponent;
+
 struct MetalPbrUniforms {
     float modelMatrix[16];
     float viewMatrix[16];
@@ -62,10 +65,17 @@ struct MetalRenderer {
     float time_s;
     float3 cameraPos;
     float  cube_yaw;
+    u32   recorded_sky;
+    u32   recorded_clouds;
+    u32   recorded_terrain;
 
     void init(void* windowHandle, int width, int height);
     void beginFrame();
     void renderScene(World& world, FrameAllocator& frame_alloc);
+    void renderSky(const SkyComponent& sky);
+    void renderClouds(const CloudLayerComponent& clouds, const SkyComponent& sky);
+    void renderTerrain(World& world, FrameAllocator& frame_alloc, const float* heights, u32 hw,
+                       u32 hh);
     void endFrame();
     void shutdown();
 };

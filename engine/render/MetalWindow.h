@@ -13,6 +13,7 @@ struct MetalWindow {
     bool  shouldClose;
     int   listen_fd;   // Linux hosted preview socket
     u16   listen_port;
+    const char* hosted_html_relpath;
 
     void  create(const char* title, int width, int height);
     void  pollEvents();

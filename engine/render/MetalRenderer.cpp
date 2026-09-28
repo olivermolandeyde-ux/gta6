@@ -5,6 +5,9 @@
 #include "render/CubeMesh.h"
 #include "render/GroundPlaneMesh.h"
 #include "render/RenderPipeline.h"
+#include "world/CloudSystem.h"
+#include "world/SkySystem.h"
+#include "world/TerrainSystem.h"
 
 #include <cmath>
 #include <cstdint>
@@ -216,6 +219,7 @@ void MetalRenderer::init(void* windowHandle, int w, int h) {
     time_s = 0.f;
     cube_yaw = 0.f;
     cameraPos = float3{0.f, 2.f, -5.f};
+    recorded_sky = recorded_clouds = recorded_terrain = 0;
     metalLayer = windowHandle;
     id<MTLDevice> dev = MTLCreateSystemDefaultDevice();
     ENGINE_ASSERT(dev != nil, "Metal device");
@@ -341,6 +345,38 @@ void MetalRenderer::shutdown() {
     currentDrawable = nullptr;
 }
 
+void MetalRenderer::renderSky(const SkyComponent& sky) {
+    recorded_sky = 1;
+    (void)sky;
+}
+
+void MetalRenderer::renderClouds(const CloudLayerComponent& clouds, const SkyComponent& sky) {
+    recorded_clouds = 1;
+    (void)clouds;
+    (void)sky;
+}
+
+void MetalRenderer::renderTerrain(World& world, FrameAllocator& frame_alloc, const float* heights,
+                                 u32 hw, u32 hh) {
+    (void)heights;
+    (void)hw;
+    (void)hh;
+    u32 n = 0;
+    for (Entity e : world.query<TerrainChunkComponent>()) {
+        (void)e;
+        ++n;
+    }
+    TerrainChunkComponent* packets = frame_alloc.allocate_array<TerrainChunkComponent>(max_of(n, 1u));
+    u32 w = 0;
+    for (Entity e : world.query<TerrainChunkComponent>()) {
+        const TerrainChunkComponent* c = world.get<TerrainChunkComponent>(e);
+        if (c && packets && w < n) {
+            packets[w++] = *c;
+        }
+    }
+    recorded_terrain = w;
+}
+
 #else
 
 void MetalRenderer::init(void* windowHandle, int w, int h) {
@@ -351,6 +387,7 @@ void MetalRenderer::init(void* windowHandle, int w, int h) {
     cube_yaw = 0.f;
     cameraPos = float3{0.f, 2.f, -5.f};
     recorded_draws = 0;
+    recorded_sky = recorded_clouds = recorded_terrain = 0;
     device = commandQueue = shaderLibrary = pbrPipeline = depthState = nullptr;
     metalLayer = vertexBuffer = indexBuffer = uniformBuffer = currentDrawable = nullptr;
     groundVertexBuffer = groundIndexBuffer = nullptr;
@@ -371,6 +408,38 @@ void MetalRenderer::renderScene(World& world, FrameAllocator& frame_alloc) {
 void MetalRenderer::endFrame() {}
 
 void MetalRenderer::shutdown() {}
+
+void MetalRenderer::renderSky(const SkyComponent& sky) {
+    recorded_sky = 1;
+    (void)sky;
+}
+
+void MetalRenderer::renderClouds(const CloudLayerComponent& clouds, const SkyComponent& sky) {
+    recorded_clouds = 1;
+    (void)clouds;
+    (void)sky;
+}
+
+void MetalRenderer::renderTerrain(World& world, FrameAllocator& frame_alloc, const float* heights,
+                                 u32 hw, u32 hh) {
+    (void)heights;
+    (void)hw;
+    (void)hh;
+    u32 n = 0;
+    for (Entity e : world.query<TerrainChunkComponent>()) {
+        (void)e;
+        ++n;
+    }
+    TerrainChunkComponent* packets = frame_alloc.allocate_array<TerrainChunkComponent>(max_of(n, 1u));
+    u32 w = 0;
+    for (Entity e : world.query<TerrainChunkComponent>()) {
+        const TerrainChunkComponent* c = world.get<TerrainChunkComponent>(e);
+        if (c && packets && w < n) {
+            packets[w++] = *c;
+        }
+    }
+    recorded_terrain = w;
+}
 
 #endif
 
