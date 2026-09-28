@@ -49,52 +49,34 @@ target_include_directories(leonida_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/engine
 )
 
-add_executable(leonida_phase1_sandbox
-    sandbox/phase1_ecs_sandbox.cpp
-)
-target_link_libraries(leonida_phase1_sandbox PRIVATE leonida_core)
+function(leonida_sandbox name src)
+    add_executable(${name} ${src})
+    target_link_libraries(${name} PRIVATE leonida_core)
+endfunction()
 
-add_executable(leonida_phase2_sandbox
-    sandbox/phase2_render_sandbox.cpp
-)
-target_link_libraries(leonida_phase2_sandbox PRIVATE leonida_core)
+leonida_sandbox(leonida_phase1_sandbox sandbox/phase1_ecs_sandbox.cpp)
+leonida_sandbox(leonida_phase2_sandbox sandbox/phase2_render_sandbox.cpp)
+leonida_sandbox(leonida_phase3_sandbox sandbox/phase3_objects_sandbox.cpp)
+leonida_sandbox(leonida_phase4_sandbox sandbox/phase4_vehicle_sandbox.cpp)
+leonida_sandbox(leonida_phase5_sandbox sandbox/phase5_pedestrian_sandbox.cpp)
+leonida_sandbox(leonida_phase6_sandbox sandbox/phase6_world_sandbox.cpp)
+leonida_sandbox(leonida_phase7_sandbox sandbox/phase7_network_sandbox.cpp)
+leonida_sandbox(leonida_phase8_sandbox sandbox/phase8_audio_weather_sandbox.cpp)
 
-add_executable(leonida_phase3_sandbox
-    sandbox/phase3_objects_sandbox.cpp
+add_executable(leonida_full_sandbox
+    sandbox/FullIntegrationSandbox.cpp
 )
-target_link_libraries(leonida_phase3_sandbox PRIVATE leonida_core)
-
-add_executable(leonida_phase4_sandbox
-    sandbox/phase4_vehicle_sandbox.cpp
+target_link_libraries(leonida_full_sandbox PRIVATE leonida_core)
+target_compile_definitions(leonida_full_sandbox PRIVATE
+    LEONIDA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
 )
-target_link_libraries(leonida_phase4_sandbox PRIVATE leonida_core)
-
-add_executable(leonida_phase5_sandbox
-    sandbox/phase5_pedestrian_sandbox.cpp
-)
-target_link_libraries(leonida_phase5_sandbox PRIVATE leonida_core)
-
-add_executable(leonida_phase6_sandbox
-    sandbox/phase6_world_sandbox.cpp
-)
-target_link_libraries(leonida_phase6_sandbox PRIVATE leonida_core)
-
-add_executable(leonida_phase7_sandbox
-    sandbox/phase7_network_sandbox.cpp
-)
-target_link_libraries(leonida_phase7_sandbox PRIVATE leonida_core)
-
-add_executable(leonida_phase8_sandbox
-    sandbox/phase8_audio_weather_sandbox.cpp
-)
-target_link_libraries(leonida_phase8_sandbox PRIVATE leonida_core)
 
 if(UNIX)
     target_link_libraries(leonida_core PUBLIC pthread)
 endif()
 
 # ---------------------------------------------------------------------------
-# HLSL shader compilation / staging
+# HLSL shader compilation / staging (PBR, SSS, CarPaint, TireRubber)
 # ---------------------------------------------------------------------------
 set(SHADER_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/shaders)
 set(SHADER_OUTPUT_DIR ${CMAKE_BINARY_DIR}/shaders)
@@ -124,16 +106,52 @@ find_program(DXC_EXECUTABLE NAMES dxc dxc.exe)
 if(DXC_EXECUTABLE)
     add_custom_command(
         OUTPUT ${SHADER_OUTPUT_DIR}/MasterPBR.ps.cso
-        COMMAND ${DXC_EXECUTABLE}
-                -T ps_6_0
-                -E PS_Main
+        COMMAND ${DXC_EXECUTABLE} -T ps_6_0 -E PS_Main
                 -Fo ${SHADER_OUTPUT_DIR}/MasterPBR.ps.cso
                 ${SHADER_SOURCE_DIR}/MasterPBR.hlsl
         DEPENDS ${SHADER_SOURCE_DIR}/MasterPBR.hlsl
         COMMENT "DXC compile MasterPBR.hlsl (ps_6_0 PS_Main)"
     )
-    list(APPEND SHADER_STAGED ${SHADER_OUTPUT_DIR}/MasterPBR.ps.cso)
+    add_custom_command(
+        OUTPUT ${SHADER_OUTPUT_DIR}/SkinSSS.ps.cso
+        COMMAND ${DXC_EXECUTABLE} -T ps_6_0 -E CalculateSkinShading
+                -Fo ${SHADER_OUTPUT_DIR}/SkinSSS.ps.cso
+                ${SHADER_SOURCE_DIR}/SkinSSS.hlsl
+        DEPENDS ${SHADER_SOURCE_DIR}/SkinSSS.hlsl
+        COMMENT "DXC compile SkinSSS.hlsl"
+    )
+    list(APPEND SHADER_STAGED
+        ${SHADER_OUTPUT_DIR}/MasterPBR.ps.cso
+        ${SHADER_OUTPUT_DIR}/SkinSSS.ps.cso)
 endif()
 
 add_custom_target(leonida_shaders ALL DEPENDS ${SHADER_STAGED})
 add_dependencies(leonida_core leonida_shaders)
+
+# ---------------------------------------------------------------------------
+# City generator + full sandbox
+# ---------------------------------------------------------------------------
+set(LEONIDA_PYTHON "")
+if(EXISTS "${CMAKE_SOURCE_DIR}/tools/.venv/bin/python")
+    set(LEONIDA_PYTHON "${CMAKE_SOURCE_DIR}/tools/.venv/bin/python")
+elseif(EXISTS "${CMAKE_SOURCE_DIR}/tools/.venv/Scripts/python.exe")
+    set(LEONIDA_PYTHON "${CMAKE_SOURCE_DIR}/tools/.venv/Scripts/python.exe")
+else()
+    find_program(LEONIDA_PYTHON NAMES python3 python)
+endif()
+
+if(LEONIDA_PYTHON)
+    add_custom_target(generate_city
+        COMMAND ${LEONIDA_PYTHON} ${CMAKE_SOURCE_DIR}/tools/citygen/master_generate.py
+                --size-km 2 --seed 42 --coast west
+                --out ${CMAKE_SOURCE_DIR}/output/city
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/tools/citygen
+        COMMENT "Generate 2 km Leonida city (.cell prefabs)"
+    )
+    add_custom_target(run_full_sandbox
+        DEPENDS leonida_full_sandbox generate_city
+        COMMAND $<TARGET_FILE:leonida_full_sandbox>
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        COMMENT "Run 10 s full-integration sandbox on generated city"
+    )
+endif()
