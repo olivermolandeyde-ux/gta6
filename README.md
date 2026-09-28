@@ -9,7 +9,7 @@ A C++20 open-world simulation core built from scratch. No generic `Prop` / `Acto
   ██╔═══╝ ██╔══██╗██║   ██║██   ██║██╔══╝  ██║        ██║
   ██║     ██║  ██║╚██████╔╝╚█████╔╝███████╗╚██████╗   ██║
   ╚═╝     ╚═╝  ╚═╝ ╚═════╝  ╚════╝ ╚══════╝ ╚═════╝   ╚═╝
-  PHASE 12 — LEONMISS missions · dialog trees · objective trackers · HUD blips
+  PHASE 13 — SWAT flanking · gang turf · civilian schedules · danger nav
 ```
 
 ## Architecture
@@ -61,6 +61,7 @@ tools/.venv/bin/python tools/citygen/master_generate.py --size-km 2 --seed 42 --
 10. Master build + 600-frame full integration sandbox  
 11. Ballistics, dedicated weapons, vehicle enter/exit, grid inventory, HUD  
 12. Data-driven missions (`LEONMISS`), dialog trees, objective trackers, rewards  
+13. Tactical police, gang territories, civilian routines, danger-aware navigation  
 
 ## Full sandbox (verified)
 

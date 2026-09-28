@@ -55,6 +55,11 @@ add_library(leonida_core STATIC
     engine/mission/MissionMarker.cpp
     engine/mission/RewardSystem.cpp
     engine/mission/MissionDataLoader.cpp
+    engine/ai/PoliceTacticalAI.cpp
+    engine/ai/GangTerritoryAI.cpp
+    engine/ai/CivilianRoutineAI.cpp
+    engine/ai/AdvancedNavigation.cpp
+    engine/ai/AIDataLoader.cpp
 )
 
 target_include_directories(leonida_core PUBLIC
@@ -77,6 +82,10 @@ leonida_sandbox(leonida_phase8_sandbox sandbox/phase8_audio_weather_sandbox.cpp)
 leonida_sandbox(leonida_phase11_sandbox sandbox/phase11_gameplay_sandbox.cpp)
 leonida_sandbox(leonida_phase12_sandbox sandbox/phase12_mission_sandbox.cpp)
 target_compile_definitions(leonida_phase12_sandbox PRIVATE
+    LEONIDA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
+leonida_sandbox(leonida_phase13_sandbox sandbox/phase13_ai_sandbox.cpp)
+target_compile_definitions(leonida_phase13_sandbox PRIVATE
     LEONIDA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
 )
 
