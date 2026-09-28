@@ -114,29 +114,52 @@ int main(int argc, char** argv) {
     while (!window.shouldClose) {
         try {
         window.pollEvents();
+        for (int k = 0; k < 256; ++k) {
+            input_set_key(input, k, window.keys[k]);
+        }
         input.update();
 
+        const float dt = 1.f / 60.f;
+        renderer.cameraYaw += window.mouseDeltaX * 0.005f;
+        renderer.cameraPitch -= window.mouseDeltaY * 0.005f;
+        renderer.cameraPitch = clampf(renderer.cameraPitch, -1.5f, 1.5f);
+
+        const float cy = std::cos(renderer.cameraYaw);
+        const float sy = std::sin(renderer.cameraYaw);
+        const float cp = std::cos(renderer.cameraPitch);
+        const float sp = std::sin(renderer.cameraPitch);
+        const float3 fwd{sy * cp, sp, cy * cp};
+        const float3 right{cy, 0.f, -sy};
+
+        const bool w = window.isKeyDown('w') || window.isKeyDown('W') || input.isKeyDown('w');
+        const bool s = window.isKeyDown('s') || window.isKeyDown('S') || input.isKeyDown('s');
+        const bool a = window.isKeyDown('a') || window.isKeyDown('A') || input.isKeyDown('a');
+        const bool d = window.isKeyDown('d') || window.isKeyDown('D') || input.isKeyDown('d');
+        const bool q = window.isKeyDown('q') || window.isKeyDown('Q') || input.isKeyDown('q');
+        const bool e = window.isKeyDown('e') || window.isKeyDown('E') || input.isKeyDown('e');
+        const float sp_move = window.shiftDown ? 48.f : 18.f;
+
         float3 cam = renderer.cameraPos;
-        if (input.isKeyDown('W') || input.isKeyDown('w')) {
-            cam.z += 1.2f;
+        if (w) {
+            cam = float3_add(cam, float3_scale(fwd, sp_move * dt));
         }
-        if (input.isKeyDown('S') || input.isKeyDown('s')) {
-            cam.z -= 1.2f;
+        if (s) {
+            cam = float3_sub(cam, float3_scale(fwd, sp_move * dt));
         }
-        if (input.isKeyDown('A') || input.isKeyDown('a')) {
-            cam.x -= 1.2f;
+        if (a) {
+            cam = float3_sub(cam, float3_scale(right, sp_move * dt));
         }
-        if (input.isKeyDown('D') || input.isKeyDown('d')) {
-            cam.x += 1.2f;
+        if (d) {
+            cam = float3_add(cam, float3_scale(right, sp_move * dt));
         }
-        if (input.isKeyDown('Q') || input.isKeyDown('q')) {
-            cam.y -= 0.8f;
+        if (q) {
+            cam.y -= sp_move * dt;
         }
-        if (input.isKeyDown('E') || input.isKeyDown('e')) {
-            cam.y += 0.8f;
+        if (e) {
+            cam.y += sp_move * dt;
         }
         renderer.cameraPos = cam;
-        renderer.cameraTarget = float3{cam.x, 0.f, cam.z + 800.f};
+        renderer.cameraTarget = float3_add(cam, fwd);
         if (StreamObserverComponent* obs = world.get<StreamObserverComponent>(player)) {
             const float ox = cam.x < 0.f ? 0.f : cam.x;
             const float oz = cam.z < 0.f ? 96.f : cam.z;
@@ -182,8 +205,11 @@ int main(int argc, char** argv) {
         ++frames;
 
         if ((frames % 60u) == 0u) {
-            std::printf("[terrain] frame %u chunks=%u sky=%u clouds=%u fallback=%d\n", frames,
-                        renderer.recorded_terrain, renderer.recorded_sky, renderer.recorded_clouds,
+            std::printf("[terrain] frame %u cam=(%.1f, %.1f, %.1f) yaw=%.2f pitch=%.2f chunks=%u "
+                        "sky=%u clouds=%u fallback=%d\n",
+                        frames, renderer.cameraPos.x, renderer.cameraPos.y, renderer.cameraPos.z,
+                        renderer.cameraYaw, renderer.cameraPitch, renderer.recorded_terrain,
+                        renderer.recorded_sky, renderer.recorded_clouds,
                         renderer.fallback_mode ? 1 : 0);
             std::fflush(stdout);
         }

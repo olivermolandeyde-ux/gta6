@@ -80,6 +80,8 @@ struct MetalRenderer {
     float time_s;
     float3 cameraPos;
     float3 cameraTarget;
+    float  cameraYaw;
+    float  cameraPitch;
     float  cube_yaw;
     u32   recorded_sky;
     u32   recorded_clouds;

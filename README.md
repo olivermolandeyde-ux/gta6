@@ -37,6 +37,8 @@ CMake targets:
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
+cmake --build build --target leonida_terrain
+./build/leonida_terrain
 cmake --build build --target generate_city
 cmake --build build --target run_full_sandbox
 ```

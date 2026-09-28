@@ -58,17 +58,90 @@ void MetalWindow::create(const char* title, int w, int h) {
     window = (__bridge_retained void*)ns;
     contentView = (__bridge_retained void*)view;
     metalLayer = (__bridge_retained void*)layer;
+    std::memset(keys, 0, sizeof(keys));
+    mouseDeltaX = mouseDeltaY = 0.f;
+    mouseX = mouseY = 0.f;
+    mouseCaptured = true;
+    mouseLookArmed = false;
+    shiftDown = false;
+    [ns setAcceptsMouseMovedEvents:YES];
+    [ns makeFirstResponder:view];
+    [NSCursor hide];
 }
 
 void MetalWindow::pollEvents() {
-    NSEvent* event = [NSApp nextEventMatchingMask:NSEventMaskAny
-                                        untilDate:[NSDate distantPast]
-                                           inMode:NSDefaultRunLoopMode
-                                          dequeue:YES];
-    if (event) {
+    mouseDeltaX = 0.f;
+    mouseDeltaY = 0.f;
+    NSWindow* ns = (__bridge NSWindow*)window;
+
+    for (;;) {
+        NSEvent* event = [NSApp nextEventMatchingMask:NSEventMaskAny
+                                            untilDate:[NSDate distantPast]
+                                               inMode:NSDefaultRunLoopMode
+                                              dequeue:YES];
+        if (!event) {
+            break;
+        }
+        const NSEventType type = [event type];
+        if (type == NSEventTypeKeyDown || type == NSEventTypeKeyUp) {
+            const bool down = type == NSEventTypeKeyDown;
+            NSString* chars = [event charactersIgnoringModifiers];
+            if (chars && [chars length] > 0) {
+                const unichar c = [chars characterAtIndex:0];
+                if (c < 256) {
+                    keys[c] = down;
+                }
+                if (c >= 'A' && c <= 'Z') {
+                    keys['a' + (c - 'A')] = down;
+                }
+                if (c >= 'a' && c <= 'z') {
+                    keys['A' + (c - 'a')] = down;
+                }
+            }
+            const unsigned short kc = [event keyCode];
+            if (kc == 13) {
+                keys['w'] = keys['W'] = down;
+            }
+            if (kc == 0) {
+                keys['a'] = keys['A'] = down;
+            }
+            if (kc == 1) {
+                keys['s'] = keys['S'] = down;
+            }
+            if (kc == 2) {
+                keys['d'] = keys['D'] = down;
+            }
+            if (kc == 12) {
+                keys['q'] = keys['Q'] = down;
+            }
+            if (kc == 14) {
+                keys['e'] = keys['E'] = down;
+            }
+            if (kc == 53 && down) { // Escape
+                mouseCaptured = !mouseCaptured;
+                if (mouseCaptured) {
+                    [NSCursor hide];
+                } else {
+                    [NSCursor unhide];
+                }
+            }
+            if (down && [event isARepeat] == NO) {
+                // keep key state; don't interpret
+            }
+        } else if (type == NSEventTypeMouseMoved || type == NSEventTypeLeftMouseDragged
+                   || type == NSEventTypeRightMouseDragged) {
+            mouseDeltaX += static_cast<float>([event deltaX]);
+            mouseDeltaY += static_cast<float>([event deltaY]);
+            mouseX = static_cast<float>([event locationInWindow].x);
+            mouseY = static_cast<float>([event locationInWindow].y);
+        } else if (type == NSEventTypeLeftMouseDown) {
+            mouseCaptured = true;
+            [NSCursor hide];
+        }
         [NSApp sendEvent:event];
     }
-    NSWindow* ns = (__bridge NSWindow*)window;
+
+    shiftDown = ([NSEvent modifierFlags] & NSEventModifierFlagShift) != 0;
     if (ns && ![ns isVisible]) {
         shouldClose = true;
     }
@@ -140,6 +213,11 @@ void MetalWindow::create(const char* title, int w, int h) {
     if (!hosted_html_relpath) {
         hosted_html_relpath = "sandbox/visual_awakening.html";
     }
+    std::memset(keys, 0, sizeof(keys));
+    mouseDeltaX = mouseDeltaY = 0.f;
+    mouseCaptured = false;
+    mouseLookArmed = false;
+    shiftDown = false;
     listen_port = 8080;
 
     listen_fd = static_cast<int>(::socket(AF_INET, SOCK_STREAM, 0));
@@ -194,5 +272,9 @@ void MetalWindow::destroy() {
 }
 
 #endif
+
+bool MetalWindow::isKeyDown(int keyCode) const {
+    return keys[static_cast<u32>(keyCode) & 255u];
+}
 
 } // namespace engine

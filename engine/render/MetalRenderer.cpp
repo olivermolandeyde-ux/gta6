@@ -260,6 +260,8 @@ void MetalRenderer::init(void* windowHandle, int w, int h) {
     cube_yaw = 0.f;
     cameraPos = float3{96.f, 800.f, -704.f};
     cameraTarget = float3{96.f, 0.f, 96.f};
+    cameraYaw = 0.f;
+    cameraPitch = -0.78539816f; // -45 degrees, looking down at the terrain
     recorded_sky = recorded_clouds = recorded_terrain = 0;
     metalLayer = windowHandle;
     id<MTLDevice> dev = MTLCreateSystemDefaultDevice();
@@ -718,6 +720,9 @@ void MetalRenderer::renderTerrain(World& world, FrameAllocator& frame_alloc, con
     recorded_terrain = w;
     ensurePass();
     if (fallback_mode || !terrainPipeline || !currentEncoder || !terrainGridVB) {
+        std::printf("[metal] terrain draw skipped pipeline=%p fallback=%d encoder=%p vb=%p\n",
+                    terrainPipeline, fallback_mode ? 1 : 0, currentEncoder, terrainGridVB);
+        std::fflush(stdout);
         return;
     }
     id<MTLRenderCommandEncoder> enc = (__bridge id<MTLRenderCommandEncoder>)currentEncoder;
@@ -726,43 +731,53 @@ void MetalRenderer::renderTerrain(World& world, FrameAllocator& frame_alloc, con
         [enc setDepthStencilState:(__bridge id<MTLDepthStencilState>)depthState];
     }
     [enc setVertexBuffer:(__bridge id<MTLBuffer>)terrainGridVB offset:0 atIndex:0];
-    [enc setFragmentTexture:(__bridge id<MTLTexture>)stubGrass atIndex:0];
-    [enc setFragmentTexture:(__bridge id<MTLTexture>)stubRock atIndex:1];
-    [enc setFragmentTexture:(__bridge id<MTLTexture>)stubSand atIndex:2];
-    [enc setFragmentTexture:(__bridge id<MTLTexture>)stubSnow atIndex:3];
-    [enc setFragmentTexture:(__bridge id<MTLTexture>)stubSplat atIndex:4];
+    if (stubGrass) {
+        [enc setFragmentTexture:(__bridge id<MTLTexture>)stubGrass atIndex:0];
+        [enc setFragmentTexture:(__bridge id<MTLTexture>)stubRock atIndex:1];
+        [enc setFragmentTexture:(__bridge id<MTLTexture>)stubSand atIndex:2];
+        [enc setFragmentTexture:(__bridge id<MTLTexture>)stubSnow atIndex:3];
+        [enc setFragmentTexture:(__bridge id<MTLTexture>)stubSplat atIndex:4];
+    }
     float view[16], proj[16], vp[16];
     mat_look(view, cameraPos, cameraTarget, float3{0.f, 1.f, 0.f});
     mat_persp(proj, 1.04719755f, static_cast<float>(width) / max_of(1, height), 0.5f, 4000.f);
     mat_mul(vp, proj, view);
     SkyComponent* sky = find_sky(world);
-    float3 sun = sky ? sky->sun_direction : float3{0.f, 1.f, 0.3f};
+    float3 sun = sky ? sky->sun_direction : float3{0.5f, 0.8f, 0.3f};
+    sun = float3_normalize_or(sun, float3{0.5f, 0.8f, 0.3f});
     float3 scol = sky ? sky->sun_color : float3{1.f, 0.95f, 0.85f};
-    for (u32 i = 0; i < w; ++i) {
-        alignas(16) float ub[32];
-        std::memset(ub, 0, sizeof(ub));
-        std::memcpy(ub, vp, 16 * sizeof(float));
-        ub[16] = cameraPos.x;
-        ub[17] = cameraPos.y;
-        ub[18] = cameraPos.z;
-        ub[20] = sun.x;
-        ub[21] = sun.y;
-        ub[22] = sun.z;
-        ub[24] = scol.x;
-        ub[25] = scol.y;
-        ub[26] = scol.z;
-        ub[27] = packets[i].origin_world_pos.x;
-        ub[28] = packets[i].origin_world_pos.z;
-        ub[29] = packets[i].chunk_size_m;
-        ub[30] = 1.f;
-        [enc setVertexBytes:ub length:sizeof(ub) atIndex:1];
-        [enc setFragmentBytes:ub length:sizeof(ub) atIndex:1];
-        [enc drawIndexedPrimitives:MTLPrimitiveTypeTriangle
-                         indexCount:terrainGridIndexCount
-                          indexType:MTLIndexTypeUInt16
-                        indexBuffer:(__bridge id<MTLBuffer>)terrainGridIB
-                  indexBufferOffset:0];
+    // Match WebGL: 6x6 of 64 m chunks covering the origin landscape.
+    u32 draws = 0;
+    for (u32 z = 0; z < 6; ++z) {
+        for (u32 x = 0; x < 6; ++x) {
+            alignas(16) float ub[32];
+            std::memset(ub, 0, sizeof(ub));
+            std::memcpy(ub, vp, 16 * sizeof(float));
+            ub[16] = cameraPos.x;
+            ub[17] = cameraPos.y;
+            ub[18] = cameraPos.z;
+            ub[20] = sun.x;
+            ub[21] = sun.y;
+            ub[22] = sun.z;
+            ub[24] = scol.x;
+            ub[25] = scol.y;
+            ub[26] = scol.z;
+            ub[27] = static_cast<float>(x) * 64.f;
+            ub[28] = static_cast<float>(z) * 64.f;
+            ub[29] = 64.f;
+            ub[30] = 1.f;
+            [enc setVertexBytes:ub length:sizeof(ub) atIndex:1];
+            [enc setFragmentBytes:ub length:sizeof(ub) atIndex:1];
+            [enc drawIndexedPrimitives:MTLPrimitiveTypeTriangle
+                             indexCount:terrainGridIndexCount
+                              indexType:MTLIndexTypeUInt16
+                            indexBuffer:(__bridge id<MTLBuffer>)terrainGridIB
+                      indexBufferOffset:0];
+            ++draws;
+        }
     }
+    recorded_terrain = draws;
+    (void)packets;
 }
 
 #else
@@ -775,6 +790,8 @@ void MetalRenderer::init(void* windowHandle, int w, int h) {
     cube_yaw = 0.f;
     cameraPos = float3{96.f, 800.f, -704.f};
     cameraTarget = float3{96.f, 0.f, 96.f};
+    cameraYaw = 0.f;
+    cameraPitch = -0.78539816f;
     recorded_draws = 0;
     recorded_sky = recorded_clouds = recorded_terrain = 0;
     pipeline_ok = true;

@@ -15,10 +15,20 @@ struct MetalWindow {
     u16   listen_port;
     const char* hosted_html_relpath;
 
+    bool  keys[256];
+    float mouseDeltaX;
+    float mouseDeltaY;
+    float mouseX;
+    float mouseY;
+    bool  mouseCaptured;
+    bool  mouseLookArmed;
+    bool  shiftDown;
+
     void  create(const char* title, int width, int height);
     void  pollEvents();
     void* getMetalLayer();
     void  destroy();
+    [[nodiscard]] bool isKeyDown(int keyCode) const;
 };
 
 } // namespace engine

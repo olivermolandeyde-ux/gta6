@@ -121,6 +121,7 @@ target_compile_definitions(leonida_visual PRIVATE
     LEONIDA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
 )
 if(APPLE)
+    # Compiled as Objective-C++ (same as .mm) so NSEvent/Metal types are legal.
     set_source_files_properties(
         engine/render/MetalRenderer.cpp
         engine/render/MetalWindow.cpp
