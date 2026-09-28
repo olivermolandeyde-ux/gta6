@@ -19,7 +19,7 @@ void main() {
     vec3 L = normalize(lightDir);
     float ndl = max(dot(N, L), 0.0);
     // Hard floor so facades cannot go black even if the sun is below the horizon.
-    float wrap = 0.55 + 0.45 * ndl;
+    float wrap = 0.55 + 0.45 * ndl * (1.0 - roughness * 0.25);
     vec3 lit = albedo * wrap * lightColor;
     lit = max(lit, albedo * 0.50);
 
@@ -44,5 +44,4 @@ void main() {
         color = max(albedo * 0.45, vec3(0.32, 0.32, 0.33)) * wrap;
     }
     FragColor = vec4(color, 1.0);
-    (void)roughness;
 }
