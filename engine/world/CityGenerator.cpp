@@ -14,8 +14,8 @@ namespace engine {
 namespace {
 
 constexpr u32 kPowerNode = 1;
-constexpr float kFloorH  = 3.4f;
-constexpr float kSetback = 3.5f;
+constexpr float kFloorH  = 4.2f;
+constexpr float kSetback = 4.0f;
 
 [[nodiscard]] u32 mix32(u32 x) noexcept {
     x ^= x >> 16;
@@ -120,7 +120,7 @@ void spawn_front_window(World& world, const InstantiationRequest& req, const Bui
 
 void spawn_building(World& world, const InstantiationRequest& req, CityGenerator* gen, float cx, float cz,
                     float width, float depth, u32 floors, u32 district, u32 seed) {
-    const float gy = kCityPlateauY;
+    const float gy = kCityPlateauY + 0.5f;
     BuildingComponent b{};
     b.building_id  = gen->buildings_spawned + 1;
     b.position     = float3{cx, gy, cz};
@@ -281,26 +281,18 @@ void CityGenerator::generateCity(World& world, float3 city_center, float city_ra
             const u32 seed = mix32(bx * 73856093u ^ bz * 19349663u ^ 83492791u);
 
             if (district == kDistrictDowntown) {
-                const float gap = 2.4f;
-                const float bw  = (lot - gap) * 0.5f;
-                const float bd  = (lot - gap) * 0.5f;
-                for (u32 iz = 0; iz < 2; ++iz) {
-                    for (u32 ix = 0; ix < 2; ++ix) {
-                        if (buildings_spawned >= num_buildings) {
-                            break;
-                        }
-                        const u32 s = mix32(seed + ix * 17u + iz * 41u);
-                        const u32 floors = 16u + (s % 14u);
-                        const float cx = lot_x0 + bw * 0.5f + static_cast<float>(ix) * (bw + gap);
-                        const float cz = lot_z0 + bd * 0.5f + static_cast<float>(iz) * (bd + gap);
-                        spawn_building(world, req, this, cx, cz, bw, bd, floors, district, s);
-                    }
-                }
+                const u32 s      = mix32(seed + 3u);
+                const float bw   = lot * 0.92f;
+                const float bd   = lot * 0.92f;
+                const u32 floors = 15u + (s % 14u); // 63–118 m
+                const float cx   = lot_x0 + lot * 0.5f;
+                const float cz   = lot_z0 + lot * 0.5f;
+                spawn_building(world, req, this, cx, cz, bw, bd, floors, district, s);
             } else if (district == kDistrictIndustrial) {
                 const u32 s      = mix32(seed + 9u);
                 const float bw   = lot * (0.72f + unit(s) * 0.18f);
                 const float bd   = lot * (0.55f + unit(mix32(s + 3)) * 0.25f);
-                const u32 floors = 2u + (s % 3u);
+                const u32 floors = 5u + (s % 4u);
                 const float cx   = lot_x0 + lot * 0.5f;
                 const float cz   = lot_z0 + lot * 0.5f;
                 spawn_building(world, req, this, cx, cz, bw, bd, floors, district, s);
@@ -313,7 +305,7 @@ void CityGenerator::generateCity(World& world, float3 city_center, float city_ra
                         break;
                     }
                     const u32 s      = mix32(seed + ix * 23u);
-                    const u32 floors = 3u + (s % 8u);
+                    const u32 floors = 5u + (s % 6u);
                     const float cx   = lot_x0 + bw * 0.5f + static_cast<float>(ix) * (bw + gap);
                     const float cz   = lot_z0 + bd * 0.5f + unit(mix32(s + 5)) * (lot - bd) * 0.35f;
                     spawn_building(world, req, this, cx, cz, bw, bd, floors, district, s);

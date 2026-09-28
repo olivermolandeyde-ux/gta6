@@ -42,12 +42,12 @@ int main(int argc, char** argv) {
     }
 
     const float3 city_center{kCityCenterM, 0.f, kCityCenterM};
-    terrain.cameraPos        = float3{kCityCenterM, kCityPlateauY + 2.f, 130.f};
-    terrain.cameraTarget     = float3{kCityCenterM, kCityPlateauY + 2.f, 280.f};
+    terrain.cameraPos        = float3{kCityCenterM, 8.f, 130.f};
+    terrain.cameraTarget     = float3{kCityCenterM, 18.f, 280.f};
     float yaw                = 0.f;
-    float pitch              = 0.0f;
-    std::printf("[city] STREET LEVEL cam=(%.1f, %.1f, %.1f) looking +Z down the avenue\n",
-                terrain.cameraPos.x, terrain.cameraPos.y, terrain.cameraPos.z);
+    float pitch              = 0.22f;
+    std::printf("[city] STREET LEVEL cam=(%.1f, %.1f, %.1f) pitch=+%.2f looking up the avenue\n",
+                terrain.cameraPos.x, terrain.cameraPos.y, terrain.cameraPos.z, pitch);
     std::fflush(stdout);
 
     MemoryBudget budget{};
@@ -109,9 +109,11 @@ int main(int argc, char** argv) {
         terrain.width  = window.width;
         terrain.height = window.height;
 
-        yaw += window.mouseDeltaX * 0.005f;
-        pitch -= window.mouseDeltaY * 0.005f;
-        pitch = clampf(pitch, -1.5f, 1.5f);
+        if (frames >= 8) {
+            yaw += window.mouseDeltaX * 0.005f;
+            pitch -= window.mouseDeltaY * 0.005f;
+            pitch = clampf(pitch, -0.6f, 1.2f);
+        }
         const float cy = std::cos(yaw);
         const float sy = std::sin(yaw);
         const float cp = std::cos(pitch);

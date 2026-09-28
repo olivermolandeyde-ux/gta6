@@ -9,8 +9,9 @@ void main() {
     vec3 yellow = vec3(0.95, 0.82, 0.10);
     vec3 white = vec3(0.92, 0.92, 0.90);
     float ax = abs(UV.x - 0.5);
-    float sidewalkMask = step(0.36, ax);
-    float curbMask = step(0.33, ax) * (1.0 - sidewalkMask);
+    // 26 m total: 20 m asphalt + 3 m sidewalk each side → sidewalk at ax > 10/26.
+    float sidewalkMask = step(0.385, ax);
+    float curbMask = step(0.365, ax) * (1.0 - sidewalkMask);
     float centerDash = (1.0 - step(0.014, abs(UV.x - 0.5))) * step(0.42, fract(UV.y * 5.0));
     float lane = (1.0 - step(0.010, abs(ax - 0.12))) * 0.55;
     vec3 c = mix(asphalt, curb, curbMask);

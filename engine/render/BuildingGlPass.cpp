@@ -197,6 +197,25 @@ constexpr u32 kCubeIdx[] = {
     0,1,2, 0,2,3, 4,5,6, 4,6,7, 8,9,10, 8,10,11, 12,13,14, 12,14,15, 16,17,18, 16,18,19, 20,21,22, 20,22,23,
 };
 
+constexpr u32 kStreetVertCap = 8192 * 6;
+
+void emit_aabb_quad(float* verts, u32* n, float x0, float z0, float x1, float z1, float y, float u00,
+                    float v00, float u10, float v10, float u11, float v11, float u01, float v01) {
+    if (*n + 6 > kStreetVertCap) {
+        return;
+    }
+    const float p[6][5] = {
+        {x0, y, z0, u00, v00}, {x1, y, z0, u10, v10}, {x1, y, z1, u11, v11},
+        {x0, y, z0, u00, v00}, {x1, y, z1, u11, v11}, {x0, y, z1, u01, v01},
+    };
+    for (u32 t = 0; t < 6; ++t) {
+        for (u32 k = 0; k < 5; ++k) {
+            verts[*n * 5 + k] = p[t][k];
+        }
+        ++(*n);
+    }
+}
+
 void model_trs(float* m, float3 pos, float sx, float sy, float sz) {
     mat_ident(m);
     m[0]  = sx;
@@ -261,7 +280,7 @@ bool BuildingGlPass::init() {
     glBindVertexArray(street_vao);
     glGenBuffers(1, &street_vbo);
     glBindBuffer(GL_ARRAY_BUFFER, street_vbo);
-    glBufferData(GL_ARRAY_BUFFER, 128 * 6 * 5 * static_cast<GLsizeiptr>(sizeof(float)), nullptr,
+    glBufferData(GL_ARRAY_BUFFER, 8192 * 6 * 5 * static_cast<GLsizeiptr>(sizeof(float)), nullptr,
                  GL_DYNAMIC_DRAW);
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), reinterpret_cast<void*>(0));
@@ -283,45 +302,51 @@ void BuildingGlPass::buildMesh(World& world) {
         ++num_buildings;
     }
 
-    float verts[128 * 6 * 5];
+    // Non-overlapping tiles: intersections + EW spans + NS spans. Full-length
+    // ribbons z-fought at every crossing.
+    static float verts[kStreetVertCap * 5];
     u32 n = 0;
-    street_count = 0;
-    for (Entity e : world.query<StreetComponent>()) {
-        StreetComponent* s = world.get<StreetComponent>(e);
-        if (!s || n + 6 >= 128 * 6) {
-            continue;
+    const float y      = kCityPlateauY + 0.25f;
+    const float half_w = kCityStreetWidth * 0.5f + 3.f; // 10 m asphalt + 3 m sidewalk
+    const float pitch  = kCityBlockPitch;
+    const u32   nline  = kCityBlocks + 1;
+
+    for (u32 j = 0; j < nline; ++j) {
+        for (u32 i = 0; i < nline; ++i) {
+            const float cx = static_cast<float>(i) * pitch;
+            const float cz = static_cast<float>(j) * pitch;
+            emit_aabb_quad(verts, &n, cx - half_w, cz - half_w, cx + half_w, cz + half_w, y, 0.22f, 0.f,
+                           0.22f, 0.f, 0.22f, 0.f, 0.22f, 0.f);
         }
-        float3 d = float3_sub(s->end, s->start);
-        const float len = float3_length(d);
-        if (len < 1.f) {
-            continue;
-        }
-        d = float3_scale(d, 1.f / len);
-        float3 side = float3_normalize_or(float3_cross(d, float3{0.f, 1.f, 0.f}), float3{1.f, 0.f, 0.f});
-        side = float3_scale(side, s->width * 0.5f + 5.0f);
-        const float y0 = kCityPlateauY + 0.18f;
-        const float y1 = kCityPlateauY + 0.18f;
-        const float3 a = float3_sub(s->start, side);
-        const float3 b = float3_add(s->start, side);
-        const float3 c = float3_add(s->end, side);
-        const float3 e2 = float3_sub(s->end, side);
-        const float uvlen = len / 12.f;
-        const float tri[6][5] = {
-            {a.x, y0, a.z, 0.f, 0.f},     {b.x, y0, b.z, 1.f, 0.f}, {c.x, y1, c.z, 1.f, uvlen},
-            {a.x, y0, a.z, 0.f, 0.f},     {c.x, y1, c.z, 1.f, uvlen}, {e2.x, y1, e2.z, 0.f, uvlen},
-        };
-        for (u32 t = 0; t < 6; ++t) {
-            for (u32 k = 0; k < 5; ++k) {
-                verts[n * 5 + k] = tri[t][k];
-            }
-            ++n;
-        }
-        ++street_count;
     }
+    for (u32 j = 0; j < nline; ++j) {
+        for (u32 i = 0; i < kCityBlocks; ++i) {
+            const float z  = static_cast<float>(j) * pitch;
+            const float x0 = static_cast<float>(i) * pitch + half_w;
+            const float x1 = static_cast<float>(i + 1) * pitch - half_w;
+            const float len = (x1 - x0) / 10.f;
+            // UV.x across Z, UV.y along X
+            emit_aabb_quad(verts, &n, x0, z - half_w, x1, z + half_w, y, 0.f, 0.f, 0.f, len, 1.f, len, 1.f,
+                           0.f);
+        }
+    }
+    for (u32 i = 0; i < nline; ++i) {
+        for (u32 j = 0; j < kCityBlocks; ++j) {
+            const float x  = static_cast<float>(i) * pitch;
+            const float z0 = static_cast<float>(j) * pitch + half_w;
+            const float z1 = static_cast<float>(j + 1) * pitch - half_w;
+            const float len = (z1 - z0) / 10.f;
+            // UV.x across X, UV.y along Z
+            emit_aabb_quad(verts, &n, x - half_w, z0, x + half_w, z1, y, 0.f, 0.f, 1.f, 0.f, 1.f, len, 0.f,
+                           len);
+        }
+    }
+
     glBindBuffer(GL_ARRAY_BUFFER, street_vbo);
     glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(n * 5 * sizeof(float)), verts);
-    street_count = n; // vertex count for draw
-    std::printf("[city] gpu mesh buildings=%u street_verts=%u\n", num_buildings, n);
+    street_count = n;
+    std::printf("[city] gpu mesh buildings=%u street_verts=%u (non-overlapping tiles)\n", num_buildings,
+                n);
     std::fflush(stdout);
 }
 

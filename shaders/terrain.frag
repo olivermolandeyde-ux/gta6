@@ -17,11 +17,6 @@ void main() {
     }
     vec2 d = min(vWorld.xz, vec2(2400.0) - vWorld.xz);
     float urban = smoothstep(-80.0, 0.0, min(d.x, d.y));
-    vec2 g = mod(vWorld.xz, 120.0);
-    float street = max(max(step(g.x, 10.0), step(110.0, g.x)),
-                       max(step(g.y, 10.0), step(110.0, g.y)));
-    vec3 lot = vec3(0.36, 0.36, 0.34);
-    vec3 road = vec3(0.22, 0.22, 0.22);
-    vec3 city = mix(lot, road, street);
+    vec3 city = vec3(0.34, 0.34, 0.32);
     o = vec4(mix(wild, city, urban), 1.0);
 }
