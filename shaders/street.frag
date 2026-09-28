@@ -23,7 +23,10 @@ void main() {
     asphalt *= (0.86 + 0.22 * n);
     float wet = step(0.82, hash12(floor(FragPos.xz * 0.11)));
     asphalt *= mix(1.0, 0.65, wet);
-
+    // 2 m concrete slabs
+    vec2 slab = fract(FragPos.xz / 2.0);
+    float seam = 1.0 - step(0.045, min(slab.x, slab.y)) * step(min(slab.x, slab.y), 0.955);
+    sidewalk = mix(sidewalk * (0.92 + 0.08 * n), sidewalk * 0.62, seam * sidewalkMask);
     float crack = step(0.97, hash12(floor(UV * vec2(30.0, 8.0)))) * sidewalkMask;
     sidewalk *= (1.0 - crack * 0.35);
 

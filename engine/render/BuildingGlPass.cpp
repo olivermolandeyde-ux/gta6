@@ -2,6 +2,8 @@
 
 #include "ecs/World.h"
 #include "objects/StreetLight.h"
+#include "render/CityProcTex.h"
+#include "render/CitySolidMesh.h"
 #include "render/RenderPipeline.h"
 #include "world/CityGenerator.h"
 
@@ -226,6 +228,64 @@ void model_trs(float* m, float3 pos, float sx, float sy, float sz) {
     m[14] = pos.z - sz * 0.5f;
 }
 
+void model_axis(float* m, float3 pos, float sx, float sy, float sz) {
+    mat_ident(m);
+    m[0]  = sx;
+    m[5]  = sy;
+    m[10] = sz;
+    m[12] = pos.x;
+    m[13] = pos.y;
+    m[14] = pos.z;
+}
+
+void mat_ortho(float* m, float s, float n, float f) {
+    std::memset(m, 0, 16 * sizeof(float));
+    m[0] = 1.f / s;
+    m[5] = 1.f / s;
+    m[10] = -2.f / (f - n);
+    m[11] = 0.f;
+    m[14] = -(f + n) / (f - n);
+    m[15] = 1.f;
+}
+
+void mat_mul16(float* o, const float* a, const float* b) {
+    float t[16];
+    for (u32 c = 0; c < 4; ++c) {
+        for (u32 r = 0; r < 4; ++r) {
+            t[c * 4 + r] = a[0 * 4 + r] * b[c * 4 + 0] + a[1 * 4 + r] * b[c * 4 + 1]
+                           + a[2 * 4 + r] * b[c * 4 + 2] + a[3 * 4 + r] * b[c * 4 + 3];
+        }
+    }
+    std::memcpy(o, t, sizeof(t));
+}
+
+void upload_solid(unsigned* vao, unsigned* ibo, unsigned* count, SolidVert* verts, u32 vn, u32* idx, u32 in) {
+    unsigned vbo = 0;
+    glGenVertexArrays(1, vao);
+    glBindVertexArray(*vao);
+    glGenBuffers(1, &vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(vn * sizeof(SolidVert)), verts, GL_STATIC_DRAW);
+    glGenBuffers(1, ibo);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, *ibo);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(in * sizeof(u32)), idx, GL_STATIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(SolidVert), reinterpret_cast<void*>(0));
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(SolidVert),
+                          reinterpret_cast<void*>(3 * sizeof(float)));
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(SolidVert),
+                          reinterpret_cast<void*>(6 * sizeof(float)));
+    glBindVertexArray(0);
+    *count = in;
+}
+
+void bind_inv_scale(unsigned prog, float sx, float sy, float sz) {
+    glUniform3f(glGetUniformLocation(prog, "uInvScale"), 1.f / max_of(0.001f, sx), 1.f / max_of(0.001f, sy),
+                1.f / max_of(0.001f, sz));
+}
+
 void set_building_uniforms(unsigned prog, const float* view, const float* proj, float3 sun,
                            float time_of_day, float3 cam) {
     glUseProgram(prog);
@@ -239,16 +299,44 @@ void set_building_uniforms(unsigned prog, const float* view, const float* proj, 
     glUniform1i(glGetUniformLocation(prog, "windowStyle"), 0);
     glUniform3f(glGetUniformLocation(prog, "uCamPos"), cam.x, cam.y, cam.z);
     glUniform3f(glGetUniformLocation(prog, "uFogColor"), 0.62f, 0.74f, 0.84f);
+    glUniform3f(glGetUniformLocation(prog, "uInvScale"), 1.f, 1.f, 1.f);
+    glUniform1i(glGetUniformLocation(prog, "uUseTex"), 0);
+    glUniform1i(glGetUniformLocation(prog, "uAlphaLeaf"), 0);
+    glUniform1i(glGetUniformLocation(prog, "uAlbedo"), 0);
+    glUniform1i(glGetUniformLocation(prog, "uNormalTex"), 1);
+    glUniform1i(glGetUniformLocation(prog, "uShadow"), 2);
 }
 
 void draw_box(unsigned prog, float3 p, float sx, float sy, float sz, float3 albedo, float emit) {
     float m[16];
     model_trs(m, p, sx, sy, sz);
     glUniformMatrix4fv(glGetUniformLocation(prog, "model"), 1, GL_FALSE, m);
+    bind_inv_scale(prog, 1.f, 1.f, 1.f);
+    glUniform1i(glGetUniformLocation(prog, "uUseTex"), 0);
+    glUniform1i(glGetUniformLocation(prog, "uAlphaLeaf"), 0);
     glUniform3f(glGetUniformLocation(prog, "albedo"), albedo.x, albedo.y, albedo.z);
     glUniform1f(glGetUniformLocation(prog, "emissionBoost"), emit);
     glUniform1f(glGetUniformLocation(prog, "roughness"), 0.5f);
     glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, nullptr);
+}
+
+void draw_axis_mesh(unsigned prog, unsigned vao, unsigned nidx, float3 p, float sx, float sy, float sz,
+                    float3 albedo, float emit, unsigned albedo_tex, int leaf) {
+    float m[16];
+    model_axis(m, p, sx, sy, sz);
+    glBindVertexArray(vao);
+    glUniformMatrix4fv(glGetUniformLocation(prog, "model"), 1, GL_FALSE, m);
+    bind_inv_scale(prog, sx, sy, sz);
+    glUniform1i(glGetUniformLocation(prog, "uUseTex"), albedo_tex ? 1 : 0);
+    glUniform1i(glGetUniformLocation(prog, "uAlphaLeaf"), leaf);
+    glUniform3f(glGetUniformLocation(prog, "albedo"), albedo.x, albedo.y, albedo.z);
+    glUniform1f(glGetUniformLocation(prog, "emissionBoost"), emit);
+    if (albedo_tex) {
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, albedo_tex);
+        glUniform1i(glGetUniformLocation(prog, "uAlbedo"), 0);
+    }
+    glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(nidx), GL_UNSIGNED_INT, nullptr);
 }
 
 [[nodiscard]] bool near_xz(float3 a, float3 b, float r) {
@@ -304,6 +392,61 @@ bool BuildingGlPass::init() {
     glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float),
                           reinterpret_cast<void*>(6 * sizeof(float)));
     glBindVertexArray(0);
+
+    {
+        SolidVert sv[4096];
+        u32 sidx[8192];
+        u32 vn = 0, in = 0;
+        mesh_taper_cyl(sv, &vn, sidx, &in, 16, 0.55f);
+        upload_solid(&cyl_vao, &cyl_ibo, &cyl_count, sv, vn, sidx, in);
+        vn = 0;
+        in = 0;
+        mesh_uv_sphere(sv, &vn, sidx, &in, 12, 16);
+        upload_solid(&sph_vao, &sph_ibo, &sph_count, sv, vn, sidx, in);
+        vn = 0;
+        in = 0;
+        mesh_cone(sv, &vn, sidx, &in, 16);
+        upload_solid(&cone_vao, &cone_ibo, &cone_count, sv, vn, sidx, in);
+    }
+    {
+        static u8 rgba[kProcTexSize * kProcTexSize * 4];
+        static u8 nrm[kProcTexSize * kProcTexSize * 3];
+        proc_tex_brick(rgba, nrm);
+        tex_brick = gl_upload_rgba(rgba, kProcTexSize, kProcTexSize, true);
+        tex_brick_n = gl_upload_rgb(nrm, kProcTexSize, kProcTexSize);
+        proc_tex_concrete(rgba, nrm);
+        tex_conc = gl_upload_rgba(rgba, kProcTexSize, kProcTexSize, true);
+        tex_conc_n = gl_upload_rgb(nrm, kProcTexSize, kProcTexSize);
+        proc_tex_asphalt(rgba, nrm);
+        tex_asph = gl_upload_rgba(rgba, kProcTexSize, kProcTexSize, true);
+        proc_tex_bark(rgba);
+        tex_bark = gl_upload_rgba(rgba, kProcTexSize, kProcTexSize, true);
+        proc_tex_leaf(rgba);
+        tex_leaf = gl_upload_rgba(rgba, kProcTexSize, kProcTexSize, true);
+    }
+    {
+        constexpr const char* kShVs =
+            "#version 330 core\nlayout(location=0) in vec3 aPos; uniform mat4 model,uLightVP;\n"
+            "void main(){ gl_Position=uLightVP*model*vec4(aPos,1.0); }\n";
+        constexpr const char* kShFs = "#version 330 core\nvoid main(){}\n";
+        shadow_prog = make_program("shaders/shadow.vert", "shaders/shadow.frag", kShVs, kShFs, "shadow");
+        glGenTextures(1, &shadow_tex);
+        glBindTexture(GL_TEXTURE_2D, shadow_tex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, 1024, 1024, 0, GL_DEPTH_COMPONENT, GL_FLOAT,
+                     nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glGenFramebuffers(1, &shadow_fbo);
+        glBindFramebuffer(GL_FRAMEBUFFER, shadow_fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, shadow_tex, 0);
+        glDrawBuffer(GL_NONE);
+        glReadBuffer(GL_NONE);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        std::printf("[gl] proc textures + shadow map + solid meshes ready\n");
+        std::fflush(stdout);
+    }
 
     glGenVertexArrays(1, &street_vao);
     glBindVertexArray(street_vao);
@@ -429,6 +572,40 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
     }
 
     set_building_uniforms(building_prog, view, proj, sun, time_of_day, camera_pos);
+    float lview[16], lproj[16], light_vp[16];
+    float3 lpos = float3_add(camera_pos, float3_scale(sun, 70.f));
+    mat_look(lview, lpos, camera_pos, float3{0.f, 1.f, 0.f});
+    mat_ortho(lproj, 70.f, 2.f, 160.f);
+    mat_mul16(light_vp, lproj, lview);
+    if (shadow_fbo && shadow_prog) {
+        glBindFramebuffer(GL_FRAMEBUFFER, shadow_fbo);
+        glViewport(0, 0, 1024, 1024);
+        glClear(GL_DEPTH_BUFFER_BIT);
+        glUseProgram(shadow_prog);
+        glUniformMatrix4fv(glGetUniformLocation(shadow_prog, "uLightVP"), 1, GL_FALSE, light_vp);
+        glBindVertexArray(cube_vao);
+        float sm[16];
+        u32 sc = 0;
+        for (Entity e : world.query<BuildingComponent>()) {
+            BuildingComponent* b = world.get<BuildingComponent>(e);
+            if (!b || !near_xz(b->position, camera_pos, 90.f)) {
+                continue;
+            }
+            model_trs(sm, b->position, b->width, b->height, b->depth);
+            glUniformMatrix4fv(glGetUniformLocation(shadow_prog, "model"), 1, GL_FALSE, sm);
+            glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, nullptr);
+            if (++sc > 80) {
+                break;
+            }
+        }
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glViewport(0, 0, max_of(1, width), max_of(1, height));
+        glUseProgram(building_prog);
+    }
+    glUniformMatrix4fv(glGetUniformLocation(building_prog, "uLightVP"), 1, GL_FALSE, light_vp);
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, shadow_tex);
+    glUniform1i(glGetUniformLocation(building_prog, "uShadow"), 2);
     glBindVertexArray(cube_vao);
     float model[16];
     u32 drawn = 0;
@@ -451,7 +628,25 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
         glUniform1f(glGetUniformLocation(building_prog, "floors"), static_cast<float>(b->num_floors));
         glUniform1i(glGetUniformLocation(building_prog, "district"), static_cast<int>(b->district));
         glUniform1i(glGetUniformLocation(building_prog, "windowStyle"), static_cast<int>(b->window_style));
+        unsigned alb = tex_brick;
+        unsigned nrm = tex_brick_n;
+        if (b->district == 0) {
+            alb = tex_conc;
+            nrm = tex_conc_n;
+        } else if (b->district == 1 || b->district == 4) {
+            alb = tex_conc;
+            nrm = tex_conc_n;
+        }
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, alb);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, nrm);
+        glUniform1i(glGetUniformLocation(building_prog, "uUseTex"), 1);
+        glUniform1i(glGetUniformLocation(building_prog, "uAlbedo"), 0);
+        glUniform1i(glGetUniformLocation(building_prog, "uNormalTex"), 1);
+        bind_inv_scale(building_prog, 1.f, 1.f, 1.f);
         glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, nullptr);
+        glUniform1i(glGetUniformLocation(building_prog, "uUseTex"), 0);
         if (b->roof_style == 1) {
             draw_box(building_prog, float3{b->position.x, b->position.y + b->height, b->position.z},
                      b->width * 1.02f, 1.6f, b->depth * 0.55f, float3{0.45f, 0.22f, 0.16f}, 0.f);
@@ -532,13 +727,23 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
         const float nz = std::round(p.z / kCityBlockPitch) * kCityBlockPitch;
         const bool ew = std::fabs(p.z - nz) > std::fabs(p.x - nx);
         const float dir = ew ? ((p.z > nz) ? -1.f : 1.f) : ((p.x > nx) ? -1.f : 1.f);
-        draw_box(building_prog, p, 0.30f, 8.f, 0.30f, metal, 0.f);
-        float3 arm = ew ? float3{p.x, p.y + 7.7f, p.z + dir * 1.0f}
-                        : float3{p.x + dir * 1.0f, p.y + 7.7f, p.z};
-        draw_box(building_prog, arm, ew ? 0.18f : 2.0f, 0.18f, ew ? 2.0f : 0.18f, metal, 0.f);
-        float3 head = ew ? float3{p.x, p.y + 7.55f, p.z + dir * 2.0f}
-                         : float3{p.x + dir * 2.0f, p.y + 7.55f, p.z};
-        draw_box(building_prog, head, 0.55f, 0.28f, 0.55f, lamp_col, 0.4f + night * 1.8f);
+        draw_axis_mesh(building_prog, cyl_vao, cyl_count, p, 0.15f, 8.f, 0.15f, metal, 0.f, 0, 0);
+        float3 p1 = ew ? float3{p.x, p.y + 5.4f, p.z + dir * 0.25f}
+                       : float3{p.x + dir * 0.25f, p.y + 5.4f, p.z};
+        draw_axis_mesh(building_prog, cyl_vao, cyl_count, p1, 0.12f, 2.2f, 0.12f, metal, 0.f, 0, 0);
+        float3 arm = ew ? float3{p.x, p.y + 7.6f, p.z + dir * 0.15f}
+                        : float3{p.x + dir * 0.15f, p.y + 7.6f, p.z};
+        draw_box(building_prog, arm, ew ? 0.16f : 2.1f, 0.14f, ew ? 2.1f : 0.16f, metal, 0.f);
+        float3 head = ew ? float3{p.x, p.y + 7.45f, p.z + dir * 2.05f}
+                         : float3{p.x + dir * 2.05f, p.y + 7.45f, p.z};
+        draw_axis_mesh(building_prog, cyl_vao, cyl_count, float3{head.x, head.y - 0.15f, head.z}, 0.28f,
+                       0.22f, 0.22f, float3{0.12f, 0.12f, 0.12f}, 0.f, 0, 0);
+        draw_axis_mesh(building_prog, sph_vao, sph_count, head, 0.22f, 0.16f, 0.22f, lamp_col,
+                       0.5f + night * 2.0f, 0, 0);
+        if (night > 0.5f) {
+            draw_axis_mesh(building_prog, cyl_vao, cyl_count, float3{head.x, gy + 0.02f, head.z}, 3.2f, 0.03f,
+                           3.2f, float3{1.f, 0.85f, 0.4f}, 1.6f, 0, 0);
+        }
         ++lamps;
     }
     auto skip_cross = [](float t) {
@@ -560,9 +765,24 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
                 continue;
             }
             const float h = 3.f + std::fmod(x * 0.17f + z * 0.09f, 5.f);
-            draw_box(building_prog, p, 0.6f, h, 0.6f, float3{0.32f, 0.20f, 0.10f}, 0.f);
-            draw_box(building_prog, float3{p.x, p.y + h, p.z}, 2.4f + h * 0.15f, 2.2f + h * 0.12f,
-                     2.4f + h * 0.15f, float3{0.18f, 0.42f, 0.16f}, 0.f);
+            draw_axis_mesh(building_prog, cyl_vao, cyl_count, p, 0.28f, h, 0.28f, float3{0.36f, 0.22f, 0.10f},
+                           0.f, tex_bark, 0);
+            const bool pine = (static_cast<u32>(x) / 24u + j) % 3u == 0u;
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            if (pine) {
+                draw_axis_mesh(building_prog, cone_vao, cone_count, float3{p.x, p.y + h * 0.45f, p.z},
+                               1.6f + h * 0.12f, h * 0.9f, 1.6f + h * 0.12f, float3{0.12f, 0.32f, 0.12f}, 0.f,
+                               tex_leaf, 1);
+            } else {
+                draw_axis_mesh(building_prog, sph_vao, sph_count, float3{p.x, p.y + h + 0.4f, p.z},
+                               1.8f + h * 0.1f, 1.5f + h * 0.08f, 1.8f + h * 0.1f, float3{0.16f, 0.38f, 0.14f},
+                               0.f, tex_leaf, 1);
+                draw_axis_mesh(building_prog, sph_vao, sph_count,
+                               float3{p.x + 0.7f, p.y + h - 0.2f, p.z + 0.4f}, 1.2f, 1.1f, 1.2f,
+                               float3{0.14f, 0.34f, 0.12f}, 0.f, tex_leaf, 1);
+            }
+            glDisable(GL_BLEND);
             ++trees;
         }
     }
@@ -578,21 +798,32 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
                 continue;
             }
             const float h = 3.f + std::fmod(z * 0.13f + x * 0.07f, 5.f);
-            draw_box(building_prog, p, 0.6f, h, 0.6f, float3{0.32f, 0.20f, 0.10f}, 0.f);
-            draw_box(building_prog, float3{p.x, p.y + h, p.z}, 2.4f + h * 0.15f, 2.2f + h * 0.12f,
-                     2.4f + h * 0.15f, float3{0.18f, 0.42f, 0.16f}, 0.f);
+            draw_axis_mesh(building_prog, cyl_vao, cyl_count, p, 0.28f, h, 0.28f, float3{0.36f, 0.22f, 0.10f},
+                           0.f, tex_bark, 0);
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            draw_axis_mesh(building_prog, sph_vao, sph_count, float3{p.x, p.y + h + 0.3f, p.z}, 1.7f + h * 0.1f,
+                           1.4f, 1.7f + h * 0.1f, float3{0.16f, 0.38f, 0.14f}, 0.f, tex_leaf, 1);
+            glDisable(GL_BLEND);
             ++trees;
         }
     }
     for (float t = 80.f; t < 400.f; t += 18.f) {
         float3 p{80.f + t * 0.15f, gy, 80.f + std::fmod(t * 1.7f, 90.f)};
         if (near_xz(p, camera_pos, 260.f)) {
-            draw_box(building_prog, p, 0.7f, 6.f, 0.7f, float3{0.30f, 0.18f, 0.10f}, 0.f);
-            draw_box(building_prog, float3{p.x, p.y + 6.5f, p.z}, 5.5f, 4.f, 5.5f, float3{0.16f, 0.38f, 0.14f},
-                     0.f);
+            draw_axis_mesh(building_prog, cyl_vao, cyl_count, p, 0.35f, 6.5f, 0.35f, float3{0.34f, 0.20f, 0.10f},
+                           0.f, tex_bark, 0);
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            draw_axis_mesh(building_prog, sph_vao, sph_count, float3{p.x, p.y + 7.2f, p.z}, 3.2f, 2.6f, 3.2f,
+                           float3{0.15f, 0.36f, 0.13f}, 0.f, tex_leaf, 1);
+            glDisable(GL_BLEND);
             ++trees;
         }
     }
+    glBindVertexArray(cube_vao);
+    glUniform1i(glGetUniformLocation(building_prog, "uUseTex"), 0);
+    glUniform1i(glGetUniformLocation(building_prog, "uAlphaLeaf"), 0);
     const float stripe_y = kCityPlateauY + 0.27f;
     for (u32 j = 0; j <= kCityBlocks; ++j) {
         for (u32 i = 0; i <= kCityBlocks; ++i) {
@@ -686,6 +917,10 @@ void BuildingGlPass::shutdown() {
     if (cloud_prog) {
         glDeleteProgram(cloud_prog);
         cloud_prog = 0;
+    }
+    if (shadow_prog) {
+        glDeleteProgram(shadow_prog);
+        shadow_prog = 0;
     }
     if (street_prog) {
         glDeleteProgram(street_prog);

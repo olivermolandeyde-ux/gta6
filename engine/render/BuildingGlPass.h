@@ -16,6 +16,11 @@ struct BuildingGlPass {
     unsigned street_vao;
     unsigned street_vbo;
     unsigned cloud_prog;
+    unsigned cyl_vao, cyl_ibo, cyl_count;
+    unsigned sph_vao, sph_ibo, sph_count;
+    unsigned cone_vao, cone_ibo, cone_count;
+    unsigned tex_brick, tex_brick_n, tex_conc, tex_conc_n, tex_asph, tex_bark, tex_leaf;
+    unsigned shadow_fbo, shadow_tex, shadow_prog;
     unsigned street_count;
     u32      num_buildings;
     bool     ok;
