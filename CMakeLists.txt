@@ -107,6 +107,27 @@ target_compile_definitions(leonida_engine PRIVATE
     LEONIDA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
 )
 
+add_executable(leonida_visual
+    sandbox/VisualSandbox.cpp
+    engine/render/MetalRenderer.cpp
+    engine/render/MetalWindow.cpp
+    engine/render/InputSystem.cpp
+)
+target_link_libraries(leonida_visual PRIVATE leonida_core)
+target_compile_definitions(leonida_visual PRIVATE
+    LEONIDA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
+if(APPLE)
+    set_source_files_properties(
+        engine/render/MetalRenderer.cpp
+        engine/render/MetalWindow.cpp
+        sandbox/VisualSandbox.cpp
+        PROPERTIES COMPILE_FLAGS "-x objective-c++"
+    )
+    target_link_libraries(leonida_visual PRIVATE
+        "-framework Metal -framework QuartzCore -framework Cocoa")
+endif()
+
 add_executable(leonida_full_sandbox
     sandbox/FullIntegrationSandbox.cpp
 )
