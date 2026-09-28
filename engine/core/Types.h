@@ -20,6 +20,31 @@ using usize = std::size_t;
 using isize = std::ptrdiff_t;
 using byte = std::byte;
 
+struct float3 {
+    f32 x;
+    f32 y;
+    f32 z;
+};
+
+[[nodiscard]] inline float3 float3_add(float3 a, float3 b) noexcept {
+    return float3{a.x + b.x, a.y + b.y, a.z + b.z};
+}
+[[nodiscard]] inline float3 float3_sub(float3 a, float3 b) noexcept {
+    return float3{a.x - b.x, a.y - b.y, a.z - b.z};
+}
+[[nodiscard]] inline float3 float3_scale(float3 a, f32 s) noexcept {
+    return float3{a.x * s, a.y * s, a.z * s};
+}
+[[nodiscard]] inline f32 float3_dot(float3 a, float3 b) noexcept {
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+[[nodiscard]] inline f32 float3_length_sq(float3 a) noexcept {
+    return float3_dot(a, a);
+}
+[[nodiscard]] inline f32 clampf(f32 v, f32 lo, f32 hi) noexcept {
+    return v < lo ? lo : (v > hi ? hi : v);
+}
+
 inline constexpr u32 kCacheLineBytes     = 64;
 inline constexpr u32 kOsPageBytes        = 4096;
 inline constexpr u32 kChunkBytes         = 16 * 1024;   // L1-resident archetype slab

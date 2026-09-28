@@ -27,6 +27,9 @@ add_library(leonida_core STATIC
     engine/ecs/World.cpp
     engine/ecs/SystemScheduler.cpp
     engine/render/RenderPipeline.cpp
+    engine/objects/VehicleEngine.cpp
+    engine/objects/BreakableWindow.cpp
+    engine/objects/StreetLight.cpp
 )
 
 target_include_directories(leonida_core PUBLIC
@@ -42,6 +45,11 @@ add_executable(leonida_phase2_sandbox
     sandbox/phase2_render_sandbox.cpp
 )
 target_link_libraries(leonida_phase2_sandbox PRIVATE leonida_core)
+
+add_executable(leonida_phase3_sandbox
+    sandbox/phase3_objects_sandbox.cpp
+)
+target_link_libraries(leonida_phase3_sandbox PRIVATE leonida_core)
 
 if(UNIX)
     target_link_libraries(leonida_core PUBLIC pthread)
