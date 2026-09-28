@@ -55,26 +55,7 @@ vertex float4 sky_vertex(uint vertexID [[vertex_id]],
 
 fragment float4 sky_fragment(float4 position [[position]],
                              constant SkyUniforms& uniforms [[buffer(0)]]) {
-    const float3 kClearBlue = float3(0.5, 0.7, 1.0);
-    float2 res = uniforms.resolution.x > 1.0 ? uniforms.resolution : float2(1280.0, 720.0);
-    float2 uv = position.xy / res;
-    float4 clipPos = float4(uv * 2.0 - 1.0, 1.0, 1.0);
-    float4 worldPos = uniforms.invViewProj * clipPos;
-    float w = worldPos.w;
-    if (abs(w) < 1e-6 || any(isnan(worldPos.xyz)) || any(isinf(worldPos.xyz))) {
-        return float4(kClearBlue, 1.0);
-    }
-    float3 viewDir = normalize(worldPos.xyz / w);
-    if (any(isnan(viewDir))) {
-        return float4(kClearBlue, 1.0);
-    }
-
-    float3 skyColor = calculateSkyColor(viewDir, uniforms.sunDir, uniforms.turbidity);
-    if (any(isnan(skyColor)) || any(isinf(skyColor)) || dot(skyColor, skyColor) < 1e-8) {
-        return float4(kClearBlue, 1.0);
-    }
-    skyColor = skyColor / (skyColor + float3(1.0));
-    skyColor = pow(skyColor, float3(1.0 / 2.2));
-    skyColor = max(skyColor, kClearBlue * 0.35);
-    return float4(skyColor, 1.0);
+    (void)position;
+    (void)uniforms;
+    return float4(1.0, 0.0, 0.0, 1.0);
 }

@@ -119,6 +119,5 @@ fragment float4 terrain_fragment(TerrainVertexOut in [[stage_in]],
     (void)in;
     (void)uniforms;
     (void)grassTex; (void)rockTex; (void)sandTex; (void)snowTex; (void)splatmap; (void)texSampler;
-    // FORCE PINK TO PROVE SHADER IS RUNNING
-    return float4(1.0, 0.0, 1.0, 1.0);
+    return float4(0.0, 1.0, 0.0, 1.0);
 }

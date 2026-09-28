@@ -48,6 +48,10 @@ void mat_rot_y(float* m, float a) {
 
 void mat_look(float* m, float3 eye, float3 target, float3 up) {
     float3 f = float3_normalize_or(float3_sub(target, eye), float3{0.f, 0.f, -1.f});
+    // Looking straight down/up with world-Y as up degenerates the basis (gray/empty view).
+    if (std::fabs(float3_dot(f, up)) > 0.999f) {
+        up = float3{0.f, 0.f, 1.f};
+    }
     float3 r = float3_normalize_or(float3_cross(f, up), float3{1.f, 0.f, 0.f});
     float3 u = float3_cross(r, f);
     mat_ident(m);
@@ -381,28 +385,8 @@ vertex float4 sky_vertex(uint vid [[vertex_id]]) {
   return float4(p * 2.0 - 1.0, 1.0, 1.0);
 }
 fragment float4 sky_fragment(float4 pos [[position]], constant SkyU& u [[buffer(0)]]) {
-  float3 blue = float3(0.5, 0.7, 1.0);
-  float2 res = u.res.x > 1.0 ? u.res : float2(1280.0, 720.0);
-  float2 uv = pos.xy / res;
-  float4 clip = float4(uv * 2.0 - 1.0, 1.0, 1.0);
-  float4 w = u.invVP * clip;
-  if (abs(w.w) < 1e-6 || any(isnan(w.xyz))) return float4(blue, 1.0);
-  float3 V = normalize(w.xyz / w.w);
-  if (any(isnan(V))) return float4(blue, 1.0);
-  float3 S = length(u.sunDir) < 1e-4 ? float3(0.5, 0.8, 0.3) : normalize(u.sunDir);
-  float ct = clamp(dot(V, S), -1.0, 1.0);
-  float3 betaR = float3(5.5e-6, 13.0e-6, 22.4e-6);
-  float3 betaM = float3(21e-6) * max(u.turb, 2.0);
-  float g = 0.76;
-  float mie = (1.0 - g*g) / max(pow(1.0 + g*g - 2.0*g*ct, 1.5), 1e-4);
-  float3 c = (betaR * (0.75*(1.0+ct*ct)) + betaM * mie) * 1000.0;
-  c += float3(1.0, 0.9, 0.7) * smoothstep(0.9995, 0.9999, ct) * 10.0;
-  c *= mix(0.3, 1.0, pow(max(V.y, 0.0), 0.4));
-  if (V.y < 0.0) c *= 0.15;
-  if (any(isnan(c)) || dot(c,c) < 1e-8) return float4(blue, 1.0);
-  c = c / (c + 1.0);
-  c = max(pow(c, float3(1.0/2.2)), blue * 0.35);
-  return float4(c, 1.0);
+  (void)pos; (void)u;
+  return float4(1.0, 0.0, 0.0, 1.0);
 }
 vertex float4 fallback_vertex(uint vid [[vertex_id]]) {
   float2 p[6] = { float2(-0.6,-0.4), float2(0.6,-0.4), float2(0.6,0.4),
@@ -434,7 +418,7 @@ vertex TVOut terrain_vertex(TVIn in [[stage_in]], constant TU& u [[buffer(1)]]) 
 }
 fragment float4 terrain_fragment(TVOut in [[stage_in]], constant TU& u [[buffer(1)]]) {
   (void)in; (void)u;
-  return float4(1.0, 0.0, 1.0, 1.0);
+  return float4(0.0, 1.0, 0.0, 1.0);
 }
 vertex float4 cloud_vertex(uint vid [[vertex_id]]) {
   float2 p=float2((vid<<1)&2, vid&2); return float4(p*2.0-1.0, 0.999, 1.0);
@@ -586,7 +570,7 @@ void MetalRenderer::ensurePass() {
     rp.colorAttachments[0].texture = drawable.texture;
     rp.colorAttachments[0].loadAction = MTLLoadActionClear;
     rp.colorAttachments[0].storeAction = MTLStoreActionStore;
-    rp.colorAttachments[0].clearColor = MTLClearColorMake(0.5, 0.7, 1.0, 1.0);
+    rp.colorAttachments[0].clearColor = MTLClearColorMake(0.0, 0.0, 0.0, 1.0);
     rp.depthAttachment.texture = (__bridge id<MTLTexture>)depthTexture;
     rp.depthAttachment.loadAction = MTLLoadActionClear;
     rp.depthAttachment.storeAction = MTLStoreActionDontCare;
@@ -688,6 +672,9 @@ void MetalRenderer::shutdown() {
 void MetalRenderer::renderSky(const SkyComponent& sky) {
     recorded_sky = 1;
     ensurePass();
+    NSLog(@"[metal] ACTUALLY DRAWING SKY WITH PIPELINE: %@", skyPipeline ? @"SKY" : @"NULL");
+    std::printf("[metal] ACTUALLY DRAWING SKY WITH PIPELINE: %s\n", skyPipeline ? "SKY" : "NULL");
+    std::fflush(stdout);
     if (fallback_mode || !skyPipeline || !currentEncoder) {
         return;
     }
@@ -748,6 +735,11 @@ void MetalRenderer::renderTerrain(World& world, FrameAllocator& frame_alloc, con
     }
     recorded_terrain = w;
     ensurePass();
+    NSLog(@"[metal] ACTUALLY DRAWING TERRAIN WITH PIPELINE: %@",
+          terrainPipeline ? @"TERRAIN" : @"NULL");
+    std::printf("[metal] ACTUALLY DRAWING TERRAIN WITH PIPELINE: %s\n",
+                terrainPipeline ? "TERRAIN" : "NULL");
+    std::fflush(stdout);
     if (fallback_mode || !terrainPipeline || !currentEncoder || !terrainGridVB) {
         std::printf("[metal] terrain draw skipped pipeline=%p fallback=%d encoder=%p vb=%p\n",
                     terrainPipeline, fallback_mode ? 1 : 0, currentEncoder, terrainGridVB);
@@ -809,8 +801,8 @@ void MetalRenderer::renderTerrain(World& world, FrameAllocator& frame_alloc, con
     (void)packets;
     static bool logged_draw = false;
     if (!logged_draw) {
-        std::printf("[metal] drawing %u terrain chunks with HOT PINK fragment (shader is bound)\n",
-                    draws);
+        std::printf("[metal] drawing %u GREEN terrain chunks (shader is bound)\n", draws);
+        std::printf("[metal] EXPECTED: RED SKY, GREEN TERRAIN. IF YOU SEE GRAY, THE EXECUTABLE IS NOT UPDATING.\n");
         std::fflush(stdout);
         logged_draw = true;
     }

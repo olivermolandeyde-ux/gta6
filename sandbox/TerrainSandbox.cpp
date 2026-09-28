@@ -32,11 +32,13 @@ int main(int argc, char** argv) {
 
     MetalRenderer renderer{};
     renderer.init(window.getMetalLayer(), 1280, 720);
-    // Above the 648 m peaks, looking down 45° at the streamed terrain origin.
-    renderer.cameraPos    = float3{96.f, 800.f, -704.f};
-    renderer.cameraTarget = float3{96.f, 0.f, 96.f};
+    renderer.cameraPos    = float3{0.f, 1000.f, 0.f};
+    renderer.cameraTarget = float3{0.f, 0.f, 0.f};
+    renderer.cameraYaw    = 0.f;
+    renderer.cameraPitch  = -1.5707963f;
     std::printf("[terrain] renderer pipeline_ok=%d fallback=%d\n", renderer.pipeline_ok ? 1 : 0,
                 renderer.fallback_mode ? 1 : 0);
+    std::printf("[metal] EXPECTED: RED SKY, GREEN TERRAIN. IF YOU SEE GRAY, THE EXECUTABLE IS NOT UPDATING.\n");
     std::fflush(stdout);
 
     InputSystem input{};
@@ -115,56 +117,14 @@ int main(int argc, char** argv) {
     while (!window.shouldClose) {
         try {
         window.pollEvents();
-        for (int k = 0; k < 256; ++k) {
-            input_set_key(input, k, window.keys[k]);
-        }
         input.update();
-
-        const float dt = 1.f / 60.f;
-        renderer.cameraYaw += window.mouseDeltaX * 0.005f;
-        renderer.cameraPitch -= window.mouseDeltaY * 0.005f;
-        renderer.cameraPitch = clampf(renderer.cameraPitch, -1.5f, 1.5f);
-
-        const float cy = std::cos(renderer.cameraYaw);
-        const float sy = std::sin(renderer.cameraYaw);
-        const float cp = std::cos(renderer.cameraPitch);
-        const float sp = std::sin(renderer.cameraPitch);
-        const float3 fwd{sy * cp, sp, cy * cp};
-        const float3 right{cy, 0.f, -sy};
-
-        const bool w = window.isKeyDown('w') || window.isKeyDown('W') || input.isKeyDown('w');
-        const bool s = window.isKeyDown('s') || window.isKeyDown('S') || input.isKeyDown('s');
-        const bool a = window.isKeyDown('a') || window.isKeyDown('A') || input.isKeyDown('a');
-        const bool d = window.isKeyDown('d') || window.isKeyDown('D') || input.isKeyDown('d');
-        const bool q = window.isKeyDown('q') || window.isKeyDown('Q') || input.isKeyDown('q');
-        const bool e = window.isKeyDown('e') || window.isKeyDown('E') || input.isKeyDown('e');
-        const float sp_move = window.shiftDown ? 48.f : 18.f;
-
-        float3 cam = renderer.cameraPos;
-        if (w) {
-            cam = float3_add(cam, float3_scale(fwd, sp_move * dt));
-        }
-        if (s) {
-            cam = float3_sub(cam, float3_scale(fwd, sp_move * dt));
-        }
-        if (a) {
-            cam = float3_sub(cam, float3_scale(right, sp_move * dt));
-        }
-        if (d) {
-            cam = float3_add(cam, float3_scale(right, sp_move * dt));
-        }
-        if (q) {
-            cam.y -= sp_move * dt;
-        }
-        if (e) {
-            cam.y += sp_move * dt;
-        }
-        renderer.cameraPos = cam;
-        renderer.cameraTarget = float3_add(cam, fwd);
+        // Camera locked looking straight down at origin so terrain MUST fill the view.
+        renderer.cameraPos    = float3{0.f, 1000.f, 0.f};
+        renderer.cameraTarget = float3{0.f, 0.f, 0.f};
+        renderer.cameraYaw    = 0.f;
+        renderer.cameraPitch  = -1.5707963f;
         if (StreamObserverComponent* obs = world.get<StreamObserverComponent>(player)) {
-            const float ox = cam.x < 0.f ? 0.f : cam.x;
-            const float oz = cam.z < 0.f ? 96.f : cam.z;
-            obs->world_pos = float3{ox, 0.f, oz};
+            obs->world_pos = float3{32.f, 0.f, 32.f};
         }
 
         world.begin_frame(frames);
