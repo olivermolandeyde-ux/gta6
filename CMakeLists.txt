@@ -60,6 +60,9 @@ add_library(leonida_core STATIC
     engine/ai/CivilianRoutineAI.cpp
     engine/ai/AdvancedNavigation.cpp
     engine/ai/AIDataLoader.cpp
+    engine/save/WorldSerializer.cpp
+    engine/save/WorldDeserializer.cpp
+    engine/save/SaveSlotManager.cpp
 )
 
 target_include_directories(leonida_core PUBLIC
@@ -86,6 +89,10 @@ target_compile_definitions(leonida_phase12_sandbox PRIVATE
 )
 leonida_sandbox(leonida_phase13_sandbox sandbox/phase13_ai_sandbox.cpp)
 target_compile_definitions(leonida_phase13_sandbox PRIVATE
+    LEONIDA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
+leonida_sandbox(leonida_phase14_sandbox sandbox/phase14_save_sandbox.cpp)
+target_compile_definitions(leonida_phase14_sandbox PRIVATE
     LEONIDA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
 )
 

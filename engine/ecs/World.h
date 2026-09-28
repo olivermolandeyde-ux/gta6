@@ -68,6 +68,11 @@ public:
     void add_component_blob(Entity entity, u32 component_id, const void* data);
     void remove_component_id(Entity entity, u32 component_id);
 
+    // Save/load: queue destroy of every live entity, then resurrect a packed handle
+    // with its original generation (no CRT, no new indices unless required).
+    void enqueue_destroy_all_live(CommandBuffer& cmd);
+    [[nodiscard]] Entity resurrect(u64 packed_handle);
+
     [[nodiscard]] CommandBuffer& frame_commands() noexcept { return frame_commands_; }
 
 private:

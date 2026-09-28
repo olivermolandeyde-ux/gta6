@@ -24,6 +24,15 @@ public:
         return types_[id];
     }
 
+    [[nodiscard]] u32 find_id_by_hash(u32 hash) const noexcept {
+        for (u32 i = 0; i < count_; ++i) {
+            if (types_[i].hash == hash) {
+                return i;
+            }
+        }
+        return kInvalidIndex;
+    }
+
     void reset() noexcept { count_ = 0; }
 
 private:

@@ -308,6 +308,64 @@ void World::add_component_blob(Entity entity, u32 component_id, const void* data
     move_entity(entity, *archetypes_[dest_index], component_id, data);
 }
 
+void World::enqueue_destroy_all_live(CommandBuffer& cmd) {
+    for (u32 i = 1; i < next_index_; ++i) {
+        const EntityRecord& rec = records_[i];
+        if (!rec.alive()) {
+            continue;
+        }
+        cmd.destroy_entity(Entity::make(i, rec.generation, world_id_));
+    }
+}
+
+Entity World::resurrect(u64 packed_handle) {
+    Entity desired{};
+    desired.packed = packed_handle;
+    ENGINE_ASSERT(!desired.is_null(), "cannot resurrect null entity");
+    ENGINE_ASSERT(desired.world_id() == world_id_, "resurrect world_id mismatch");
+    const u32 index = desired.index();
+    ENGINE_ASSERT(index > 0 && index < entity_capacity_, "resurrect index out of range");
+
+    if (records_[index].alive()) {
+        destroy(Entity::make(index, records_[index].generation, world_id_));
+    }
+
+    bool stolen = false;
+    for (u32 i = 0; i < free_count_; ++i) {
+        if (free_indices_[i] == index) {
+            free_indices_[i] = free_indices_[free_count_ - 1];
+            --free_count_;
+            stolen = true;
+            break;
+        }
+    }
+    if (!stolen && index >= next_index_) {
+        while (next_index_ < index) {
+            release_index(next_index_);
+            ++next_index_;
+        }
+        next_index_ = index + 1;
+    }
+
+    EntityRecord& rec = records_[index];
+    rec.generation = desired.generation();
+    if (rec.generation == 0) {
+        rec.generation = 1;
+    }
+    rec.flags     = EntityRecord::kFlagAlive;
+    rec.next_free = nullptr;
+
+    const Entity entity = Entity::make(index, rec.generation, world_id_);
+    Signature empty{};
+    Archetype& arch = ensure_archetype(empty);
+    const u16 row   = archetype_allocate_row(arch, *memory_, entity);
+    rec.location.archetype_index = arch.index;
+    rec.location.chunk_index     = static_cast<u32>(arch.chunk_count - 1);
+    rec.location.row             = row;
+    ++live_entities_;
+    return entity;
+}
+
 void World::remove_component_id(Entity entity, u32 component_id) {
     EntityRecord& rec = record(entity);
     Archetype& src    = *archetypes_[rec.location.archetype_index];
