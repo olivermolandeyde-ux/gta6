@@ -38,6 +38,8 @@ struct MetalRenderer {
     void* currentDrawable;
     void* vertexBuffer;
     void* indexBuffer;
+    void* groundVertexBuffer;
+    void* groundIndexBuffer;
     void* uniformBuffer;
     void* depthTexture;
 #else
@@ -50,6 +52,8 @@ struct MetalRenderer {
     void* currentDrawable;
     void* vertexBuffer;
     void* indexBuffer;
+    void* groundVertexBuffer;
+    void* groundIndexBuffer;
     void* uniformBuffer;
     u32   recorded_draws;
 #endif

@@ -43,20 +43,35 @@ int main(int argc, char** argv) {
     Engine engine;
     engine.boot(budget, 1);
 
-    InstantiationRequest req{};
-    req.domain      = InstantiationDomain::PersistentWorld;
-    req.debug_label = "pbr_cube";
+    InstantiationRequest cube_req{};
+    cube_req.domain      = InstantiationDomain::PersistentWorld;
+    cube_req.debug_label = "pbr_cube";
     RenderableComponent cube{};
-    cube.mesh_id     = 1;
-    cube.material_id = 1;
+    cube.mesh_id      = 1;
+    cube.material_id  = 1;
     cube.transform_id = 0;
-    TransformComponent xf{};
-    xf.position[0] = 0.f;
-    xf.position[1] = 0.5f;
-    xf.position[2] = 0.f;
-    xf.rotation[3] = 1.f;
-    xf.scale[0] = xf.scale[1] = xf.scale[2] = 1.f;
-    (void)engine.world().instantiate(req, cube, xf);
+    TransformComponent cube_xf{};
+    cube_xf.position[0] = 0.f;
+    cube_xf.position[1] = 0.5f;
+    cube_xf.position[2] = 0.f;
+    cube_xf.rotation[3] = 1.f;
+    cube_xf.scale[0] = cube_xf.scale[1] = cube_xf.scale[2] = 1.f;
+    (void)engine.world().instantiate(cube_req, cube, cube_xf);
+
+    InstantiationRequest ground_req{};
+    ground_req.domain      = InstantiationDomain::PersistentWorld;
+    ground_req.debug_label = "concrete_ground";
+    RenderableComponent ground{};
+    ground.mesh_id      = 2;
+    ground.material_id  = 2;
+    ground.transform_id = 0;
+    TransformComponent ground_xf{};
+    ground_xf.position[0] = 0.f;
+    ground_xf.position[1] = 0.f;
+    ground_xf.position[2] = 0.f;
+    ground_xf.rotation[3] = 1.f;
+    ground_xf.scale[0] = ground_xf.scale[1] = ground_xf.scale[2] = 1.f;
+    (void)engine.world().instantiate(ground_req, ground, ground_xf);
 
     renderer.cameraPos = float3{0.f, 2.f, -5.f};
 
@@ -88,8 +103,8 @@ int main(int argc, char** argv) {
         ++frames;
 
         if (!announced && frames >= 8) {
-            std::printf("VISUAL AWAKENING COMPLETE — A rotating PBR cube is now rendering on screen "
-                        "with real-time lighting\n");
+            std::printf("TRUE PBR ACTIVATED — Shiny metallic cube sitting on a concrete ground plane "
+                        "with ambient lighting and orbiting sun.\n");
             std::fflush(stdout);
             announced = true;
             if (!forever) {

@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Leonida Engine — Visual Awakening</title>
+<title>Leonida Engine — True PBR</title>
 <style>
-  html, body { margin:0; height:100%; background:#0b0c10; color:#e8eef7; font-family: ui-sans-serif, system-ui, sans-serif; overflow:hidden; }
+  html, body { margin:0; height:100%; background:#10141c; color:#e8eef7; font-family: ui-sans-serif, system-ui, sans-serif; overflow:hidden; }
   canvas { display:block; width:100%; height:100%; }
   #hud {
     position:fixed; left:16px; bottom:16px; padding:12px 14px;
@@ -18,9 +18,9 @@
 <body>
 <canvas id="gl"></canvas>
 <div id="hud">
-  <b>LEONIDA · VISUAL AWAKENING</b><br/>
-  GGX / Smith / Schlick PBR cube<br/>
-  WASD move · mouse look · Q/E up/down
+  <b>LEONIDA · TRUE PBR</b><br/>
+  GGX / Smith / Schlick · ambient fill · orbiting sun<br/>
+  Red metal cube on 100 m concrete slab · WASD / QE
 </div>
 <script>
 const canvas = document.getElementById('gl');
@@ -57,8 +57,8 @@ out vec4 o;
 float D_GGX(float NdotH, float roughness) {
   float a = roughness * roughness;
   float a2 = a * a;
-  float d = (NdotH * a2 - NdotH) * NdotH + 1.0;
-  return a2 / (3.14159265 * d * d);
+  float denom = (NdotH * NdotH) * (a2 - 1.0) + 1.0;
+  return a2 / (3.14159265 * denom * denom);
 }
 float G_SchlickGGX(float NdotV, float roughness) {
   float r = roughness + 1.0;
@@ -80,15 +80,25 @@ void main() {
   float NdotL = max(dot(N, L), 0.0);
   float NdotH = max(dot(N, H), 0.0);
   float VdotH = max(dot(V, H), 0.0);
-  vec3 F0 = mix(vec3(0.04), uAlbedo, uMetal);
+  vec3 albedo = uAlbedo;
+  vec2 g = abs(fract(vUv) - vec2(0.5));
+  float grout = smoothstep(0.47, 0.50, max(g.x, g.y));
+  albedo *= mix(1.0, 0.78, grout * (1.0 - uMetal));
+  vec3 F0 = mix(vec3(0.04), albedo, uMetal);
   vec3 F = F_Schlick(VdotH, F0);
   float D = D_GGX(NdotH, uRough);
-  float G = G_Smith(NdotV, NdotL, uRough);
-  vec3 spec = (D * G * F) / max(4.0 * NdotV * NdotL, 0.001);
+  float Gval = G_Smith(NdotV, NdotL, uRough);
+  vec3 spec = (D * Gval * F) / max(4.0 * NdotV * NdotL, 0.001);
   vec3 kD = (1.0 - F) * (1.0 - uMetal);
-  vec3 diff = kD * uAlbedo / 3.14159265;
+  vec3 diff = kD * albedo / 3.14159265;
+  float shin = mix(16.0, 256.0, 1.0 - uRough);
+  vec3 highlight = F * pow(NdotH, shin) * NdotL;
   vec3 rad = (diff + spec) * NdotL * uI;
-  rad = pow(rad, vec3(1.0/2.2));
+  rad += highlight * uI * (0.25 + 0.55 * uMetal);
+  vec3 ambient = vec3(0.05, 0.07, 0.1);
+  float hemi = 0.55 + 0.45 * max(N.y, 0.0);
+  rad += ambient * mix(albedo, F0, uMetal) * hemi;
+  rad = pow(max(rad, vec3(0.0)), vec3(1.0/2.2));
   o = vec4(rad, 1.0);
 }`;
 
@@ -104,28 +114,54 @@ gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, fs));
 gl.linkProgram(prog);
 if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw gl.getProgramInfoLog(prog);
 
-const faces = [
+function meshFrom(faces, scale) {
+  const verts = []; const idx = [];
+  faces.forEach((f, fi) => {
+    const b = fi * 4;
+    f.t.forEach((p, i) => {
+      verts.push(p[0]*scale, p[1]*scale, p[2]*scale, f.n[0], f.n[1], f.n[2],
+                 (i===1||i===2)?1:0, (i>1)?1:0);
+    });
+    idx.push(b, b+1, b+2, b, b+2, b+3);
+  });
+  const vao = gl.createVertexArray();
+  gl.bindVertexArray(vao);
+  const vbo = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(verts), gl.STATIC_DRAW);
+  const ibo = gl.createBuffer();
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(idx), gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 32, 0);
+  gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 32, 12);
+  gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 2, gl.FLOAT, false, 32, 24);
+  return { vao, count: idx.length };
+}
+
+const cube = meshFrom([
   { n:[0,0,1],  t:[[-1,-1,1],[1,-1,1],[1,1,1],[-1,1,1]] },
   { n:[0,0,-1], t:[[1,-1,-1],[-1,-1,-1],[-1,1,-1],[1,1,-1]] },
   { n:[1,0,0],  t:[[1,-1,1],[1,-1,-1],[1,1,-1],[1,1,1]] },
   { n:[-1,0,0], t:[[-1,-1,-1],[-1,-1,1],[-1,1,1],[-1,1,-1]] },
   { n:[0,1,0],  t:[[-1,1,1],[1,1,1],[1,1,-1],[-1,1,-1]] },
   { n:[0,-1,0], t:[[-1,-1,-1],[1,-1,-1],[1,-1,1],[-1,-1,1]] },
-];
-const verts = []; const idx = [];
-faces.forEach((f, fi) => {
-  const b = fi * 4;
-  f.t.forEach((p, i) => {
-    verts.push(p[0]*0.5, p[1]*0.5, p[2]*0.5, f.n[0], f.n[1], f.n[2], (i===1||i===2)?1:0, (i>1)?1:0);
-  });
-  idx.push(b, b+1, b+2, b, b+2, b+3);
-});
-const vbo = gl.createBuffer();
-gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
-gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(verts), gl.STATIC_DRAW);
-const ibo = gl.createBuffer();
-gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
-gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(idx), gl.STATIC_DRAW);
+], 0.5);
+
+const groundVerts = new Float32Array([
+  -50,0,-50,  0,1,0,  0,0,
+   50,0,-50,  0,1,0,  50,0,
+   50,0, 50,  0,1,0,  50,50,
+  -50,0, 50,  0,1,0,  0,50,
+]);
+const groundIdx = new Uint16Array([0,1,2, 0,2,3]);
+const groundVao = gl.createVertexArray();
+gl.bindVertexArray(groundVao);
+const gvbo = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, gvbo);
+gl.bufferData(gl.ARRAY_BUFFER, groundVerts, gl.STATIC_DRAW);
+const gibo = gl.createBuffer();
+gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, gibo);
+gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, groundIdx, gl.STATIC_DRAW);
 gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 32, 0);
 gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 32, 12);
 gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 2, gl.FLOAT, false, 32, 24);
@@ -150,54 +186,51 @@ function lookAt(e,c,u){
   return m;
 }
 function rotY(a){const c=Math.cos(a),s=Math.sin(a),m=ident();m[0]=c;m[2]=-s;m[8]=s;m[10]=c;return m;}
+function translate(x,y,z){const m=ident();m[12]=x;m[13]=y;m[14]=z;return m;}
 
 const keys={};
 addEventListener('keydown', e => { keys[e.key.toLowerCase()]=true; });
 addEventListener('keyup', e => { keys[e.key.toLowerCase()]=false; });
-let yaw=0, pitch=0, dragging=false, lx=0, ly=0;
-canvas.addEventListener('mousedown', e => { dragging=true; lx=e.clientX; ly=e.clientY; });
-addEventListener('mouseup', () => dragging=false);
-addEventListener('mousemove', e => {
-  if (!dragging) return;
-  yaw += (e.clientX-lx)*0.005; pitch += (e.clientY-ly)*0.005;
-  pitch = Math.max(-1.2, Math.min(1.2, pitch));
-  lx=e.clientX; ly=e.clientY;
-});
 
-const cam=[0,2,5];
+const cam=[0, 2, -5];
 gl.enable(gl.DEPTH_TEST);
-gl.clearColor(0.04, 0.05, 0.07, 1);
+gl.clearColor(0.10, 0.13, 0.18, 1);
 
-function loop(t) {
-  const dt = 1/60;
-  const fwd = [Math.sin(yaw)*Math.cos(pitch), -Math.sin(pitch), Math.cos(yaw)*Math.cos(pitch)];
-  const right = [Math.cos(yaw), 0, -Math.sin(yaw)];
-  const sp = keys['shift'] ? 6 : 2.4;
-  if (keys['w']) { cam[0]-=fwd[0]*sp*dt; cam[1]-=fwd[1]*sp*dt; cam[2]-=fwd[2]*sp*dt; }
-  if (keys['s']) { cam[0]+=fwd[0]*sp*dt; cam[1]+=fwd[1]*sp*dt; cam[2]+=fwd[2]*sp*dt; }
-  if (keys['a']) { cam[0]-=right[0]*sp*dt; cam[2]-=right[2]*sp*dt; }
-  if (keys['d']) { cam[0]+=right[0]*sp*dt; cam[2]+=right[2]*sp*dt; }
-  if (keys['q']||keys['e']&&false) {}
-  if (keys['q']) cam[1]-=sp*dt;
-  if (keys['e']) cam[1]+=sp*dt;
-
-  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-  gl.useProgram(prog);
-  const tgt = [cam[0]-fwd[0], cam[1]-fwd[1], cam[2]-fwd[2]];
-  const view = lookAt(cam, tgt, [0,1,0]);
-  const proj = persp(Math.PI/3, canvas.width/canvas.height, 0.05, 80);
-  const model = rotY(t*0.0007);
+function drawMesh(vao, count, model, albedo, rough, metal, cam, view, proj, lightDir) {
+  gl.bindVertexArray(vao);
   gl.uniformMatrix4fv(gl.getUniformLocation(prog,'uModel'), false, model);
   gl.uniformMatrix4fv(gl.getUniformLocation(prog,'uView'), false, view);
   gl.uniformMatrix4fv(gl.getUniformLocation(prog,'uProj'), false, proj);
   gl.uniform3fv(gl.getUniformLocation(prog,'uCam'), cam);
-  gl.uniform3fv(gl.getUniformLocation(prog,'uLightDir'), [-0.35, -0.85, -0.4]);
-  gl.uniform3fv(gl.getUniformLocation(prog,'uAlbedo'), [0.82, 0.22, 0.12]);
-  gl.uniform1f(gl.getUniformLocation(prog,'uRough'), 0.32);
-  gl.uniform1f(gl.getUniformLocation(prog,'uMetal'), 0.15);
-  gl.uniform1f(gl.getUniformLocation(prog,'uI'), 3.4);
-  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
-  gl.drawElements(gl.TRIANGLES, idx.length, gl.UNSIGNED_SHORT, 0);
+  gl.uniform3fv(gl.getUniformLocation(prog,'uLightDir'), lightDir);
+  gl.uniform3fv(gl.getUniformLocation(prog,'uAlbedo'), albedo);
+  gl.uniform1f(gl.getUniformLocation(prog,'uRough'), rough);
+  gl.uniform1f(gl.getUniformLocation(prog,'uMetal'), metal);
+  gl.uniform1f(gl.getUniformLocation(prog,'uI'), 5.2);
+  gl.drawElements(gl.TRIANGLES, count, gl.UNSIGNED_SHORT, 0);
+}
+
+function loop(t) {
+  const dt = 1/60;
+  const sp = keys['shift'] ? 8 : 3.2;
+  if (keys['w']) cam[2] += sp*dt;
+  if (keys['s']) cam[2] -= sp*dt;
+  if (keys['a']) cam[0] -= sp*dt;
+  if (keys['d']) cam[0] += sp*dt;
+  if (keys['q']) cam[1] -= sp*dt;
+  if (keys['e']) cam[1] += sp*dt;
+
+  const a = (t * 0.001) * 0.40;
+  const toSunLen = Math.hypot(Math.sin(a), 0.62, Math.cos(a));
+  const lightDir = [-Math.sin(a)/toSunLen, -0.62/toSunLen, -Math.cos(a)/toSunLen];
+
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  gl.useProgram(prog);
+  const view = lookAt(cam, [0,0,0], [0,1,0]);
+  const proj = persp(Math.PI/3, canvas.width/canvas.height, 0.05, 250);
+  const cubeModel = mul(translate(0, 0.5, 0), rotY(t*0.0007));
+  drawMesh(groundVao, 6, ident(), [0.5,0.5,0.5], 0.9, 0.0, cam, view, proj, lightDir);
+  drawMesh(cube.vao, cube.count, cubeModel, [0.8,0.2,0.2], 0.4, 0.8, cam, view, proj, lightDir);
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);

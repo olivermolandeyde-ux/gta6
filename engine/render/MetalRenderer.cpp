@@ -3,9 +3,11 @@
 #include "core/Assert.h"
 #include "ecs/CommandBuffer.h"
 #include "render/CubeMesh.h"
+#include "render/GroundPlaneMesh.h"
 #include "render/RenderPipeline.h"
 
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 
 #if defined(__APPLE__)
@@ -16,7 +18,14 @@
 
 namespace engine {
 
+static_assert(sizeof(MetalPbrUniforms) == 256, "Metal constant-buffer alignment");
+
 namespace {
+
+constexpr u32 kMaxDraws = 4;
+constexpr float kFovY   = 1.04719755f;
+constexpr float kZNear  = 0.05f;
+constexpr float kZFar   = 250.f;
 
 void mat_ident(float* m) {
     std::memset(m, 0, 16 * sizeof(float));
@@ -62,6 +71,90 @@ void mat_persp(float* m, float fovy, float aspect, float n, float fa) {
     m[14] = (2.f * fa * n) / (n - fa);
 }
 
+float3 orbiting_sun_dir(float time_s) {
+    const float a = time_s * 0.40f;
+    const float3 to_sun =
+        float3_normalize_or(float3{std::sin(a), 0.62f, std::cos(a)}, float3{0.f, 1.f, 0.f});
+    return float3{-to_sun.x, -to_sun.y, -to_sun.z};
+}
+
+void fill_common(MetalPbrUniforms& u, float3 camera, float time_s, int width, int height) {
+    mat_look(u.viewMatrix, camera, float3{0.f, 0.f, 0.f}, float3{0.f, 1.f, 0.f});
+    mat_persp(u.projectionMatrix, kFovY, static_cast<float>(width) / max_of(1, height), kZNear, kZFar);
+    u.cameraPos = camera;
+    u._pad0 = 0.f;
+    u.lightDir = orbiting_sun_dir(time_s);
+    u.lightIntensity = 5.2f;
+    u.time_s = time_s;
+    u._pad1[0] = 0.f;
+    u._pad1[1] = 0.f;
+}
+
+void fill_red_metal_cube(MetalPbrUniforms& u, float yaw, const float* pos, float3 camera,
+                         float time_s, int width, int height) {
+    mat_rot_y(u.modelMatrix, yaw);
+    u.modelMatrix[12] = pos ? pos[0] : 0.f;
+    u.modelMatrix[13] = pos ? pos[1] : 0.5f;
+    u.modelMatrix[14] = pos ? pos[2] : 0.f;
+    fill_common(u, camera, time_s, width, height);
+    u.albedoColor = float3{0.8f, 0.2f, 0.2f};
+    u.roughness = 0.4f;
+    u.metallic = 0.8f;
+}
+
+void fill_concrete_ground(MetalPbrUniforms& u, const float* pos, float3 camera, float time_s,
+                          int width, int height) {
+    mat_ident(u.modelMatrix);
+    if (pos) {
+        u.modelMatrix[12] = pos[0];
+        u.modelMatrix[13] = pos[1];
+        u.modelMatrix[14] = pos[2];
+    }
+    fill_common(u, camera, time_s, width, height);
+    u.albedoColor = float3{0.5f, 0.5f, 0.5f};
+    u.roughness = 0.9f;
+    u.metallic = 0.0f;
+}
+
+MetalDrawPacket* record_scene(World& world, FrameAllocator& frame_alloc, float3 camera, float yaw,
+                              float time_s, int width, int height, u32& out_n) {
+    MetalDrawPacket* packets = frame_alloc.allocate_array<MetalDrawPacket>(kMaxDraws);
+    ENGINE_ASSERT(packets != nullptr, "frame draw packets");
+    u32 n = 0;
+    for (Entity e : world.query<RenderableComponent>()) {
+        if (n >= kMaxDraws) {
+            break;
+        }
+        const RenderableComponent* r = world.get<RenderableComponent>(e);
+        const TransformComponent* t = world.get<TransformComponent>(e);
+        if (!r) {
+            continue;
+        }
+        MetalDrawPacket& p = packets[n++];
+        p.mesh_id = r->mesh_id;
+        const float* pos = t ? t->position : nullptr;
+        if (r->mesh_id == 2) {
+            p.index_count = kGroundIndexCount;
+            fill_concrete_ground(p.uniforms, pos, camera, time_s, width, height);
+        } else {
+            p.index_count = kCubeIndexCount;
+            fill_red_metal_cube(p.uniforms, yaw, pos, camera, time_s, width, height);
+        }
+    }
+    if (n == 0) {
+        MetalDrawPacket& cube = packets[n++];
+        cube.mesh_id = 1;
+        cube.index_count = kCubeIndexCount;
+        fill_red_metal_cube(cube.uniforms, yaw, nullptr, camera, time_s, width, height);
+        MetalDrawPacket& ground = packets[n++];
+        ground.mesh_id = 2;
+        ground.index_count = kGroundIndexCount;
+        fill_concrete_ground(ground.uniforms, nullptr, camera, time_s, width, height);
+    }
+    out_n = n;
+    return packets;
+}
+
 } // namespace
 
 #if defined(__APPLE__)
@@ -71,10 +164,21 @@ static NSString* kMetalSrc = @R"MSL(
 using namespace metal;
 struct VertexIn { float3 position [[attribute(0)]]; float3 normal [[attribute(1)]]; float2 uv [[attribute(2)]]; };
 struct VertexOut { float4 position [[position]]; float3 worldPos; float3 normal; float2 uv; };
-struct Uniforms { float4x4 modelMatrix; float4x4 viewMatrix; float4x4 projectionMatrix; float3 cameraPos; float3 lightDir; float lightIntensity; float3 albedoColor; float roughness; float metallic; };
-float D_GGX(float NdotH, float roughness) { float a=roughness*roughness; float a2=a*a; float d=(NdotH*a2-NdotH)*NdotH+1.0; return a2/(3.14159265*d*d); }
-float G_SchlickGGX(float NdotV, float roughness) { float r=roughness+1.0; float k=(r*r)/8.0; return NdotV/(NdotV*(1.0-k)+k); }
-float G_Smith(float NdotV, float NdotL, float roughness) { return G_SchlickGGX(NdotV,roughness)*G_SchlickGGX(NdotL,roughness); }
+struct Uniforms {
+  float4x4 modelMatrix; float4x4 viewMatrix; float4x4 projectionMatrix;
+  float3 cameraPos; float _pad0; float3 lightDir; float lightIntensity;
+  float3 albedoColor; float roughness; float metallic; float time_s; float2 _pad1;
+};
+float D_GGX(float NdotH, float roughness) {
+  float a=roughness*roughness; float a2=a*a; float d=(NdotH*NdotH)*(a2-1.0)+1.0;
+  return a2/(3.14159265*d*d);
+}
+float G_SchlickGGX(float NdotV, float roughness) {
+  float r=roughness+1.0; float k=(r*r)/8.0; return NdotV/(NdotV*(1.0-k)+k);
+}
+float G_Smith(float NdotV, float NdotL, float roughness) {
+  return G_SchlickGGX(NdotV,roughness)*G_SchlickGGX(NdotL,roughness);
+}
 float3 F_Schlick(float cosTheta, float3 F0) { return F0+(1.0-F0)*pow(1.0-cosTheta,5.0); }
 vertex VertexOut vertex_main(VertexIn in [[stage_in]], constant Uniforms& u [[buffer(1)]]) {
   VertexOut o; float4 wp=u.modelMatrix*float4(in.position,1.0); o.worldPos=wp.xyz;
@@ -86,11 +190,22 @@ fragment float4 fragment_main(VertexOut in [[stage_in]], constant Uniforms& u [[
   float3 L=normalize(-u.lightDir); float3 H=normalize(V+L);
   float NdotV=max(dot(N,V),0.0); float NdotL=max(dot(N,L),0.0);
   float NdotH=max(dot(N,H),0.0); float VdotH=max(dot(V,H),0.0);
-  float3 F0=mix(float3(0.04), u.albedoColor, u.metallic);
+  float3 albedo=u.albedoColor;
+  float2 g=abs(fract(in.uv)-float2(0.5));
+  float grout=smoothstep(0.47,0.50,max(g.x,g.y));
+  albedo*=mix(1.0,0.78,grout*(1.0-u.metallic));
+  float3 F0=mix(float3(0.04), albedo, u.metallic);
   float3 F=F_Schlick(VdotH,F0); float D=D_GGX(NdotH,u.roughness); float G=G_Smith(NdotV,NdotL,u.roughness);
   float3 spec=(D*G*F)/max(4.0*NdotV*NdotL,0.001);
-  float3 kD=(1.0-F)*(1.0-u.metallic); float3 diff=kD*u.albedoColor/3.14159265;
-  float3 rad=(diff+spec)*NdotL*u.lightIntensity; rad=pow(rad, float3(1.0/2.2));
+  float3 kD=(1.0-F)*(1.0-u.metallic); float3 diff=kD*albedo/3.14159265;
+  float shin=mix(16.0,256.0,1.0-u.roughness);
+  float3 highlight=F*pow(NdotH,shin)*NdotL;
+  float3 rad=(diff+spec)*NdotL*u.lightIntensity;
+  rad+=highlight*u.lightIntensity*(0.25+0.55*u.metallic);
+  float3 ambient=float3(0.05,0.07,0.1);
+  float hemi=0.55+0.45*max(N.y,0.0);
+  rad+=ambient*mix(albedo,F0,u.metallic)*hemi;
+  rad=pow(max(rad,float3(0.0)), float3(1.0/2.2));
   return float4(rad,1.0);
 }
 )MSL";
@@ -141,7 +256,13 @@ void MetalRenderer::init(void* windowHandle, int w, int h) {
     indexBuffer = (__bridge_retained void*)[dev newBufferWithBytes:kCubeIndices
                                                             length:sizeof(kCubeIndices)
                                                            options:MTLResourceStorageModeShared];
-    uniformBuffer = (__bridge_retained void*)[dev newBufferWithLength:sizeof(MetalPbrUniforms)
+    groundVertexBuffer = (__bridge_retained void*)[dev newBufferWithBytes:kGroundVertices
+                                                                   length:sizeof(kGroundVertices)
+                                                                  options:MTLResourceStorageModeShared];
+    groundIndexBuffer = (__bridge_retained void*)[dev newBufferWithBytes:kGroundIndices
+                                                                  length:sizeof(kGroundIndices)
+                                                                 options:MTLResourceStorageModeShared];
+    uniformBuffer = (__bridge_retained void*)[dev newBufferWithLength:sizeof(MetalPbrUniforms) * kMaxDraws
                                                               options:MTLResourceStorageModeShared];
     MTLTextureDescriptor* td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatDepth32Float
                                                                                   width:w height:h mipmapped:NO];
@@ -164,45 +285,18 @@ void MetalRenderer::beginFrame() {
 }
 
 void MetalRenderer::renderScene(World& world, FrameAllocator& frame_alloc) {
-    MetalDrawPacket* packets = frame_alloc.allocate_array<MetalDrawPacket>(8);
     u32 n = 0;
-    for (Entity e : world.query<RenderableComponent>()) {
-        if (n >= 8) {
-            break;
-        }
-        MetalDrawPacket& p = packets[n++];
-        p.mesh_id = 1;
-        p.index_count = kCubeIndexCount;
-        mat_rot_y(p.uniforms.modelMatrix, cube_yaw);
-        float3 target = float3_add(cameraPos, float3{0.f, 0.f, 1.f});
-        mat_look(p.uniforms.viewMatrix, cameraPos, target, float3{0.f, 1.f, 0.f});
-        mat_persp(p.uniforms.projectionMatrix, 1.04719755f, static_cast<float>(width) / height, 0.05f, 80.f);
-        p.uniforms.cameraPos = cameraPos;
-        p.uniforms.lightDir = float3{-0.35f, -0.85f, -0.4f};
-        p.uniforms.lightIntensity = 3.4f;
-        p.uniforms.albedoColor = float3{0.82f, 0.22f, 0.12f};
-        p.uniforms.roughness = 0.32f;
-        p.uniforms.metallic = 0.15f;
-        p.uniforms.time_s = time_s;
-        (void)e;
-    }
-    if (n == 0 && packets) {
-        n = 1;
-        MetalDrawPacket& p = packets[0];
-        p.index_count = kCubeIndexCount;
-        mat_rot_y(p.uniforms.modelMatrix, cube_yaw);
-        mat_look(p.uniforms.viewMatrix, cameraPos, float3{0.f, 0.5f, 0.f}, float3{0.f, 1.f, 0.f});
-        mat_persp(p.uniforms.projectionMatrix, 1.04719755f, static_cast<float>(width) / height, 0.05f, 80.f);
-        p.uniforms.cameraPos = cameraPos;
-        p.uniforms.lightDir = float3{-0.35f, -0.85f, -0.4f};
-        p.uniforms.lightIntensity = 3.4f;
-        p.uniforms.albedoColor = float3{0.82f, 0.22f, 0.12f};
-        p.uniforms.roughness = 0.32f;
-        p.uniforms.metallic = 0.15f;
-    }
+    MetalDrawPacket* packets =
+        record_scene(world, frame_alloc, cameraPos, cube_yaw, time_s, width, height, n);
     id<CAMetalDrawable> drawable = (__bridge id<CAMetalDrawable>)currentDrawable;
     if (!drawable) {
         return;
+    }
+    id<MTLBuffer> ub = (__bridge id<MTLBuffer>)uniformBuffer;
+    uint8_t* ub_bytes = static_cast<uint8_t*>([ub contents]);
+    for (u32 i = 0; i < n; ++i) {
+        std::memcpy(ub_bytes + i * sizeof(MetalPbrUniforms), &packets[i].uniforms,
+                    sizeof(MetalPbrUniforms));
     }
     id<MTLCommandQueue> q = (__bridge id<MTLCommandQueue>)commandQueue;
     id<MTLCommandBuffer> cmd = [q commandBuffer];
@@ -210,7 +304,7 @@ void MetalRenderer::renderScene(World& world, FrameAllocator& frame_alloc) {
     rp.colorAttachments[0].texture = drawable.texture;
     rp.colorAttachments[0].loadAction = MTLLoadActionClear;
     rp.colorAttachments[0].storeAction = MTLStoreActionStore;
-    rp.colorAttachments[0].clearColor = MTLClearColorMake(0.04, 0.05, 0.07, 1.0);
+    rp.colorAttachments[0].clearColor = MTLClearColorMake(0.10, 0.13, 0.18, 1.0);
     rp.depthAttachment.texture = (__bridge id<MTLTexture>)depthTexture;
     rp.depthAttachment.loadAction = MTLLoadActionClear;
     rp.depthAttachment.storeAction = MTLStoreActionDontCare;
@@ -218,15 +312,17 @@ void MetalRenderer::renderScene(World& world, FrameAllocator& frame_alloc) {
     id<MTLRenderCommandEncoder> enc = [cmd renderCommandEncoderWithDescriptor:rp];
     [enc setRenderPipelineState:(__bridge id<MTLRenderPipelineState>)pbrPipeline];
     [enc setDepthStencilState:(__bridge id<MTLDepthStencilState>)depthState];
-    [enc setVertexBuffer:(__bridge id<MTLBuffer>)vertexBuffer offset:0 atIndex:0];
     for (u32 i = 0; i < n; ++i) {
-        std::memcpy([(__bridge id<MTLBuffer>)uniformBuffer contents], &packets[i].uniforms,
-                    sizeof(MetalPbrUniforms));
-        [enc setVertexBuffer:(__bridge id<MTLBuffer>)uniformBuffer offset:0 atIndex:1];
-        [enc setFragmentBuffer:(__bridge id<MTLBuffer>)uniformBuffer offset:0 atIndex:1];
-        [enc drawIndexedPrimitives:MTLPrimitiveTypeTriangle indexCount:kCubeIndexCount
+        const bool ground = packets[i].mesh_id == 2;
+        id<MTLBuffer> vb = (__bridge id<MTLBuffer>)(ground ? groundVertexBuffer : vertexBuffer);
+        id<MTLBuffer> ib = (__bridge id<MTLBuffer>)(ground ? groundIndexBuffer : indexBuffer);
+        const NSUInteger icount = ground ? kGroundIndexCount : kCubeIndexCount;
+        [enc setVertexBuffer:vb offset:0 atIndex:0];
+        [enc setVertexBuffer:ub offset:i * sizeof(MetalPbrUniforms) atIndex:1];
+        [enc setFragmentBuffer:ub offset:i * sizeof(MetalPbrUniforms) atIndex:1];
+        [enc drawIndexedPrimitives:MTLPrimitiveTypeTriangle indexCount:icount
                          indexType:MTLIndexTypeUInt16
-                       indexBuffer:(__bridge id<MTLBuffer>)indexBuffer
+                       indexBuffer:ib
                  indexBufferOffset:0];
     }
     [enc endEncoding];
@@ -257,6 +353,7 @@ void MetalRenderer::init(void* windowHandle, int w, int h) {
     recorded_draws = 0;
     device = commandQueue = shaderLibrary = pbrPipeline = depthState = nullptr;
     metalLayer = vertexBuffer = indexBuffer = uniformBuffer = currentDrawable = nullptr;
+    groundVertexBuffer = groundIndexBuffer = nullptr;
 }
 
 void MetalRenderer::beginFrame() {
@@ -266,30 +363,9 @@ void MetalRenderer::beginFrame() {
 }
 
 void MetalRenderer::renderScene(World& world, FrameAllocator& frame_alloc) {
-    // GPU command packets live in the frame arena (L2 / L6). No CRT, no stored pointers.
-    MetalDrawPacket* packets = frame_alloc.allocate_array<MetalDrawPacket>(4);
-    ENGINE_ASSERT(packets != nullptr, "frame draw packets");
-    MetalDrawPacket& p = packets[0];
-    p.mesh_id = 1;
-    p.index_count = kCubeIndexCount;
-    mat_rot_y(p.uniforms.modelMatrix, cube_yaw);
-    mat_look(p.uniforms.viewMatrix, cameraPos, float3{0.f, 0.5f, 0.f}, float3{0.f, 1.f, 0.f});
-    mat_persp(p.uniforms.projectionMatrix, 1.04719755f, static_cast<float>(width) / max_of(1, height),
-              0.05f, 80.f);
-    p.uniforms.cameraPos = cameraPos;
-    p.uniforms.lightDir = float3{-0.35f, -0.85f, -0.4f};
-    p.uniforms.lightIntensity = 3.4f;
-    p.uniforms.albedoColor = float3{0.82f, 0.22f, 0.12f};
-    p.uniforms.roughness = 0.32f;
-    p.uniforms.metallic = 0.15f;
-    p.uniforms.time_s = time_s;
-    recorded_draws = 1;
-    u32 n_rend = 0;
-    for (Entity e : world.query<RenderableComponent>()) {
-        (void)e;
-        ++n_rend;
-    }
-    (void)n_rend;
+    u32 n = 0;
+    (void)record_scene(world, frame_alloc, cameraPos, cube_yaw, time_s, width, height, n);
+    recorded_draws = n;
 }
 
 void MetalRenderer::endFrame() {}

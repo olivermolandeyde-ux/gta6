@@ -14,16 +14,20 @@ struct VertexOut {
     float2 uv;
 };
 
+// Packed to match engine::MetalPbrUniforms (256 bytes).
 struct Uniforms {
     float4x4 modelMatrix;
     float4x4 viewMatrix;
     float4x4 projectionMatrix;
     float3   cameraPos;
+    float    _pad0;
     float3   lightDir;
     float    lightIntensity;
     float3   albedoColor;
     float    roughness;
     float    metallic;
+    float    time_s;
+    float2   _pad1;
 };
 
 float D_GGX(float NdotH, float roughness);
@@ -54,7 +58,13 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
     float NdotH = max(dot(N, H), 0.0);
     float VdotH = max(dot(V, H), 0.0);
 
-    float3 F0 = mix(float3(0.04), uniforms.albedoColor, uniforms.metallic);
+    float3 albedo = uniforms.albedoColor;
+    // Concrete grout on dielectric surfaces (ground). Metals keep a clean coat.
+    float2 g = abs(fract(in.uv) - float2(0.5));
+    float grout = smoothstep(0.47, 0.50, max(g.x, g.y));
+    albedo *= mix(1.0, 0.78, grout * (1.0 - uniforms.metallic));
+
+    float3 F0 = mix(float3(0.04), albedo, uniforms.metallic);
 
     float3 F = F_Schlick(VdotH, F0);
     float D = D_GGX(NdotH, uniforms.roughness);
@@ -62,10 +72,20 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
 
     float3 specular = (D * G * F) / max(4.0 * NdotV * NdotL, 0.001);
     float3 kD = (1.0 - F) * (1.0 - uniforms.metallic);
-    float3 diffuse = kD * uniforms.albedoColor / 3.14159265;
+    float3 diffuse = kD * albedo / 3.14159265;
+
+    // Tight analytic highlight so the metallic cube reads a moving sun glint.
+    float shininess = mix(16.0, 256.0, 1.0 - uniforms.roughness);
+    float3 specHighlight = F * pow(NdotH, shininess) * NdotL;
 
     float3 radiance = (diffuse + specular) * NdotL * uniforms.lightIntensity;
-    radiance = pow(radiance, float3(1.0 / 2.2));
+    radiance += specHighlight * uniforms.lightIntensity * (0.25 + 0.55 * uniforms.metallic);
+
+    float3 ambient = float3(0.05, 0.07, 0.1);
+    float hemi = 0.55 + 0.45 * max(N.y, 0.0);
+    radiance += ambient * mix(albedo, F0, uniforms.metallic) * hemi;
+
+    radiance = pow(max(radiance, float3(0.0)), float3(1.0 / 2.2));
     return float4(radiance, 1.0);
 }
 
