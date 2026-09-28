@@ -4,3 +4,5 @@ build/
 .cache/
 tools/.venv/
 output/
+__pycache__/
+*.pyc
