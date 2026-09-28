@@ -2,7 +2,7 @@
 
 Custom C++20 core for a 1:1 open-world simulation. **No CRT heap on the simulation path. No garbage collector. No generic `Prop` base class.**
 
-This repository contains **MICRO-PHASE 1–3**: memory director, archetype ECS, geometry pass + GGX/SSS shaders, and unique object systems (`VehicleEngine`, `BreakableWindow`, `StreetLight`) with no generic Prop/Actor base.
+This repository contains **MICRO-PHASE 1–4**: memory director, archetype ECS, geometry pass + GGX/SSS/clearcoat/tire shaders, unique object systems, and explicit vehicle chassis/suspension/Ackermann/tire-slip dynamics (no generic Vehicle base, no black-box AddForce).
 
 ## Memory domains
 
@@ -35,6 +35,7 @@ cmake --build build
 ./build/leonida_phase1_sandbox
 ./build/leonida_phase2_sandbox
 ./build/leonida_phase3_sandbox
+./build/leonida_phase4_sandbox
 ```
 
 Shaders live in `shaders/MasterPBR.hlsl` (GGX + Smith + Schlick, gamma 2.2) and `shaders/SkinSSS.hlsl` (wrapped-Lambert + pre-integrated LUT). CMake stages them into the build directory and, if `dxc` is on PATH, compiles `PS_Main` to `MasterPBR.ps.cso`.
@@ -45,6 +46,6 @@ Shaders live in `shaders/MasterPBR.hlsl` (GGX + Smith + Schlick, gamma 2.2) and 
 
 1. **MICRO-PHASE 1** — Core engine & custom ECS
 2. **MICRO-PHASE 2** — Render passes + master PBR HLSL + skin SSS
-3. **MICRO-PHASE 3** — Unique object classes (`VehicleEngine`, `BreakableWindow`, `StreetLight`) *(this tree)*
-4. **MICRO-PHASE 4** — Vehicle suspension / Ackermann + clearcoat & tire shaders
+3. **MICRO-PHASE 3** — Unique object classes (`VehicleEngine`, `BreakableWindow`, `StreetLight`)
+4. **MICRO-PHASE 4** — Vehicle suspension / Ackermann + clearcoat & tire shaders *(this tree)*
 5. **MICRO-PHASE 5** — Pedestrian flee AI, two-bone IK, animation state machine

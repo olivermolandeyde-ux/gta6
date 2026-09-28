@@ -30,6 +30,7 @@ add_library(leonida_core STATIC
     engine/objects/VehicleEngine.cpp
     engine/objects/BreakableWindow.cpp
     engine/objects/StreetLight.cpp
+    engine/physics/VehicleDynamics.cpp
 )
 
 target_include_directories(leonida_core PUBLIC
@@ -51,6 +52,11 @@ add_executable(leonida_phase3_sandbox
 )
 target_link_libraries(leonida_phase3_sandbox PRIVATE leonida_core)
 
+add_executable(leonida_phase4_sandbox
+    sandbox/phase4_vehicle_sandbox.cpp
+)
+target_link_libraries(leonida_phase4_sandbox PRIVATE leonida_core)
+
 if(UNIX)
     target_link_libraries(leonida_core PUBLIC pthread)
 endif()
@@ -65,6 +71,8 @@ file(MAKE_DIRECTORY ${SHADER_OUTPUT_DIR})
 set(SHADER_SOURCES
     ${SHADER_SOURCE_DIR}/MasterPBR.hlsl
     ${SHADER_SOURCE_DIR}/SkinSSS.hlsl
+    ${SHADER_SOURCE_DIR}/CarPaintClearcoat.hlsl
+    ${SHADER_SOURCE_DIR}/TireRubber.hlsl
 )
 
 set(SHADER_STAGED)
