@@ -28,7 +28,7 @@ float fbm(vec2 p) {
     }
     return v;
 }
-float ht(vec2 xz) {
+float htNatural(vec2 xz) {
     float continent = fbm(xz * 0.0022);
     float rolling = fbm(xz * 0.008);
     float n = vn(xz * 0.0031);
@@ -37,6 +37,12 @@ float ht(vec2 xz) {
     float h = 6.0 + rolling * 42.0 + ridge * 280.0 + ridge * ridge * 360.0;
     h *= smoothstep(0.22, 0.58, continent);
     return h + 3.0;
+}
+float ht(vec2 xz) {
+    float natural = htNatural(xz);
+    float m = max(abs(xz.x - 960.0), abs(xz.y - 960.0));
+    float urban = 1.0 - smoothstep(900.0, 1020.0, m);
+    return mix(natural, 16.0, urban);
 }
 
 void main() {

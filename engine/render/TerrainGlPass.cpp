@@ -220,9 +220,10 @@ constexpr const char* kTerVs =
     "float vn(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.0-2.0*f);\n"
     "  return mix(mix(hash21(i),hash21(i+vec2(1,0)),f.x),mix(hash21(i+vec2(0,1)),hash21(i+vec2(1,1)),f.x),f.y);}\n"
     "float fbm(vec2 p){float v=0.0,a=0.5; for(int i=0;i<6;i++){v+=a*vn(p);p=p*2.07+vec2(17.1,9.7);a*=0.5;} return v;}\n"
-    "float ht(vec2 xz){float continent=fbm(xz*0.0022); float rolling=fbm(xz*0.008);\n"
+    "float htN(vec2 xz){float continent=fbm(xz*0.0022); float rolling=fbm(xz*0.008);\n"
     "  float n=vn(xz*0.0031); float ridge=1.0-abs(n*2.0-1.0); ridge*=ridge;\n"
     "  float h=6.0+rolling*42.0+ridge*280.0+ridge*ridge*360.0; h*=smoothstep(0.22,0.58,continent); return h+3.0;}\n"
+    "float ht(vec2 xz){float m=max(abs(xz.x-960.0),abs(xz.y-960.0)); return mix(htN(xz),16.0,1.0-smoothstep(900.0,1020.0,m));}\n"
     "void main(){ vec2 xz=vec2(uOx,uOz)+aUv*uChunk; float h=ht(xz); vec3 wp=vec3(xz.x,h,xz.y);\n"
     "  float e=2.0; vec3 n=normalize(vec3(ht(xz)-ht(xz+vec2(e,0)),e,ht(xz)-ht(xz+vec2(0,e))));\n"
     "  vWorld=wp; vWorld.y=h; vN=n; vH=vWorld.y; gl_Position=uVP*vec4(vWorld,1.0);}\n";
@@ -230,11 +231,10 @@ constexpr const char* kTerVs =
 constexpr const char* kTerFs =
     "#version 330 core\n"
     "in vec3 vWorld; in vec3 vN; in float vH; out vec4 o;\n"
-    "void main(){ float height=vWorld.y; vec3 color;\n"
-    "  if(height<100.0) color=vec3(0.1,1.0,0.1);\n"
-    "  else if(height<400.0) color=vec3(1.0,0.5,0.0);\n"
-    "  else color=vec3(1.0,1.0,1.0);\n"
-    "  o=vec4(color,1.0);}\n";
+    "void main(){ float height=vWorld.y; vec3 wild; float m=max(abs(vWorld.x-960.0),abs(vWorld.z-960.0)); float urban=1.0-smoothstep(900.0,1020.0,m);\n"
+    "  if(height<100.0) wild=vec3(0.18,0.42,0.16); else if(height<400.0) wild=vec3(0.45,0.32,0.18); else wild=vec3(0.86);\n"
+    "  vec2 g=mod(vWorld.xz,96.0); float street=max(max(step(g.x,12.0),step(84.0,g.x)),max(step(g.y,12.0),step(84.0,g.y)));\n"
+    "  o=vec4(mix(wild,mix(vec3(0.30),vec3(0.20),street),urban),1.0);}\n";
 
 } // namespace
 
@@ -316,7 +316,7 @@ void TerrainGlPass::drawSky(const SkyComponent& sky) {
     }
     float view[16], proj[16], vp[16], inv[16];
     mat_look(view, cameraPos, cameraTarget, float3{0.f, 1.f, 0.f});
-    mat_persp(proj, 1.04719755f, static_cast<float>(width) / max_of(1, height), 0.5f, 4000.f);
+    mat_persp(proj, 1.04719755f, static_cast<float>(width) / max_of(1, height), 0.25f, 8000.f);
     mat_mul(vp, proj, view);
     mat_invert(inv, vp);
     glDisable(GL_DEPTH_TEST);
@@ -337,15 +337,15 @@ void TerrainGlPass::drawTerrain() {
     }
     float view[16], proj[16], vp[16];
     mat_look(view, cameraPos, cameraTarget, float3{0.f, 1.f, 0.f});
-    mat_persp(proj, 1.04719755f, static_cast<float>(width) / max_of(1, height), 0.5f, 4000.f);
+    mat_persp(proj, 1.04719755f, static_cast<float>(width) / max_of(1, height), 0.25f, 8000.f);
     mat_mul(vp, proj, view);
     glUseProgram(terrain_prog);
     glBindVertexArray(grid_vao);
     glUniformMatrix4fv(glGetUniformLocation(terrain_prog, "uVP"), 1, GL_FALSE, vp);
     glUniform1f(glGetUniformLocation(terrain_prog, "uChunk"), 64.f);
     u32 draws = 0;
-    for (u32 z = 0; z < 6; ++z) {
-        for (u32 x = 0; x < 6; ++x) {
+    for (u32 z = 0; z < 32; ++z) {
+        for (u32 x = 0; x < 32; ++x) {
             glUniform1f(glGetUniformLocation(terrain_prog, "uOx"), static_cast<float>(x) * 64.f);
             glUniform1f(glGetUniformLocation(terrain_prog, "uOz"), static_cast<float>(z) * 64.f);
             glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(grid_index_count), GL_UNSIGNED_INT,

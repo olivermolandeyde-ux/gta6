@@ -215,6 +215,8 @@ void set_building_uniforms(unsigned prog, const float* view, const float* proj, 
     glUniform3f(glGetUniformLocation(prog, "lightDir"), sun.x, sun.y, sun.z);
     glUniform3f(glGetUniformLocation(prog, "lightColor"), 1.f, 0.96f, 0.88f);
     glUniform1f(glGetUniformLocation(prog, "time_of_day"), time_of_day);
+    glUniform1f(glGetUniformLocation(prog, "floors"), 8.f);
+    glUniform1i(glGetUniformLocation(prog, "district"), 1);
 }
 
 } // namespace
@@ -259,7 +261,7 @@ bool BuildingGlPass::init() {
     glBindVertexArray(street_vao);
     glGenBuffers(1, &street_vbo);
     glBindBuffer(GL_ARRAY_BUFFER, street_vbo);
-    glBufferData(GL_ARRAY_BUFFER, 64 * 6 * 5 * static_cast<GLsizeiptr>(sizeof(float)), nullptr,
+    glBufferData(GL_ARRAY_BUFFER, 128 * 6 * 5 * static_cast<GLsizeiptr>(sizeof(float)), nullptr,
                  GL_DYNAMIC_DRAW);
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), reinterpret_cast<void*>(0));
@@ -281,12 +283,12 @@ void BuildingGlPass::buildMesh(World& world) {
         ++num_buildings;
     }
 
-    float verts[64 * 6 * 5];
+    float verts[128 * 6 * 5];
     u32 n = 0;
     street_count = 0;
     for (Entity e : world.query<StreetComponent>()) {
         StreetComponent* s = world.get<StreetComponent>(e);
-        if (!s || n + 6 >= 64 * 6) {
+        if (!s || n + 6 >= 128 * 6) {
             continue;
         }
         float3 d = float3_sub(s->end, s->start);
@@ -296,9 +298,9 @@ void BuildingGlPass::buildMesh(World& world) {
         }
         d = float3_scale(d, 1.f / len);
         float3 side = float3_normalize_or(float3_cross(d, float3{0.f, 1.f, 0.f}), float3{1.f, 0.f, 0.f});
-        side = float3_scale(side, s->width * 0.5f + 2.4f);
-        const float y0 = s->start.y + 0.35f;
-        const float y1 = s->end.y + 0.35f;
+        side = float3_scale(side, s->width * 0.5f + 4.2f);
+        const float y0 = s->start.y + 0.12f;
+        const float y1 = s->end.y + 0.12f;
         const float3 a = float3_sub(s->start, side);
         const float3 b = float3_add(s->start, side);
         const float3 c = float3_add(s->end, side);
@@ -330,7 +332,7 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
     }
     float view[16], proj[16];
     mat_look(view, camera_pos, camera_target, float3{0.f, 1.f, 0.f});
-    mat_persp(proj, 1.04719755f, static_cast<float>(width) / max_of(1, height), 0.5f, 4000.f);
+    mat_persp(proj, 1.04719755f, static_cast<float>(width) / max_of(1, height), 0.2f, 8000.f);
     const float3 sun = float3_normalize_or(sun_dir, float3{0.5f, 0.8f, 0.3f});
 
     glEnable(GL_DEPTH_TEST);
@@ -351,13 +353,38 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
         if (!b) {
             continue;
         }
+        const float dx = b->position.x - camera_pos.x;
+        const float dz = b->position.z - camera_pos.z;
+        if (dx * dx + dz * dz > 1400.f * 1400.f) {
+            continue;
+        }
         model_trs(model, b->position, b->width, b->height, b->depth);
         glUniformMatrix4fv(glGetUniformLocation(building_prog, "model"), 1, GL_FALSE, model);
         glUniform3f(glGetUniformLocation(building_prog, "albedo"), b->albedo_color.x, b->albedo_color.y,
                     b->albedo_color.z);
         glUniform1f(glGetUniformLocation(building_prog, "roughness"), b->roughness);
         glUniform1f(glGetUniformLocation(building_prog, "emissionBoost"), 0.f);
+        glUniform1f(glGetUniformLocation(building_prog, "floors"), static_cast<float>(b->num_floors));
+        glUniform1i(glGetUniformLocation(building_prog, "district"), static_cast<int>(b->district));
         glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, nullptr);
+        if (b->height > 14.f) {
+            float3 hvac{b->position.x + b->width * 0.18f, b->position.y + b->height,
+                        b->position.z - b->depth * 0.16f};
+            model_trs(model, hvac, 3.4f, 2.2f, 2.6f);
+            glUniformMatrix4fv(glGetUniformLocation(building_prog, "model"), 1, GL_FALSE, model);
+            glUniform3f(glGetUniformLocation(building_prog, "albedo"), 0.34f, 0.34f, 0.35f);
+            glUniform1f(glGetUniformLocation(building_prog, "floors"), 1.f);
+            glUniform1i(glGetUniformLocation(building_prog, "district"), 2);
+            glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, nullptr);
+        }
+        if (b->district == 0 && (b->building_id % 6u) == 0u) {
+            float3 tower{b->position.x - b->width * 0.2f, b->position.y + b->height,
+                         b->position.z + b->depth * 0.12f};
+            model_trs(model, tower, 2.2f, 4.5f, 2.2f);
+            glUniformMatrix4fv(glGetUniformLocation(building_prog, "model"), 1, GL_FALSE, model);
+            glUniform3f(glGetUniformLocation(building_prog, "albedo"), 0.40f, 0.36f, 0.32f);
+            glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, nullptr);
+        }
         ++drawn;
     }
     for (Entity e : world.query<StreetLightComponent, TransformComponent>()) {
@@ -371,6 +398,8 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
         glUniform3f(glGetUniformLocation(building_prog, "albedo"), 0.15f, 0.15f, 0.16f);
         glUniform1f(glGetUniformLocation(building_prog, "roughness"), 0.4f);
         glUniform1f(glGetUniformLocation(building_prog, "emissionBoost"), 0.f);
+        glUniform1f(glGetUniformLocation(building_prog, "floors"), 1.f);
+        glUniform1i(glGetUniformLocation(building_prog, "district"), 2);
         glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, nullptr);
         float3 bulb{p.x, p.y + xf->scale[1], p.z};
         model_trs(model, bulb, 0.7f, 0.35f, 0.7f);

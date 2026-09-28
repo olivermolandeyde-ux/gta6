@@ -42,11 +42,12 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    const float3 city_center{192.f, 0.f, 192.f};
-    terrain.cameraPos    = float3{192.f, 95.f, -48.f};
-    terrain.cameraTarget = float3{192.f, 18.f, 160.f};
-    float yaw = 0.f;
-    float pitch = -0.28f;
+    const float3 city_center{kCityCenterM, 0.f, kCityCenterM};
+    const float eye_y        = city_gpu_terrain_height(kCityCenterM, 64.f) + 1.7f;
+    terrain.cameraPos        = float3{kCityCenterM, eye_y, 48.f};
+    terrain.cameraTarget     = float3{kCityCenterM, eye_y, 64.f};
+    float yaw                = 0.f;
+    float pitch              = -0.04f;
 
     MemoryBudget budget{};
     budget.world_arena_bytes     = 64ull * 1024ull * 1024ull;
@@ -72,16 +73,16 @@ int main(int argc, char** argv) {
     TerrainHeightmapGenerator heightGen{};
     heightGen.generateHeightmap(heights, kMap, kMap, 42);
     heightGen.generateNormalmap(heights, kMap, kMap, normals);
-    std::printf("[city] heightmap 256² sample(192,192)=%.2f gpu_ht=%.2f\n",
-                terrain_sample_height(heights, kMap, kMap, 192.f, 192.f),
-                city_gpu_terrain_height(192.f, 192.f));
+    std::printf("[city] heightmap 256² sample(960,960)=%.2f gpu_ht=%.2f plateau=%.1f\n",
+                terrain_sample_height(heights, kMap, kMap, 960.f, 960.f),
+                city_gpu_terrain_height(960.f, 960.f), kCityPlateauY);
     (void)normals;
 
     SkyComponent sky{};
-    sky.time_of_day   = 21.0f;
+    sky.time_of_day   = 10.5f;
     sky.turbidity     = 3.0f;
-    sky.sun_direction = float3_normalize_or(float3{-0.4f, 0.15f, 0.6f}, float3{0.f, 1.f, 0.f});
-    sky.sun_color     = float3{1.f, 0.75f, 0.45f};
+    sky.sun_direction = float3_normalize_or(float3{0.45f, 0.75f, 0.35f}, float3{0.f, 1.f, 0.f});
+    sky.sun_color     = float3{1.f, 0.95f, 0.85f};
     (void)world.instantiate(persistent, sky);
 
     CloudLayerComponent clouds{};
@@ -95,12 +96,12 @@ int main(int argc, char** argv) {
     StreamObserverComponent observer{};
     observer.world_pos = city_center;
     Entity player = world.instantiate(persistent, observer);
-    (void)instantiate_world_streamer(world, persistent, player, /*radius=*/1, kTerrainChunkSizeM);
+    (void)instantiate_world_streamer(world, persistent, player, /*radius=*/8, kTerrainChunkSizeM);
 
     CityGenerator cityGen{};
     cityGen.buildings_spawned = cityGen.streets_spawned = 0;
     cityGen.lights_spawned = cityGen.windows_spawned = 0;
-    cityGen.generateCity(world, city_center, 500.f, 100);
+    cityGen.generateCity(world, city_center, kCityCenterM, 900);
     buildings.buildMesh(world);
 
     u32 frames = 0;
@@ -120,7 +121,7 @@ int main(int argc, char** argv) {
         const float3 fwd{sy * cp, sp, cy * cp};
         const float3 right{cy, 0.f, -sy};
         const float dt = 1.f / 60.f;
-        const float move = window.shiftDown ? 48.f : 18.f;
+        const float move = window.shiftDown ? 36.f : 12.f;
         float3 cam = terrain.cameraPos;
         if (window.isKeyDown('w') || window.isKeyDown('W')) {
             cam = float3_add(cam, float3_scale(fwd, move * dt));
@@ -189,8 +190,9 @@ int main(int argc, char** argv) {
             std::fflush(stdout);
         }
         if (!announced && frames >= 8) {
-            std::printf("CITY GENERATION COMPLETE — 100 procedural buildings with streets and window "
-                        "lighting are now rendering on the terrain\n");
+            std::printf("CITY GENERATION COMPLETE — %u procedural buildings with streets and window "
+                        "lighting are now rendering on the terrain\n",
+                        cityGen.buildings_spawned);
             std::fflush(stdout);
             announced = true;
             if (!forever) {
