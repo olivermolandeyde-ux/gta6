@@ -741,7 +741,7 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
         draw_axis_mesh(building_prog, sph_vao, sph_count, head, 0.22f, 0.16f, 0.22f, lamp_col,
                        0.5f + night * 2.0f, 0, 0);
         if (night > 0.5f) {
-            draw_axis_mesh(building_prog, cyl_vao, cyl_count, float3{head.x, gy + 0.02f, head.z}, 3.2f, 0.03f,
+            draw_axis_mesh(building_prog, cyl_vao, cyl_count, float3{head.x, kCityPlateauY + 0.02f, head.z}, 3.2f, 0.03f,
                            3.2f, float3{1.f, 0.85f, 0.4f}, 1.6f, 0, 0);
         }
         ++lamps;
