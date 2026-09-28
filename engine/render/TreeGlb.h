@@ -6,7 +6,8 @@ namespace engine {
 
 inline constexpr u32 kTreePrimCap     = 8;
 inline constexpr u32 kTreeKindCount   = 3;
-inline constexpr u32 kTreeInstanceCap = 8192;
+inline constexpr u32 kTreeInstanceCap = 300;
+inline constexpr u32 kTreeSpawnCap    = 280;
 
 // One glTF primitive uploaded to GL. Not a generic Model / Mesh.
 struct TreePrim {

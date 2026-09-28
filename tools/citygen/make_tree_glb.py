@@ -45,7 +45,7 @@ def clamp(v: float, lo: float = 0.0, hi: float = 1.0) -> float:
     return lo if v < lo else hi if v > hi else v
 
 
-def bark_tex(kind: str, n: int = 512) -> bytes:
+def bark_tex(kind: str, n: int = 128) -> bytes:
     pix = bytearray(n * n * 4)
     for y in range(n):
         for x in range(n):
@@ -74,7 +74,7 @@ def bark_tex(kind: str, n: int = 512) -> bytes:
     return write_png_rgba(n, n, bytes(pix))
 
 
-def leaf_tex(kind: str, n: int = 512) -> bytes:
+def leaf_tex(kind: str, n: int = 128) -> bytes:
     pix = bytearray(n * n * 4)
     for y in range(n):
         for x in range(n):
@@ -180,47 +180,46 @@ def add_leaf_card(m: Mesh, cx, cy, cz, w, h, yaw, pitch) -> None:
         )
 
     add_quad(m, pt(-1, -1), pt(1, -1), pt(1, 1), pt(-1, 1), n)
-    add_quad(m, pt(-1, -1), pt(-1, 1), pt(1, 1), pt(1, -1), (-n[0], -n[1], -n[2]))
 
 
 def make_oak() -> tuple[Mesh, Mesh]:
     trunk, leaves = Mesh(), Mesh()
-    add_taper_cyl(trunk, 0, 0, 0, 0.38, 0.12, 7.2, 16, 10, 2.0, 3.0)
-    for k in range(5):
-        a = k * 1.256 + 0.4
-        by = 3.2 + k * 0.55
+    add_taper_cyl(trunk, 0, 0, 0, 0.38, 0.12, 7.2, 8, 4, 2.0, 3.0)
+    for k in range(3):
+        a = k * 2.094 + 0.4
+        by = 3.6 + k * 0.7
         dx, dz = math.cos(a), math.sin(a)
-        add_taper_cyl(trunk, dx * 0.15, by, dz * 0.15, 0.09, 0.03, 2.4, 8, 5, 1.0, 1.5)
-    for i in range(520):
+        add_taper_cyl(trunk, dx * 0.12, by, dz * 0.12, 0.08, 0.03, 1.8, 6, 3, 1.0, 1.5)
+    for i in range(90):
         h = hash21(i, 3)
         t = hash21(i, 7)
         a = h * math.tau
-        r = math.sqrt(t) * 2.6
-        y = 5.4 + hash21(i, 11) * 3.4
+        r = math.sqrt(max(t, 0.0)) * 2.4
+        y = 5.2 + hash21(i, 11) * 3.0
         x, z = math.cos(a) * r, math.sin(a) * r
-        add_leaf_card(leaves, x, y, z, 0.55 + 0.2 * hash21(i, 13), 0.70 + 0.2 * hash21(i, 17), a + 0.4, -0.35 + 0.5 * hash21(i, 19))
+        add_leaf_card(leaves, x, y, z, 0.85, 1.05, a + 0.4, -0.25 + 0.4 * hash21(i, 19))
     return trunk, leaves
 
 
 def make_pine() -> tuple[Mesh, Mesh]:
     trunk, leaves = Mesh(), Mesh()
-    add_taper_cyl(trunk, 0, 0, 0, 0.28, 0.06, 9.5, 14, 12, 1.5, 4.0)
-    for layer in range(11):
-        y = 1.8 + layer * 0.72
-        rad = 2.4 - layer * 0.18
-        n = 10 + (layer % 3)
+    add_taper_cyl(trunk, 0, 0, 0, 0.26, 0.06, 9.5, 8, 4, 1.5, 4.0)
+    for layer in range(6):
+        y = 2.2 + layer * 1.15
+        rad = 2.2 - layer * 0.28
+        n = 6
         for k in range(n):
             a = k / n * math.tau + layer * 0.21
             x, z = math.cos(a) * rad * 0.45, math.sin(a) * rad * 0.45
-            add_leaf_card(leaves, x, y, z, 0.35, 1.15, a, 0.85)
+            add_leaf_card(leaves, x, y, z, 0.55, 1.35, a, 0.85)
     return trunk, leaves
 
 
 def make_palm() -> tuple[Mesh, Mesh]:
     trunk, leaves = Mesh(), Mesh()
-    add_taper_cyl(trunk, 0, 0, 0, 0.22, 0.11, 11.5, 12, 16, 1.0, 6.0)
-    for k in range(10):
-        a = k / 10 * math.tau
+    add_taper_cyl(trunk, 0, 0, 0, 0.22, 0.11, 11.5, 8, 6, 1.0, 6.0)
+    for k in range(8):
+        a = k / 8 * math.tau
         for s in range(8):
             t = s / 7
             along = 0.4 + t * 3.2
@@ -228,7 +227,7 @@ def make_palm() -> tuple[Mesh, Mesh]:
             x = math.cos(a) * along
             z = math.sin(a) * along
             y = 11.3 - drop
-            add_leaf_card(leaves, x, y, z, 0.45, 1.15, a + 1.57, 0.15 + t * 0.7)
+            add_leaf_card(leaves, x, y, z, 0.70, 1.35, a + 1.57, 0.15 + t * 0.7)
     return trunk, leaves
 
 
@@ -372,7 +371,8 @@ def build_glb(path: str, trunk: Mesh, leaves: Mesh, bark_png: bytes, leaf_png: b
     with open(path, "wb") as f:
         f.write(header + json_chunk + bin_chunk)
     nverts = trunk.nverts() + leaves.nverts()
-    print(f"[tree] wrote {path} verts={nverts} bytes={total}")
+    ntri = (len(trunk.idx) + len(leaves.idx)) // 3
+    print(f"[tree] wrote {path} verts={nverts} tris={ntri} bytes={total}")
     return nverts
 
 

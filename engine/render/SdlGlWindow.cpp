@@ -49,7 +49,11 @@ bool SdlGlWindow::create(const char* title, int w, int h) {
         return false;
     }
     SDL_GL_MakeCurrent(window, static_cast<SDL_GLContext>(gl_context));
-    SDL_GL_SetSwapInterval(1);
+    if (SDL_GL_SetSwapInterval(1) != 0) {
+        std::printf("[sdl] vsync request failed: %s\n", SDL_GetError());
+    } else {
+        std::printf("[sdl] vsync on (swap interval 1)\n");
+    }
     SDL_SetRelativeMouseMode(SDL_TRUE);
 
     std::printf("[sdl] OpenGL 3.3 core window %dx%d\n", w, h);

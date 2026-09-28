@@ -21,7 +21,7 @@ float shadow_at() {
     }
     float bias = 0.0035;
     float vis = 0.0;
-    vec2 texel = 1.0 / vec2(2048.0);
+    vec2 texel = 1.0 / vec2(1024.0);
     for (int y = -2; y <= 2; ++y) {
         for (int x = -2; x <= 2; ++x) {
             float d = texture(uShadow, p.xy + vec2(x, y) * texel).r;

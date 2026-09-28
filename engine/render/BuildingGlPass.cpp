@@ -489,7 +489,7 @@ bool BuildingGlPass::init() {
         shadow_prog = make_program("shaders/shadow.vert", "shaders/shadow.frag", kShVs, kShFs, "shadow");
         glGenTextures(1, &shadow_tex);
         glBindTexture(GL_TEXTURE_2D, shadow_tex);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, 2048, 2048, 0, GL_DEPTH_COMPONENT, GL_FLOAT,
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, 1024, 1024, 0, GL_DEPTH_COMPONENT, GL_FLOAT,
                      nullptr);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -527,19 +527,14 @@ bool BuildingGlPass::init() {
     constexpr const char* kTreeFbFs =
         "#version 330 core\nin vec3 FragPos; in vec3 Normal; in vec2 UV; in vec4 LightPos; out vec4 FragColor;\n"
         "void main(){ FragColor=vec4(0.2,0.5,0.2,1.0); }\n";
-    constexpr const char* kTshFbVs =
-        "#version 330 core\nlayout(location=0) in vec3 aPos; layout(location=3) in vec4 iM0;\n"
-        "layout(location=4) in vec4 iM1; layout(location=5) in vec4 iM2; layout(location=6) in vec4 iM3;\n"
-        "uniform mat4 uLightVP; void main(){ mat4 model=mat4(iM0,iM1,iM2,iM3); gl_Position=uLightVP*model*vec4(aPos,1.0); }\n";
-    constexpr const char* kTshFbFs = "#version 330 core\nvoid main(){}\n";
     tree_prog = make_program("shaders/tree.vert", "shaders/tree.frag", kTreeFbVs, kTreeFbFs, "tree");
-    tree_shadow_prog =
-        make_program("shaders/tree_shadow.vert", "shaders/tree_shadow.frag", kTshFbVs, kTshFbFs, "tree_shadow");
+    tree_shadow_prog = 0;
     load_city_tree("assets/models/oak_tree_realistic.glb", &tree_glb[0]);
     load_city_tree("assets/models/pine_tree_realistic.glb", &tree_glb[1]);
     load_city_tree("assets/models/palm_tree_realistic.glb", &tree_glb[2]);
     std::printf("[gl] Loaded 3 tree models: oak (%u verts), pine (%u verts), palm (%u verts)\n",
                 tree_glb[0].nverts, tree_glb[1].nverts, tree_glb[2].nverts);
+    std::printf("[gl] tree shadows disabled (perf) — 3 instanced draws, spawn cap %u\n", kTreeSpawnCap);
     std::fflush(stdout);
 
     std::printf("[gl] BUILDING SHADER COMPILED SUCCESSFULLY\n");
@@ -610,6 +605,10 @@ void BuildingGlPass::buildMesh(World& world) {
         return f < 0.16f || f > 0.84f;
     };
     auto push_tree = [&](float x, float z) {
+        const u32 total = tn[0] + tn[1] + tn[2];
+        if (total >= kTreeSpawnCap) {
+            return;
+        }
         const u32 kind = (static_cast<u32>(x) / 24u + static_cast<u32>(z) / 24u) % 3u;
         if (tn[kind] >= kTreeInstanceCap) {
             return;
@@ -620,25 +619,26 @@ void BuildingGlPass::buildMesh(World& world) {
         ++tn[kind];
     };
     const float sw = kCityStreetWidth * 0.5f + 1.6f;
-    for (u32 j = 0; j <= kCityBlocks; ++j) {
+    // Every 4th street, every 4th sidewalk tile (~96 m) — ~200–280 trees total.
+    for (u32 j = 0; j <= kCityBlocks; j += 4) {
         const float z = static_cast<float>(j) * kCityBlockPitch;
-        for (float x = 24.f; x < kCityExtentM - 24.f; x += 24.f) {
+        for (float x = 48.f; x < kCityExtentM - 48.f; x += 96.f) {
             if (!skip_cross(x)) {
-                const float side = (static_cast<u32>(x) % 48u < 24u) ? sw : -sw;
+                const float side = (static_cast<u32>(x) % 192u < 96u) ? sw : -sw;
                 push_tree(x, z + side);
             }
         }
     }
-    for (u32 i = 0; i <= kCityBlocks; ++i) {
+    for (u32 i = 0; i <= kCityBlocks; i += 4) {
         const float x = static_cast<float>(i) * kCityBlockPitch;
-        for (float z = 24.f; z < kCityExtentM - 24.f; z += 24.f) {
+        for (float z = 48.f; z < kCityExtentM - 48.f; z += 96.f) {
             if (!skip_cross(z)) {
-                const float side = (static_cast<u32>(z) % 48u < 24u) ? sw : -sw;
+                const float side = (static_cast<u32>(z) % 192u < 96u) ? sw : -sw;
                 push_tree(x + side, z);
             }
         }
     }
-    for (float t = 80.f; t < 400.f; t += 18.f) {
+    for (float t = 80.f; t < 400.f; t += 40.f) {
         push_tree(80.f + t * 0.15f, 80.f + std::fmod(t * 1.7f, 90.f));
     }
     u32 total_trees = 0;
@@ -699,7 +699,7 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
     mat_mul16(light_vp, lproj, lview);
     if (shadow_fbo && shadow_prog) {
         glBindFramebuffer(GL_FRAMEBUFFER, shadow_fbo);
-        glViewport(0, 0, 2048, 2048);
+        glViewport(0, 0, 1024, 1024);
         glClear(GL_DEPTH_BUFFER_BIT);
         glEnable(GL_POLYGON_OFFSET_FILL);
         glPolygonOffset(2.5f, 4.f);
@@ -733,12 +733,6 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
             glBindVertexArray(cyl_vao);
             glUniformMatrix4fv(glGetUniformLocation(shadow_prog, "model"), 1, GL_FALSE, sm);
             glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(cyl_count), GL_UNSIGNED_INT, nullptr);
-        }
-        if (tree_shadow_prog) {
-            glUseProgram(tree_shadow_prog);
-            glUniformMatrix4fv(glGetUniformLocation(tree_shadow_prog, "uLightVP"), 1, GL_FALSE, light_vp);
-            draw_tree_glbs(tree_glb, tree_shadow_prog);
-            glUseProgram(shadow_prog);
         }
         glDisable(GL_POLYGON_OFFSET_FILL);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);

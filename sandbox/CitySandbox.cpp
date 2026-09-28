@@ -7,6 +7,8 @@
 #include "world/SkySystem.h"
 #include "world/TerrainSystem.h"
 
+#include <SDL.h>
+
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -104,6 +106,7 @@ int main(int argc, char** argv) {
 
     u32 frames = 0;
     bool announced = false;
+    u32 fps_t0 = SDL_GetTicks();
     while (!window.shouldClose) {
         window.pollEvents();
         terrain.width  = window.width;
@@ -176,8 +179,12 @@ int main(int argc, char** argv) {
         ++frames;
 
         if ((frames % 60u) == 0u) {
-            std::printf("[city] frame %u cam=(%.1f, %.1f, %.1f) tod=%.1f buildings=%u\n", frames,
-                        terrain.cameraPos.x, terrain.cameraPos.y, terrain.cameraPos.z, tod,
+            const u32 now = SDL_GetTicks();
+            const u32 dt_ms = now > fps_t0 ? now - fps_t0 : 1u;
+            const float fps = 60000.f / static_cast<float>(dt_ms);
+            fps_t0 = now;
+            std::printf("[perf] fps=%.1f frame=%u cam=(%.1f, %.1f, %.1f) tod=%.1f buildings=%u\n", fps,
+                        frames, terrain.cameraPos.x, terrain.cameraPos.y, terrain.cameraPos.z, tod,
                         cityGen.buildings_spawned);
             std::fflush(stdout);
         }
