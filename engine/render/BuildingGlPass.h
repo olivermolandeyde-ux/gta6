@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/Types.h"
+#include "render/TreeGlb.h"
 
 namespace engine {
 
@@ -21,6 +22,8 @@ struct BuildingGlPass {
     unsigned cone_vao, cone_ibo, cone_count;
     unsigned tex_brick, tex_brick_n, tex_conc, tex_conc_n, tex_asph, tex_bark, tex_leaf;
     unsigned shadow_fbo, shadow_tex, shadow_prog;
+    unsigned tree_prog, tree_shadow_prog;
+    TreeGlb  tree_glb[kTreeKindCount];
     unsigned street_count;
     u32      num_buildings;
     bool     ok;

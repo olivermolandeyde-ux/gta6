@@ -1,0 +1,55 @@
+#version 330 core
+in vec3 FragPos;
+in vec3 Normal;
+in vec2 UV;
+in vec4 LightPos;
+uniform vec3 lightDir;
+uniform vec3 uCamPos;
+uniform vec3 uFogColor;
+uniform vec2 uRes;
+uniform sampler2D uAlbedo;
+uniform sampler2D uShadow;
+uniform int uAlphaMask;
+uniform float uAlphaCut;
+out vec4 FragColor;
+
+float shadow_at() {
+    vec3 p = LightPos.xyz / max(LightPos.w, 1e-4);
+    p = p * 0.5 + 0.5;
+    if (p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0 || p.z > 1.0) {
+        return 1.0;
+    }
+    float bias = 0.0035;
+    float vis = 0.0;
+    vec2 texel = 1.0 / vec2(2048.0);
+    for (int y = -2; y <= 2; ++y) {
+        for (int x = -2; x <= 2; ++x) {
+            float d = texture(uShadow, p.xy + vec2(x, y) * texel).r;
+            vis += (p.z - bias > d) ? 0.42 : 1.0;
+        }
+    }
+    return vis / 25.0;
+}
+
+void main() {
+    vec4 tex = texture(uAlbedo, UV);
+    if (uAlphaMask == 1 && tex.a < uAlphaCut) {
+        discard;
+    }
+    vec3 N = normalize(Normal);
+    vec3 L = normalize(lightDir);
+    float ndl = max(dot(N, L), 0.0);
+    float sh = shadow_at();
+    vec3 ambient = vec3(0.690, 0.769, 0.871) * 0.38;
+    vec3 sunCol = vec3(1.0, 0.973, 0.863) * 1.15;
+    vec3 lighting = ambient + sunCol * ndl * sh;
+    vec3 color = lighting * tex.rgb * 1.35;
+    float d = length(FragPos.xz - uCamPos.xz);
+    float fog = 1.0 - exp(-max(d - 400.0, 0.0) * 0.0022);
+    color = mix(color, uFogColor, clamp(fog, 0.0, 0.88));
+    color = mix(color, vec3(dot(color, vec3(0.33))), 0.08);
+    vec2 q = gl_FragCoord.xy / max(uRes, vec2(1.0));
+    float vig = smoothstep(1.15, 0.35, length(q - 0.5));
+    color *= mix(0.85, 1.0, vig);
+    FragColor = vec4(color, 1.0);
+}

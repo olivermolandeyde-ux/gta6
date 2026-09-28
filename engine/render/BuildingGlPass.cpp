@@ -348,49 +348,56 @@ void draw_axis_mesh(unsigned prog, unsigned vao, unsigned nidx, float3 p, float 
     return dx * dx + dz * dz < r * r;
 }
 
-void draw_tree(unsigned prog, unsigned cyl, u32 cyln, unsigned sph, u32 sphn, unsigned cone, u32 conen,
-               unsigned bark, unsigned leaf, float3 p, float h, u32 kind) {
-    const float3 wood{0.42f, 0.28f, 0.14f};
-    const float3 leaf_a{0.32f, 0.62f, 0.22f};
-    const float3 leaf_b{0.22f, 0.50f, 0.16f};
-    draw_axis_mesh(prog, cyl, cyln, p, 0.30f, h, 0.30f, wood, 0.f, bark, 0);
-    draw_axis_mesh(prog, cyl, cyln, float3{p.x + 0.45f, p.y + h * 0.55f, p.z}, 0.08f, h * 0.35f, 0.08f, wood,
-                   0.f, bark, 0);
-    draw_axis_mesh(prog, cyl, cyln, float3{p.x - 0.40f, p.y + h * 0.62f, p.z + 0.25f}, 0.07f, h * 0.28f, 0.07f,
-                   wood, 0.f, bark, 0);
-    draw_axis_mesh(prog, cyl, cyln, float3{p.x + 0.15f, p.y + h * 0.70f, p.z - 0.42f}, 0.07f, h * 0.30f, 0.07f,
-                   wood, 0.f, bark, 0);
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    if (kind == 1) {
-        draw_axis_mesh(prog, cone, conen, float3{p.x, p.y + h * 0.35f, p.z}, 1.15f, h * 0.85f, 1.15f, leaf_b,
-                       0.f, leaf, 1);
-        draw_axis_mesh(prog, cone, conen, float3{p.x, p.y + h * 0.55f, p.z}, 0.85f, h * 0.55f, 0.85f, leaf_a,
-                       0.f, leaf, 1);
-        draw_axis_mesh(prog, cone, conen, float3{p.x, p.y + h * 0.75f, p.z}, 0.55f, h * 0.35f, 0.55f, leaf_a,
-                       0.f, leaf, 1);
-    } else if (kind == 2) {
-        draw_axis_mesh(prog, cyl, cyln, p, 0.16f, h + 4.f, 0.16f, wood, 0.f, bark, 0);
-        for (u32 k = 0; k < 6; ++k) {
-            const float a = static_cast<float>(k) * 1.047f;
-            float3 f{p.x + std::cos(a) * 1.3f, p.y + h + 3.6f, p.z + std::sin(a) * 1.3f};
-            draw_axis_mesh(prog, sph, sphn, f, 1.4f, 0.18f, 0.55f, leaf_a, 0.f, leaf, 1);
-        }
-    } else {
-        const float3 c0{p.x, p.y + h + 0.15f, p.z};
-        draw_axis_mesh(prog, sph, sphn, c0, 1.25f, 0.85f, 1.15f, leaf_a, 0.f, leaf, 1);
-        draw_axis_mesh(prog, sph, sphn, float3{c0.x + 0.85f, c0.y - 0.35f, c0.z + 0.25f}, 0.95f, 0.70f, 0.90f,
-                       leaf_b, 0.f, leaf, 1);
-        draw_axis_mesh(prog, sph, sphn, float3{c0.x - 0.80f, c0.y - 0.25f, c0.z + 0.45f}, 0.90f, 0.65f, 0.85f,
-                       leaf_a, 0.f, leaf, 1);
-        draw_axis_mesh(prog, sph, sphn, float3{c0.x + 0.20f, c0.y - 0.45f, c0.z - 0.75f}, 0.85f, 0.60f, 0.95f,
-                       leaf_b, 0.f, leaf, 1);
-        draw_axis_mesh(prog, sph, sphn, float3{c0.x - 0.35f, c0.y + 0.35f, c0.z + 0.15f}, 0.75f, 0.55f, 0.70f,
-                       leaf_a, 0.f, leaf, 1);
-        draw_axis_mesh(prog, sph, sphn, float3{c0.x + 0.55f, c0.y + 0.20f, c0.z + 0.55f}, 0.70f, 0.50f, 0.65f,
-                       leaf_b, 0.f, leaf, 1);
+void tree_yaw_mat(float* m, float x, float y, float z, float yaw, float sc) {
+    const float c = std::cos(yaw);
+    const float s = std::sin(yaw);
+    std::memset(m, 0, 16 * sizeof(float));
+    m[0]  = c * sc;
+    m[2]  = -s * sc;
+    m[5]  = sc;
+    m[8]  = s * sc;
+    m[10] = c * sc;
+    m[12] = x;
+    m[13] = y;
+    m[14] = z;
+    m[15] = 1.f;
+}
+
+void draw_tree_glbs(TreeGlb* trees, unsigned prog) {
+    if (!prog) {
+        return;
     }
-    glDisable(GL_BLEND);
+    glUseProgram(prog);
+    glDisable(GL_CULL_FACE);
+    glUniform1i(glGetUniformLocation(prog, "uAlbedo"), 0);
+    glUniform1i(glGetUniformLocation(prog, "uShadow"), 2);
+    for (u32 k = 0; k < kTreeKindCount; ++k) {
+        if (trees[k].instance_count == 0) {
+            continue;
+        }
+        for (u32 p = 0; p < trees[k].nprims; ++p) {
+            TreePrim& pr = trees[k].prims[p];
+            glBindVertexArray(pr.vao);
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, pr.tex);
+            glUniform1i(glGetUniformLocation(prog, "uAlphaMask"), pr.alpha_mask);
+            glUniform1f(glGetUniformLocation(prog, "uAlphaCut"), pr.cutoff);
+            glDrawElementsInstanced(GL_TRIANGLES, static_cast<GLsizei>(pr.nidx), GL_UNSIGNED_INT, nullptr,
+                                    static_cast<GLsizei>(trees[k].instance_count));
+        }
+    }
+    glBindVertexArray(0);
+}
+
+bool load_city_tree(const char* file, TreeGlb* dst) {
+    char p0[512];
+    char p1[512];
+    std::snprintf(p0, sizeof(p0), "%s/%s", LEONIDA_SOURCE_DIR, file);
+    std::snprintf(p1, sizeof(p1), "%s", file);
+    if (load_tree_glb(p0, dst)) {
+        return true;
+    }
+    return load_tree_glb(p1, dst);
 }
 
 } // namespace
@@ -398,6 +405,8 @@ void draw_tree(unsigned prog, unsigned cyl, u32 cyln, unsigned sph, u32 sphn, un
 bool BuildingGlPass::init() {
     ok = false;
     building_prog = street_prog = cloud_prog = 0;
+    tree_prog = tree_shadow_prog = 0;
+    std::memset(tree_glb, 0, sizeof(tree_glb));
     cube_vao = cube_vbo = cube_ibo = 0;
     street_vao = street_vbo = 0;
     street_count = 0;
@@ -510,6 +519,29 @@ bool BuildingGlPass::init() {
                           reinterpret_cast<void*>(3 * sizeof(float)));
     glBindVertexArray(0);
 
+    constexpr const char* kTreeFbVs =
+        "#version 330 core\nlayout(location=0) in vec3 aPos; layout(location=3) in vec4 iM0;\n"
+        "layout(location=4) in vec4 iM1; layout(location=5) in vec4 iM2; layout(location=6) in vec4 iM3;\n"
+        "uniform mat4 view,projection,uLightVP; out vec3 FragPos; out vec3 Normal; out vec2 UV; out vec4 LightPos;\n"
+        "void main(){ mat4 model=mat4(iM0,iM1,iM2,iM3); vec4 wp=model*vec4(aPos,1.0); FragPos=wp.xyz; Normal=vec3(0,1,0); UV=vec2(0.0); LightPos=uLightVP*wp; gl_Position=projection*view*wp; }\n";
+    constexpr const char* kTreeFbFs =
+        "#version 330 core\nin vec3 FragPos; in vec3 Normal; in vec2 UV; in vec4 LightPos; out vec4 FragColor;\n"
+        "void main(){ FragColor=vec4(0.2,0.5,0.2,1.0); }\n";
+    constexpr const char* kTshFbVs =
+        "#version 330 core\nlayout(location=0) in vec3 aPos; layout(location=3) in vec4 iM0;\n"
+        "layout(location=4) in vec4 iM1; layout(location=5) in vec4 iM2; layout(location=6) in vec4 iM3;\n"
+        "uniform mat4 uLightVP; void main(){ mat4 model=mat4(iM0,iM1,iM2,iM3); gl_Position=uLightVP*model*vec4(aPos,1.0); }\n";
+    constexpr const char* kTshFbFs = "#version 330 core\nvoid main(){}\n";
+    tree_prog = make_program("shaders/tree.vert", "shaders/tree.frag", kTreeFbVs, kTreeFbFs, "tree");
+    tree_shadow_prog =
+        make_program("shaders/tree_shadow.vert", "shaders/tree_shadow.frag", kTshFbVs, kTshFbFs, "tree_shadow");
+    load_city_tree("assets/models/oak_tree_realistic.glb", &tree_glb[0]);
+    load_city_tree("assets/models/pine_tree_realistic.glb", &tree_glb[1]);
+    load_city_tree("assets/models/palm_tree_realistic.glb", &tree_glb[2]);
+    std::printf("[gl] Loaded 3 tree models: oak (%u verts), pine (%u verts), palm (%u verts)\n",
+                tree_glb[0].nverts, tree_glb[1].nverts, tree_glb[2].nverts);
+    std::fflush(stdout);
+
     std::printf("[gl] BUILDING SHADER COMPILED SUCCESSFULLY\n");
     std::fflush(stdout);
     ok = true;
@@ -568,6 +600,53 @@ void BuildingGlPass::buildMesh(World& world) {
     street_count = n;
     std::printf("[city] gpu mesh buildings=%u street_verts=%u (non-overlapping tiles)\n", num_buildings,
                 n);
+    std::fflush(stdout);
+
+    static float tree_mats[kTreeKindCount][kTreeInstanceCap * 16];
+    u32 tn[kTreeKindCount] = {0, 0, 0};
+    auto skip_cross = [](float t) {
+        const float g = t / kCityBlockPitch;
+        const float f = g - std::floor(g);
+        return f < 0.16f || f > 0.84f;
+    };
+    auto push_tree = [&](float x, float z) {
+        const u32 kind = (static_cast<u32>(x) / 24u + static_cast<u32>(z) / 24u) % 3u;
+        if (tn[kind] >= kTreeInstanceCap) {
+            return;
+        }
+        const float yaw = std::fmod(x * 0.173f + z * 0.091f, 6.2831853f);
+        const float sc  = 0.85f + std::fmod(x * 0.031f + z * 0.017f, 0.30f);
+        tree_yaw_mat(&tree_mats[kind][tn[kind] * 16], x, kCityPlateauY + 0.05f, z, yaw, sc);
+        ++tn[kind];
+    };
+    const float sw = kCityStreetWidth * 0.5f + 1.6f;
+    for (u32 j = 0; j <= kCityBlocks; ++j) {
+        const float z = static_cast<float>(j) * kCityBlockPitch;
+        for (float x = 24.f; x < kCityExtentM - 24.f; x += 24.f) {
+            if (!skip_cross(x)) {
+                const float side = (static_cast<u32>(x) % 48u < 24u) ? sw : -sw;
+                push_tree(x, z + side);
+            }
+        }
+    }
+    for (u32 i = 0; i <= kCityBlocks; ++i) {
+        const float x = static_cast<float>(i) * kCityBlockPitch;
+        for (float z = 24.f; z < kCityExtentM - 24.f; z += 24.f) {
+            if (!skip_cross(z)) {
+                const float side = (static_cast<u32>(z) % 48u < 24u) ? sw : -sw;
+                push_tree(x + side, z);
+            }
+        }
+    }
+    for (float t = 80.f; t < 400.f; t += 18.f) {
+        push_tree(80.f + t * 0.15f, 80.f + std::fmod(t * 1.7f, 90.f));
+    }
+    u32 total_trees = 0;
+    for (u32 k = 0; k < kTreeKindCount; ++k) {
+        tree_glb_set_instances(&tree_glb[k], tree_mats[k], tn[k]);
+        total_trees += tn[k];
+    }
+    std::printf("[city] Spawning %u trees with custom models\n", total_trees);
     std::fflush(stdout);
 }
 
@@ -655,36 +734,11 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
             glUniformMatrix4fv(glGetUniformLocation(shadow_prog, "model"), 1, GL_FALSE, sm);
             glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(cyl_count), GL_UNSIGNED_INT, nullptr);
         }
-        {
-            auto skip_c = [](float t) {
-                const float g = t / kCityBlockPitch;
-                const float f = g - std::floor(g);
-                return f < 0.16f || f > 0.84f;
-            };
-            const float swc = kCityStreetWidth * 0.5f + 1.6f;
-            u32 tc = 0;
-            for (u32 j = 0; j <= kCityBlocks && tc < 40; ++j) {
-                const float z = static_cast<float>(j) * kCityBlockPitch;
-                for (float x = 24.f; x < kCityExtentM - 24.f && tc < 40; x += 24.f) {
-                    if (skip_c(x)) {
-                        continue;
-                    }
-                    const float side = (static_cast<u32>(x) % 48u < 24u) ? swc : -swc;
-                    float3 p{x, kCityPlateauY, z + side};
-                    if (!near_xz(p, camera_pos, 90.f)) {
-                        continue;
-                    }
-                    model_axis(sm, p, 0.32f, 6.5f, 0.32f);
-                    glBindVertexArray(cyl_vao);
-                    glUniformMatrix4fv(glGetUniformLocation(shadow_prog, "model"), 1, GL_FALSE, sm);
-                    glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(cyl_count), GL_UNSIGNED_INT, nullptr);
-                    model_axis(sm, float3{p.x, p.y + 6.8f, p.z}, 1.6f, 1.4f, 1.6f);
-                    glBindVertexArray(sph_vao);
-                    glUniformMatrix4fv(glGetUniformLocation(shadow_prog, "model"), 1, GL_FALSE, sm);
-                    glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(sph_count), GL_UNSIGNED_INT, nullptr);
-                    ++tc;
-                }
-            }
+        if (tree_shadow_prog) {
+            glUseProgram(tree_shadow_prog);
+            glUniformMatrix4fv(glGetUniformLocation(tree_shadow_prog, "uLightVP"), 1, GL_FALSE, light_vp);
+            draw_tree_glbs(tree_glb, tree_shadow_prog);
+            glUseProgram(shadow_prog);
         }
         glDisable(GL_POLYGON_OFFSET_FILL);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -819,7 +873,6 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
     const float night = (time_of_day >= 20.f || time_of_day < 6.f) ? 1.f : 0.f;
     const float3 metal{0.18f, 0.18f, 0.20f};
     const float3 lamp_col{1.f, 0.86f, 0.35f};
-    u32 trees = 0;
     u32 lamps = 0;
     for (Entity e : world.query<StreetLightComponent, TransformComponent>()) {
         TransformComponent* xf = world.get<TransformComponent>(e);
@@ -862,56 +915,23 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
         }
         ++lamps;
     }
-    auto skip_cross = [](float t) {
-        const float g = t / kCityBlockPitch;
-        const float f = g - std::floor(g);
-        return f < 0.16f || f > 0.84f;
-    };
+    if (tree_prog) {
+        glUseProgram(tree_prog);
+        glUniformMatrix4fv(glGetUniformLocation(tree_prog, "view"), 1, GL_FALSE, view);
+        glUniformMatrix4fv(glGetUniformLocation(tree_prog, "projection"), 1, GL_FALSE, proj);
+        glUniformMatrix4fv(glGetUniformLocation(tree_prog, "uLightVP"), 1, GL_FALSE, light_vp);
+        glUniform3f(glGetUniformLocation(tree_prog, "lightDir"), sun.x, sun.y, sun.z);
+        glUniform3f(glGetUniformLocation(tree_prog, "uCamPos"), camera_pos.x, camera_pos.y, camera_pos.z);
+        glUniform3f(glGetUniformLocation(tree_prog, "uFogColor"), 0.690f, 0.769f, 0.871f);
+        glUniform2f(glGetUniformLocation(tree_prog, "uRes"), static_cast<float>(width),
+                    static_cast<float>(height));
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, shadow_tex);
+        draw_tree_glbs(tree_glb, tree_prog);
+        glUseProgram(building_prog);
+    }
     const float sw = kCityStreetWidth * 0.5f + 1.6f;
     const float gy = kCityPlateauY;
-    for (u32 j = 0; j <= kCityBlocks; ++j) {
-        const float z = static_cast<float>(j) * kCityBlockPitch;
-        for (float x = 24.f; x < kCityExtentM - 24.f; x += 24.f) {
-            if (skip_cross(x)) {
-                continue;
-            }
-            const float side = (static_cast<u32>(x) % 48u < 24u) ? sw : -sw;
-            float3 p{x, gy, z + side};
-            if (!near_xz(p, camera_pos, 220.f)) {
-                continue;
-            }
-            const float h = 4.5f + std::fmod(x * 0.17f + z * 0.09f, 4.5f);
-            const u32 kind = (static_cast<u32>(x) / 24u + j) % 3u;
-            draw_tree(building_prog, cyl_vao, cyl_count, sph_vao, sph_count, cone_vao, cone_count, tex_bark,
-                      tex_leaf, p, h, kind);
-            ++trees;
-        }
-    }
-    for (u32 i = 0; i <= kCityBlocks; ++i) {
-        const float x = static_cast<float>(i) * kCityBlockPitch;
-        for (float z = 24.f; z < kCityExtentM - 24.f; z += 24.f) {
-            if (skip_cross(z)) {
-                continue;
-            }
-            const float side = (static_cast<u32>(z) % 48u < 24u) ? sw : -sw;
-            float3 p{x + side, gy, z};
-            if (!near_xz(p, camera_pos, 220.f)) {
-                continue;
-            }
-            const float h = 4.5f + std::fmod(z * 0.13f + x * 0.07f, 4.5f);
-            draw_tree(building_prog, cyl_vao, cyl_count, sph_vao, sph_count, cone_vao, cone_count, tex_bark,
-                      tex_leaf, p, h, (static_cast<u32>(z) / 24u + i) % 3u);
-            ++trees;
-        }
-    }
-    for (float t = 80.f; t < 400.f; t += 18.f) {
-        float3 p{80.f + t * 0.15f, gy, 80.f + std::fmod(t * 1.7f, 90.f)};
-        if (near_xz(p, camera_pos, 260.f)) {
-            draw_tree(building_prog, cyl_vao, cyl_count, sph_vao, sph_count, cone_vao, cone_count, tex_bark,
-                      tex_leaf, p, 8.5f, 0);
-            ++trees;
-        }
-    }
     glBindVertexArray(cube_vao);
     glUniform1i(glGetUniformLocation(building_prog, "uUseTex"), 0);
     glUniform1i(glGetUniformLocation(building_prog, "uAlphaLeaf"), 0);
@@ -974,7 +994,8 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
     }
     static bool logged_detail = false;
     if (!logged_detail) {
-        std::printf("[city] street kit lamps_near=%u trees_drawn=%u (culled to camera)\n", lamps, trees);
+        std::printf("[city] street kit lamps_near=%u trees_instanced=%u+%u+%u\n", lamps,
+                    tree_glb[0].instance_count, tree_glb[1].instance_count, tree_glb[2].instance_count);
         std::fflush(stdout);
         logged_detail = true;
     }
@@ -1016,6 +1037,17 @@ void BuildingGlPass::shutdown() {
     }
     if (street_prog) {
         glDeleteProgram(street_prog);
+    }
+    if (tree_prog) {
+        glDeleteProgram(tree_prog);
+        tree_prog = 0;
+    }
+    if (tree_shadow_prog) {
+        glDeleteProgram(tree_shadow_prog);
+        tree_shadow_prog = 0;
+    }
+    for (u32 k = 0; k < kTreeKindCount; ++k) {
+        tree_glb_shutdown(&tree_glb[k]);
     }
     building_prog = street_prog = 0;
 }

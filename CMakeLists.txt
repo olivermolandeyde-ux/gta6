@@ -186,6 +186,7 @@ add_executable(leonida_city
     engine/render/TerrainGlPass.cpp
     engine/render/BuildingGlPass.cpp
     engine/render/CityProcTex.cpp
+    engine/render/TreeGlb.cpp
     engine/render/InputSystem.cpp
 )
 target_link_libraries(leonida_city PRIVATE leonida_core OpenGL::GL)
@@ -296,4 +297,8 @@ if(LEONIDA_PYTHON)
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
         COMMENT "Run 10 s full-integration sandbox on generated city"
     )
+endif()
+
+if(EXISTS "${CMAKE_SOURCE_DIR}/assets")
+    file(COPY ${CMAKE_SOURCE_DIR}/assets DESTINATION ${CMAKE_BINARY_DIR})
 endif()
