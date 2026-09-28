@@ -37,6 +37,9 @@ add_library(leonida_core STATIC
     engine/world/WorldStreamer.cpp
     engine/eco/TrafficSystem.cpp
     engine/eco/PowerGridSystem.cpp
+    engine/network/NetworkCore.cpp
+    engine/network/InterestManagement.cpp
+    engine/network/StateReplication.cpp
 )
 
 target_include_directories(leonida_core PUBLIC
@@ -72,6 +75,11 @@ add_executable(leonida_phase6_sandbox
     sandbox/phase6_world_sandbox.cpp
 )
 target_link_libraries(leonida_phase6_sandbox PRIVATE leonida_core)
+
+add_executable(leonida_phase7_sandbox
+    sandbox/phase7_network_sandbox.cpp
+)
+target_link_libraries(leonida_phase7_sandbox PRIVATE leonida_core)
 
 if(UNIX)
     target_link_libraries(leonida_core PUBLIC pthread)
