@@ -37,6 +37,7 @@ CMake targets:
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
+# Native terrain (SDL2 + OpenGL 3.3). macOS: brew install sdl2
 cmake --build build --target leonida_terrain
 ./build/leonida_terrain
 cmake --build build --target generate_city

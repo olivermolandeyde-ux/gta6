@@ -126,26 +126,57 @@ if(APPLE)
         engine/render/MetalRenderer.cpp
         engine/render/MetalWindow.cpp
         sandbox/VisualSandbox.cpp
-        sandbox/TerrainSandbox.cpp
         PROPERTIES COMPILE_FLAGS "-x objective-c++"
     )
     target_link_libraries(leonida_visual PRIVATE
         "-framework Metal -framework QuartzCore -framework Cocoa")
 endif()
 
+# Native terrain viewer: SDL2 + OpenGL 3.3 (no Metal).
+find_package(OpenGL REQUIRED)
+find_package(SDL2 QUIET)
+if(NOT SDL2_FOUND)
+    find_path(SDL2_INCLUDE_DIR SDL.h
+        PATHS
+            /opt/homebrew/include/SDL2
+            /usr/local/include/SDL2
+            /usr/include/SDL2
+            $ENV{SDL2DIR}/include/SDL2
+    )
+    find_library(SDL2_LIBRARY
+        NAMES SDL2
+        PATHS
+            /opt/homebrew/lib
+            /usr/local/lib
+            /usr/lib
+            $ENV{SDL2DIR}/lib
+    )
+    if(SDL2_INCLUDE_DIR AND SDL2_LIBRARY)
+        set(SDL2_FOUND TRUE)
+    endif()
+endif()
+
 add_executable(leonida_terrain
     sandbox/TerrainSandbox.cpp
-    engine/render/MetalRenderer.cpp
-    engine/render/MetalWindow.cpp
+    engine/render/SdlGlWindow.cpp
+    engine/render/TerrainGlPass.cpp
     engine/render/InputSystem.cpp
 )
-target_link_libraries(leonida_terrain PRIVATE leonida_core)
+target_link_libraries(leonida_terrain PRIVATE leonida_core OpenGL::GL)
 target_compile_definitions(leonida_terrain PRIVATE
     LEONIDA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
 )
+if(TARGET SDL2::SDL2)
+    target_link_libraries(leonida_terrain PRIVATE SDL2::SDL2)
+elseif(SDL2_FOUND)
+    target_include_directories(leonida_terrain PRIVATE ${SDL2_INCLUDE_DIR})
+    target_link_libraries(leonida_terrain PRIVATE ${SDL2_LIBRARY})
+else()
+    message(FATAL_ERROR
+        "SDL2 is required for leonida_terrain. macOS: brew install sdl2")
+endif()
 if(APPLE)
-    target_link_libraries(leonida_terrain PRIVATE
-        "-framework Metal -framework QuartzCore -framework Cocoa")
+    target_link_libraries(leonida_terrain PRIVATE "-framework OpenGL")
 endif()
 
 add_executable(leonida_full_sandbox

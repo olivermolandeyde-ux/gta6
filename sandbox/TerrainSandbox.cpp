@@ -1,7 +1,6 @@
 #include "Engine.h"
-#include "render/InputSystem.h"
-#include "render/MetalRenderer.h"
-#include "render/MetalWindow.h"
+#include "render/SdlGlWindow.h"
+#include "render/TerrainGlPass.h"
 #include "world/CloudSystem.h"
 #include "world/SkySystem.h"
 #include "world/TerrainSystem.h"
@@ -10,11 +9,6 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
-#include <exception>
-
-#if !defined(__APPLE__)
-#include <unistd.h>
-#endif
 
 int main(int argc, char** argv) {
     using namespace engine;
@@ -26,24 +20,22 @@ int main(int argc, char** argv) {
         }
     }
 
-    MetalWindow window{};
-    window.hosted_html_relpath = "sandbox/terrain_sky.html";
-    window.create("Leonida Engine - Terrain & Sky", 1280, 720);
+    SdlGlWindow window{};
+    if (!window.create("Leonida Engine - Terrain & Sky (SDL2/GL)", 1280, 720)) {
+        std::printf("[sdl] failed to create window\n");
+        return 1;
+    }
 
-    MetalRenderer renderer{};
-    renderer.init(window.getMetalLayer(), 1280, 720);
-    renderer.cameraPos    = float3{0.f, 1000.f, 0.f};
-    renderer.cameraTarget = float3{0.f, 0.f, 0.f};
-    renderer.cameraYaw    = 0.f;
-    renderer.cameraPitch  = -1.5707963f;
-    std::printf("[terrain] renderer pipeline_ok=%d fallback=%d\n", renderer.pipeline_ok ? 1 : 0,
-                renderer.fallback_mode ? 1 : 0);
-    std::printf("[metal] EXPECTED: RED SKY, GREEN TERRAIN. IF YOU SEE GRAY, THE EXECUTABLE IS NOT UPDATING.\n");
-    std::fflush(stdout);
-
-    InputSystem input{};
-    std::memset(&input.currentState, 0, sizeof(input.currentState));
-    std::memset(&input.previousState, 0, sizeof(input.previousState));
+    TerrainGlPass pass{};
+    if (!pass.init(window.width, window.height)) {
+        std::printf("[gl] terrain pass init failed\n");
+        window.destroy();
+        return 1;
+    }
+    pass.cameraPos    = float3{96.f, 800.f, -704.f};
+    pass.cameraTarget = float3{96.f, 0.f, 96.f};
+    float yaw = 0.f;
+    float pitch = -0.78539816f;
 
     MemoryBudget budget{};
     budget.world_arena_bytes     = 64ull * 1024ull * 1024ull;
@@ -59,7 +51,7 @@ int main(int argc, char** argv) {
 
     InstantiationRequest persistent{};
     persistent.domain      = InstantiationDomain::PersistentWorld;
-    persistent.debug_label = "terrain_phase18";
+    persistent.debug_label = "terrain_sdl";
 
     constexpr u32 kMap = 256;
     auto* heights = static_cast<float*>(
@@ -83,27 +75,23 @@ int main(int argc, char** argv) {
             }
         }
         std::printf("[terrain] heightmap %ux%u nan/inf=%u min=%.2f max=%.2f "
-                    "(legacy log: textures=procedural_1x1 unused — shader is emissive height bands)\n",
+                    "(legacy log: textures=procedural_1x1 unused — GLSL emissive height bands)\n",
                     kMap, kMap, bad, hmin, hmax);
         std::fflush(stdout);
-        if (bad > 0) {
-            std::printf("[terrain] heightmap invalid — enabling fallback quad\n");
-            renderer.fallback_mode = true;
-        }
     }
 
     SkyComponent sky{};
-    sky.time_of_day = 10.0f;
-    sky.turbidity   = 3.0f;
+    sky.time_of_day   = 10.0f;
+    sky.turbidity     = 3.0f;
     sky.sun_direction = float3_normalize_or(float3{0.5f, 0.8f, 0.3f}, float3{0.f, 1.f, 0.f});
     sky.sun_color     = float3{1.f, 0.95f, 0.85f};
     (void)world.instantiate(persistent, sky);
 
     CloudLayerComponent clouds{};
-    clouds.layer_position  = float3{0.f, 1400.f, 0.f};
-    clouds.layer_thickness = 500.f;
-    clouds.cloud_coverage  = 0.55f;
-    clouds.wind_velocity   = float3{12.f, 0.f, 4.f};
+    clouds.layer_position   = float3{0.f, 1400.f, 0.f};
+    clouds.layer_thickness  = 500.f;
+    clouds.cloud_coverage   = 0.55f;
+    clouds.wind_velocity    = float3{12.f, 0.f, 4.f};
     clouds.noise_texture_id = 1;
     (void)world.instantiate(persistent, clouds);
 
@@ -115,66 +103,69 @@ int main(int argc, char** argv) {
     u32 frames = 0;
     bool announced = false;
     while (!window.shouldClose) {
-        try {
         window.pollEvents();
-        input.update();
-        // Camera locked looking straight down at origin so terrain MUST fill the view.
-        renderer.cameraPos    = float3{0.f, 1000.f, 0.f};
-        renderer.cameraTarget = float3{0.f, 0.f, 0.f};
-        renderer.cameraYaw    = 0.f;
-        renderer.cameraPitch  = -1.5707963f;
+        pass.width = window.width;
+        pass.height = window.height;
+
+        yaw += window.mouseDeltaX * 0.005f;
+        pitch -= window.mouseDeltaY * 0.005f;
+        pitch = clampf(pitch, -1.5f, 1.5f);
+        const float cy = std::cos(yaw);
+        const float sy = std::sin(yaw);
+        const float cp = std::cos(pitch);
+        const float sp = std::sin(pitch);
+        const float3 fwd{sy * cp, sp, cy * cp};
+        const float3 right{cy, 0.f, -sy};
+        const float dt = 1.f / 60.f;
+        const float move = window.shiftDown ? 48.f : 18.f;
+        float3 cam = pass.cameraPos;
+        if (window.isKeyDown('w') || window.isKeyDown('W')) {
+            cam = float3_add(cam, float3_scale(fwd, move * dt));
+        }
+        if (window.isKeyDown('s') || window.isKeyDown('S')) {
+            cam = float3_sub(cam, float3_scale(fwd, move * dt));
+        }
+        if (window.isKeyDown('a') || window.isKeyDown('A')) {
+            cam = float3_sub(cam, float3_scale(right, move * dt));
+        }
+        if (window.isKeyDown('d') || window.isKeyDown('D')) {
+            cam = float3_add(cam, float3_scale(right, move * dt));
+        }
+        if (window.isKeyDown('q') || window.isKeyDown('Q')) {
+            cam.y -= move * dt;
+        }
+        if (window.isKeyDown('e') || window.isKeyDown('E')) {
+            cam.y += move * dt;
+        }
+        pass.cameraPos = cam;
+        pass.cameraTarget = float3_add(cam, fwd);
         if (StreamObserverComponent* obs = world.get<StreamObserverComponent>(player)) {
-            obs->world_pos = float3{32.f, 0.f, 32.f};
+            obs->world_pos = float3{cam.x < 0.f ? 0.f : cam.x, 0.f, cam.z < 0.f ? 0.f : cam.z};
         }
 
         world.begin_frame(frames);
-        UpdateWorldStreamerSystem(world, 1.f / 60.f, world.frame_commands());
+        UpdateWorldStreamerSystem(world, dt, world.frame_commands());
         world.frame_commands().playback(world);
         world.frame_commands().reset();
-        UpdateTerrainStreamingSystem(world, 1.f / 60.f, engine.memory().frame(),
-                                     world.frame_commands());
+        UpdateTerrainStreamingSystem(world, dt, engine.memory().frame(), world.frame_commands());
         world.frame_commands().playback(world);
-
-        UpdateSkySystem(world, 1.f / 60.f, world.frame_commands());
-        UpdateCloudSystem(world, 1.f / 60.f, world.frame_commands());
-        if (SkyComponent* s = find_sky(world)) {
-            const float sl = float3_length(s->sun_direction);
-            if (sl < 0.01f || !std::isfinite(sl)) {
-                s->sun_direction =
-                    float3_normalize_or(float3{0.5f, 0.8f, 0.3f}, float3{0.f, 1.f, 0.f});
-            } else {
-                s->sun_direction = float3_scale(s->sun_direction, 1.f / sl);
-            }
-        }
-
+        UpdateSkySystem(world, dt, world.frame_commands());
+        UpdateCloudSystem(world, dt, world.frame_commands());
         SkyComponent* sky_now = find_sky(world);
-        CloudLayerComponent* clouds_now = find_cloud_layer(world);
 
-        renderer.beginFrame();
+        pass.beginFrame();
         if (sky_now) {
-            renderer.renderSky(*sky_now);
-        } else {
-            std::printf("[terrain] frame %u: SkyComponent missing, fallback clear\n", frames);
-            renderer.fallback_mode = true;
-            renderer.ensurePass();
+            pass.drawSky(*sky_now);
         }
-        if (clouds_now && sky_now) {
-            renderer.renderClouds(*clouds_now, *sky_now);
-        }
-        renderer.renderTerrain(world, engine.memory().frame(), heights, kMap, kMap);
-        renderer.endFrame();
+        pass.drawTerrain();
+        window.swap();
         ++frames;
 
         if ((frames % 60u) == 0u) {
-            std::printf("[terrain] frame %u cam=(%.1f, %.1f, %.1f) yaw=%.2f pitch=%.2f chunks=%u "
-                        "sky=%u clouds=%u fallback=%d\n",
-                        frames, renderer.cameraPos.x, renderer.cameraPos.y, renderer.cameraPos.z,
-                        renderer.cameraYaw, renderer.cameraPitch, renderer.recorded_terrain,
-                        renderer.recorded_sky, renderer.recorded_clouds,
-                        renderer.fallback_mode ? 1 : 0);
+            std::printf("[terrain] frame %u cam=(%.1f, %.1f, %.1f) yaw=%.2f pitch=%.2f sdl2/gl\n",
+                        frames, pass.cameraPos.x, pass.cameraPos.y, pass.cameraPos.z, yaw, pitch);
             std::fflush(stdout);
         }
-
         if (!announced && frames >= 8) {
             std::printf("TERRAIN & SKY COMPLETE — A procedurally generated landscape with dynamic "
                         "sky, volumetric clouds, and day/night cycle is now rendering\n");
@@ -184,29 +175,12 @@ int main(int argc, char** argv) {
                 break;
             }
         }
-#if !defined(__APPLE__)
-        usleep(16000);
-#endif
         if (frames > 60u * 60u * 8u) {
             break;
         }
-        } catch (const std::exception& ex) {
-            std::printf("[terrain] CRASH frame %u: %s — switching to fallback quad\n", frames,
-                        ex.what());
-            std::fflush(stdout);
-            renderer.fallback_mode = true;
-            renderer.ensurePass();
-            renderer.endFrame();
-        } catch (...) {
-            std::printf("[terrain] CRASH frame %u: unknown exception — fallback quad\n", frames);
-            std::fflush(stdout);
-            renderer.fallback_mode = true;
-            renderer.ensurePass();
-            renderer.endFrame();
-        }
     }
 
-    renderer.shutdown();
+    pass.shutdown();
     window.destroy();
     engine.shutdown();
     return 0;
