@@ -2,6 +2,7 @@
 
 #include "ecs/World.h"
 #include "objects/StreetLight.h"
+#include "render/RenderPipeline.h"
 #include "world/CityGenerator.h"
 
 #include <SDL.h>
