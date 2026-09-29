@@ -718,18 +718,40 @@ u32 g_last_tex_w     = 1;
 u32 g_last_tex_h     = 1;
 int g_last_tex_alpha = 0;
 
+float g_last_mean_r = 0.f;
+float g_last_mean_g = 0.f;
+float g_last_mean_b = 0.f;
+
 unsigned upload_rgba(const u8* rgba, u32 w, u32 h) {
     int has_alpha = 0;
     const u32 n = w * h;
+    u64 sr = 0, sg = 0, sb = 0, sc = 0;
     for (u32 i = 0; i < n; ++i) {
-        if (rgba[i * 4 + 3] < 250) {
+        const u8 a = rgba[i * 4 + 3];
+        if (a < 250) {
             has_alpha = 1;
-            break;
+        }
+        if (a > 80) {
+            sr += rgba[i * 4 + 0];
+            sg += rgba[i * 4 + 1];
+            sb += rgba[i * 4 + 2];
+            ++sc;
         }
     }
+    g_last_mean_r    = sc ? static_cast<float>(sr / sc) : 0.f;
+    g_last_mean_g    = sc ? static_cast<float>(sg / sc) : 0.f;
+    g_last_mean_b    = sc ? static_cast<float>(sb / sc) : 0.f;
     g_last_tex_w     = w;
     g_last_tex_h     = h;
     g_last_tex_alpha = has_alpha;
+    std::printf("[glb] texture mean RGB=(%.0f,%.0f,%.0f) first pixels:", g_last_mean_r, g_last_mean_g,
+                g_last_mean_b);
+    const u32 show = n < 10 ? n : 10;
+    for (u32 i = 0; i < show; ++i) {
+        std::printf(" (%u,%u,%u,%u)", rgba[i * 4 + 0], rgba[i * 4 + 1], rgba[i * 4 + 2], rgba[i * 4 + 3]);
+    }
+    std::printf("\n");
+    std::fflush(stdout);
     unsigned tex = 0;
     glGenTextures(1, &tex);
     glBindTexture(GL_TEXTURE_2D, tex);
@@ -979,6 +1001,18 @@ unsigned gray_metal_tex() {
     return solid_tex(168, 170, 174, 255);
 }
 
+unsigned bark_brown_tex() {
+    return solid_tex(0x8B, 0x45, 0x13, 255);
+}
+
+unsigned leaf_green_tex() {
+    return solid_tex(0x22, 0x8B, 0x22, 255);
+}
+
+int is_tree_label(const char* s) {
+    return s && (std::strcmp(s, "oak") == 0 || std::strcmp(s, "pine") == 0 || std::strcmp(s, "palm") == 0);
+}
+
 unsigned fail_red_tex() {
     return solid_tex(255, 32, 32, 255);
 }
@@ -1148,7 +1182,7 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
             v = read_acc_f(up + uv_es, ucomp, uv_norm);
         }
         float cr = 1.f, cg = 1.f, cbv = 1.f, ca = 1.f;
-        if (cb && i < cc) {
+        if (cb && i < cc && !is_tree_label(out->label)) {
             const u8* cp = cb + i * cs;
             const u32 cel = (ccomp == 5126 || ccomp == 5125) ? 4u : (ccomp == 5123 || ccomp == 5122) ? 2u : 1u;
             const int cnorm = (ccomp != 5126);
@@ -1301,9 +1335,15 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
         }
     }
     if (!pr.tex) {
-        std::printf("[glb] WARNING: Failed to load texture for material %u — using gray metal\n", mat_i);
+        if (is_tree_label(out->label)) {
+            pr.tex = pr.alpha_mask ? leaf_green_tex() : bark_brown_tex();
+            std::printf("[glb] %s material %u has no albedo — fallback %s\n", out->label, mat_i,
+                        pr.alpha_mask ? "leaf green #228B22" : "bark brown #8B4513");
+        } else {
+            std::printf("[glb] WARNING: Failed to load texture for material %u — using gray metal\n", mat_i);
+            pr.tex = gray_metal_tex();
+        }
         std::fflush(stdout);
-        pr.tex   = gray_metal_tex();
         pr.tex_w = pr.tex_h = 1;
     }
     if (!pr.tex_emit) {
@@ -1516,6 +1556,15 @@ bool load_tree_glb(const char* path, TreeGlb* out) {
                 w = h = 1;
                 ha    = 0;
             }
+            if (is_tree_label(out->label) && g_last_mean_r > g_last_mean_g + 8.f &&
+                (ha || (g_last_mean_r > 150.f && g_last_mean_b > 70.f))) {
+                std::printf("[glb] %s texture %u looks pink (mean RGB %.0f,%.0f,%.0f) — leaf fallback #228B22\n",
+                            out->label, ntex, g_last_mean_r, g_last_mean_g, g_last_mean_b);
+                std::fflush(stdout);
+                tex = leaf_green_tex();
+                w = h = 1;
+                ha    = 1;
+            }
             tex_w[ntex]     = w;
             tex_h[ntex]     = h;
             tex_a[ntex]     = ha;
@@ -1526,11 +1575,16 @@ bool load_tree_glb(const char* path, TreeGlb* out) {
         for (u32 c = images->child; c != 0 && ntex < 64; c = doc.nodes[c].next) {
             u32 w = 0, h = 0;
             int ha          = 0;
-            unsigned tex = decode_view_image(&doc, c, bin, bin_len, &w, &h, &ha);
+            unsigned tex    = decode_view_image(&doc, c, bin, bin_len, &w, &h, &ha);
             if (!tex) {
                 tex = fail_red_tex();
                 w = h = 1;
                 ha    = 0;
+            }
+            if (is_tree_label(out->label) && ha && g_last_mean_r > g_last_mean_g + 4.f) {
+                tex = leaf_green_tex();
+                w = h = 1;
+                ha    = 1;
             }
             tex_w[ntex]     = w;
             tex_h[ntex]     = h;

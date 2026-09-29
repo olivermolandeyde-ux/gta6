@@ -393,48 +393,6 @@ bool xz_too_close(float x, float z, const float* xz, u32 n, float min_d) {
     return false;
 }
 
-struct LampSnap {
-    float x, z, yaw;
-    int   left;
-    int   ok;
-};
-
-LampSnap snap_lamp_to_sidewalk(float x, float z) {
-    LampSnap r{};
-    const float pitch  = kCityBlockPitch;
-    const float nx     = std::round(x / pitch) * pitch;
-    const float nz     = std::round(z / pitch) * pitch;
-    const float dx     = x - nx;
-    const float dz     = z - nz;
-    const float road_h = kCityStreetWidth * 0.5f;
-    const float curb   = road_h + 1.5f;
-    const float cross  = road_h + 5.0f;
-    const bool  ew     = std::fabs(dz) <= std::fabs(dx);
-    if (ew) {
-        if (std::fabs(dx) < cross) {
-            return r;
-        }
-        const float side = (dz >= 0.f) ? 1.f : -1.f;
-        r.x    = x;
-        r.z    = nz + side * curb;
-        r.left = side > 0.f ? 1 : 0;
-        r.yaw  = side > 0.f ? 3.14159265f : 0.f;
-        r.ok   = 1;
-    } else {
-        if (std::fabs(dz) < cross) {
-            return r;
-        }
-        const float side = (dx >= 0.f) ? 1.f : -1.f;
-        r.x    = nx + side * curb;
-        r.z    = z;
-        r.left = side < 0.f ? 1 : 0;
-        r.yaw  = side > 0.f ? 1.5707963f : -1.5707963f;
-        r.ok   = 1;
-    }
-    r.yaw += (std::fmod(x * 0.173f + z * 0.091f, 1.f) - 0.5f) * 0.17453292f;
-    return r;
-}
-
 void log_glb_textures(const char* name, const TreeGlb* t) {
     if (!t) {
         return;
@@ -481,11 +439,18 @@ void draw_instanced_glb(TreeGlb* g, unsigned prog) {
     glUniform1i(glGetUniformLocation(prog, "uAlbedo"), 0);
     glUniform1i(glGetUniformLocation(prog, "uEmissive"), 1);
     glUniform1i(glGetUniformLocation(prog, "uShadow"), 2);
+    static int logged_bind = 0;
     for (u32 p = 0; p < g->nprims; ++p) {
         TreePrim& pr = g->prims[p];
         glBindVertexArray(pr.vao);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, pr.tex);
+        if (logged_bind < 8) {
+            std::printf("[glb] bind '%s' prim %u tex id=%u %ux%u mask=%d\n", g->label, p, pr.tex, pr.tex_w,
+                        pr.tex_h, pr.alpha_mask);
+            std::fflush(stdout);
+            ++logged_bind;
+        }
         glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_2D, pr.tex_emit ? pr.tex_emit : pr.tex);
         glUniform1i(glGetUniformLocation(prog, "uAlphaMask"), pr.alpha_mask);
@@ -815,44 +780,87 @@ void BuildingGlPass::buildMesh(World& world) {
     u32 lamp_log_n         = 0;
     const float lamp_fit[kLampKindCount] = {glb_fit_scale(&lamp_glb[0], 7.0f),
                                             glb_fit_scale(&lamp_glb[1], 6.5f)};
-    for (Entity e : world.query<StreetLightComponent, TransformComponent>()) {
-        TransformComponent* xf = world.get<TransformComponent>(e);
-        if (!xf) {
-            continue;
+    const float road_h     = kCityStreetWidth * 0.5f;
+    const float walk_w     = 3.0f;
+    const float lamp_off   = road_h + walk_w * 0.5f; // 11.5 m = sidewalk center
+    const float tree_off   = road_h + walk_w * 0.75f; // 12.25 m, still on the 10–13 m strip
+    const float cross_clear = 16.0f;
+    auto along_ok = [&](float t) {
+        const float g = t / kCityBlockPitch;
+        const float f = g - std::floor(g);
+        const float d = f < 0.5f ? f * kCityBlockPitch : (1.f - f) * kCityBlockPitch;
+        return d >= cross_clear;
+    };
+    auto dist_to_road_edge = [&](float x, float z) {
+        const float nx = std::round(x / kCityBlockPitch) * kCityBlockPitch;
+        const float nz = std::round(z / kCityBlockPitch) * kCityBlockPitch;
+        const float ax = std::fabs(x - nx);
+        const float az = std::fabs(z - nz);
+        const float d  = ax < az ? ax : az;
+        return d - road_h;
+    };
+    auto push_lamp = [&](float x, float z, int ew, float side) {
+        const float droad = dist_to_road_edge(x, z);
+        const int on_sw   = (droad >= 0.4f && droad <= 3.2f) ? 1 : 0;
+        if (!on_sw || droad > 15.f) {
+            if (lamp_log_n < 8u) {
+                std::printf("[city] Lamp at (%.1f, %.1f, %.1f) - on sidewalk: NO, distance to nearest road: %.1f meters\n",
+                            x, kCityPlateauY + 0.05f, z, droad);
+                ++lamp_log_n;
+            }
+            return;
         }
-        LampSnap sn = snap_lamp_to_sidewalk(xf->position[0], xf->position[2]);
-        if (!sn.ok) {
-            continue;
-        }
-        const u32 kind = (static_cast<u32>(sn.x) * 13u + static_cast<u32>(sn.z) * 7u) & 1u;
         if ((ln[0] + ln[1]) >= kLampSpawnCap) {
-            continue;
+            return;
         }
-        u32 use = kind;
+        u32 use = (static_cast<u32>(x) * 13u + static_cast<u32>(z) * 7u) & 1u;
         if (lamp_glb[use].nprims == 0) {
-            use = kind ^ 1u;
+            use ^= 1u;
         }
         if (lamp_glb[use].nprims == 0 || ln[use] >= kTreeInstanceCap) {
-            continue;
+            return;
         }
-        const float sc = lamp_fit[use];
-        const float y0 = lamp_glb[use].z_up ? lamp_glb[use].zmin : lamp_glb[use].ymin;
-        const float y  = kCityPlateauY + 0.05f - y0 * sc;
-        tree_yaw_mat(&lamp_mats[use][ln[use] * 16], sn.x, y, sn.z, sn.yaw, sc, lamp_glb[use].z_up);
+        // +X arm toward the asphalt.
+        const float yaw = ew ? ((side > 0.f) ? 1.5707963f : -1.5707963f)
+                             : ((side > 0.f) ? 3.14159265f : 0.f);
+        const float sc  = lamp_fit[use];
+        const float y0  = lamp_glb[use].z_up ? lamp_glb[use].zmin : lamp_glb[use].ymin;
+        const float y   = kCityPlateauY + 0.05f - y0 * sc;
+        tree_yaw_mat(&lamp_mats[use][ln[use] * 16], x, y, z, yaw, sc, lamp_glb[use].z_up);
         ++ln[use];
         if (n_lamp_xz < kLampSpawnCap) {
-            lamp_xz[n_lamp_xz * 2u]     = sn.x;
-            lamp_xz[n_lamp_xz * 2u + 1] = sn.z;
+            lamp_xz[n_lamp_xz * 2u]     = x;
+            lamp_xz[n_lamp_xz * 2u + 1] = z;
             ++n_lamp_xz;
         }
         if (gn < kTreeInstanceCap) {
-            tree_yaw_mat(&glow_mats[gn * 16], sn.x, kCityPlateauY + 0.28f, sn.z, 0.f, 5.2f, 0);
+            tree_yaw_mat(&glow_mats[gn * 16], x, kCityPlateauY + 0.28f, z, 0.f, 5.2f, 0);
             ++gn;
         }
         if (lamp_log_n < 12u) {
-            std::printf("[city] Placed lamp at (%.1f, %.1f, %.1f) - sidewalk check: PASS side=%s yaw=%.0f\n",
-                        sn.x, y, sn.z, sn.left ? "left" : "right", sn.yaw * 57.29578f);
+            std::printf("[city] Lamp at (%.1f, %.1f, %.1f) - on sidewalk: YES, distance to nearest road: %.1f meters\n",
+                        x, y, z, droad);
             ++lamp_log_n;
+        }
+    };
+    for (u32 j = 0; j <= kCityBlocks; ++j) {
+        const float z = static_cast<float>(j) * kCityBlockPitch;
+        for (float x = 24.f; x < kCityExtentM - 24.f; x += 36.f) {
+            if (!along_ok(x)) {
+                continue;
+            }
+            push_lamp(x, z + lamp_off, 1, 1.f);
+            push_lamp(x, z - lamp_off, 1, -1.f);
+        }
+    }
+    for (u32 i = 0; i <= kCityBlocks; ++i) {
+        const float x = static_cast<float>(i) * kCityBlockPitch;
+        for (float z = 24.f; z < kCityExtentM - 24.f; z += 36.f) {
+            if (!along_ok(z)) {
+                continue;
+            }
+            push_lamp(x + lamp_off, z, 0, 1.f);
+            push_lamp(x - lamp_off, z, 0, -1.f);
         }
     }
     for (u32 k = 0; k < kLampKindCount; ++k) {
@@ -875,28 +883,17 @@ void BuildingGlPass::buildMesh(World& world) {
     const float tree_fit[kTreeKindCount] = {glb_fit_scale(&tree_glb[0], 8.0f),
                                             glb_fit_scale(&tree_glb[1], 11.0f),
                                             glb_fit_scale(&tree_glb[2], 9.0f)};
-    auto on_sidewalk = [](float x, float z) {
-        const float pitch = kCityBlockPitch;
-        const float nx    = std::round(x / pitch) * pitch;
-        const float nz    = std::round(z / pitch) * pitch;
-        const float adx   = std::fabs(x - nx);
-        const float adz   = std::fabs(z - nz);
-        const float inner = kCityStreetWidth * 0.5f + 1.0f;
-        const float outer = kCityStreetWidth * 0.5f + 3.0f + 2.0f;
-        const float along = kCityStreetWidth * 0.5f + 5.0f;
-        const bool ew     = adz >= inner && adz <= outer && adx >= along;
-        const bool ns     = adx >= inner && adx <= outer && adz >= along;
-        return ew || ns;
-    };
     u32 tree_log_n = 0;
     auto push_tree = [&](float x, float z) {
         const u32 total = tn[0] + tn[1] + tn[2];
         if (total >= kTreeSpawnCap) {
             return;
         }
-        if (!on_sidewalk(x, z)) {
+        const float droad = dist_to_road_edge(x, z);
+        const int on_sw   = (droad >= 0.4f && droad <= 3.2f) ? 1 : 0;
+        if (!on_sw) {
             if (tree_log_n < 8u) {
-                std::printf("[city] Skipped tree at (%.1f, %.1f, %.1f) - sidewalk check: FAIL\n", x,
+                std::printf("[city] Tree placement at (%.1f, %.1f, %.1f) - on sidewalk: NO\n", x,
                             kCityPlateauY + 0.05f, z);
                 ++tree_log_n;
             }
@@ -938,22 +935,27 @@ void BuildingGlPass::buildMesh(World& world) {
         tree_xz[n_tree_xz * 2u + 1] = z;
         ++n_tree_xz;
         if (tree_log_n < 12u) {
-            std::printf("[city] Placed tree at (%.1f, %.1f, %.1f) - sidewalk check: PASS\n", x, y, z);
+            std::printf("[city] Tree placement at (%.1f, %.1f, %.1f) - on sidewalk: YES\n", x, y, z);
             ++tree_log_n;
         }
     };
-    const float off = kCityStreetWidth * 0.5f + 3.0f + 2.0f;
     for (u32 j = 0; j <= kCityBlocks; ++j) {
         const float z = static_cast<float>(j) * kCityBlockPitch;
-        for (float x = 24.f; x < kCityExtentM - 24.f; x += 72.f) {
-            const float side = (static_cast<u32>(x) % 144u < 72u) ? off : -off;
+        for (float x = 36.f; x < kCityExtentM - 36.f; x += 24.f) {
+            if (!along_ok(x)) {
+                continue;
+            }
+            const float side = (static_cast<u32>(x) % 48u < 24u) ? tree_off : -tree_off;
             push_tree(x, z + side);
         }
     }
     for (u32 i = 0; i <= kCityBlocks; ++i) {
         const float x = static_cast<float>(i) * kCityBlockPitch;
-        for (float z = 24.f; z < kCityExtentM - 24.f; z += 72.f) {
-            const float side = (static_cast<u32>(z) % 144u < 72u) ? off : -off;
+        for (float z = 36.f; z < kCityExtentM - 36.f; z += 24.f) {
+            if (!along_ok(z)) {
+                continue;
+            }
+            const float side = (static_cast<u32>(z) % 48u < 24u) ? tree_off : -tree_off;
             push_tree(x + side, z);
         }
     }
