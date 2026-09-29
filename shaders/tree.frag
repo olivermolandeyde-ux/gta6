@@ -12,6 +12,7 @@ uniform sampler2D uEmissive;
 uniform sampler2D uShadow;
 uniform int uAlphaMask;
 uniform float uAlphaCut;
+uniform float uNightGlow;
 out vec4 FragColor;
 
 float shadow_at() {
@@ -38,6 +39,18 @@ void main() {
         discard;
     }
     vec3 emit = texture(uEmissive, UV).rgb;
+    float em = max(max(emit.r, emit.g), emit.b);
+    vec3 gold = vec3(1.0, 0.843, 0.0);
+    vec3 nightEmit = emit;
+    if (uNightGlow > 0.001) {
+        if (em > 0.04) {
+            nightEmit = gold * max(em, 0.65);
+        } else {
+            float glass = smoothstep(0.55, 0.90, tex.r) * smoothstep(0.40, 0.85, tex.g) *
+                          (1.0 - smoothstep(0.25, 0.55, tex.b));
+            nightEmit = gold * glass;
+        }
+    }
     vec3 N = normalize(Normal);
     vec3 L = normalize(lightDir);
     float ndl = max(dot(N, L), 0.0);
@@ -45,7 +58,7 @@ void main() {
     vec3 ambient = vec3(0.690, 0.769, 0.871) * 0.38;
     vec3 sunCol = vec3(1.0, 0.973, 0.863) * 1.15;
     vec3 lighting = ambient + sunCol * ndl * sh;
-    vec3 color = lighting * tex.rgb + emit * 1.8;
+    vec3 color = lighting * tex.rgb + mix(emit * 1.8, nightEmit * 7.0, uNightGlow);
     float d = length(FragPos.xz - uCamPos.xz);
     float fog = 1.0 - exp(-max(d - 400.0, 0.0) * 0.0022);
     color = mix(color, uFogColor, clamp(fog, 0.0, 0.88));

@@ -348,6 +348,28 @@ void draw_axis_mesh(unsigned prog, unsigned vao, unsigned nidx, float3 p, float 
     return dx * dx + dz * dz < r * r;
 }
 
+float night_glow_amt(float tod) {
+    const float dusk = tod <= 18.f ? 0.f : (tod >= 20.f ? 1.f : (tod - 18.f) * 0.5f);
+    const float dawn = tod >= 7.5f ? 0.f : (tod <= 5.5f ? 1.f : (7.5f - tod) * 0.5f);
+    return tod < 12.f ? (dusk > dawn ? dusk : dawn) : dusk;
+}
+
+float lamp_yaw_toward_road(float x, float z) {
+    const float nx = std::round(x / kCityBlockPitch) * kCityBlockPitch;
+    const float nz = std::round(z / kCityBlockPitch) * kCityBlockPitch;
+    const float dx = nx - x;
+    const float dz = nz - z;
+    float tx = 0.f;
+    float tz = 0.f;
+    if (std::fabs(dz) > std::fabs(dx)) {
+        tz = (dz > 0.f) ? 1.f : -1.f;
+    } else {
+        tx = (dx > 0.f) ? 1.f : -1.f;
+    }
+    const float jitter = (std::fmod(x * 0.173f + z * 0.091f, 1.f) - 0.5f) * 0.17453292f;
+    return std::atan2(-tx, tz) + jitter;
+}
+
 void tree_yaw_mat(float* m, float x, float y, float z, float yaw, float sc) {
     const float c = std::cos(yaw);
     const float s = std::sin(yaw);
@@ -412,6 +434,9 @@ bool BuildingGlPass::init() {
     tree_prog = tree_shadow_prog = 0;
     std::memset(tree_glb, 0, sizeof(tree_glb));
     std::memset(&sky_glb, 0, sizeof(sky_glb));
+    std::memset(lamp_glb, 0, sizeof(lamp_glb));
+    glow_prog = glow_vao = glow_vbo = glow_ibo = glow_ivbo = glow_nidx = 0;
+    glow_count = 0;
     cube_vao = cube_vbo = cube_ibo = 0;
     street_vao = street_vbo = 0;
     street_count = 0;
@@ -550,6 +575,61 @@ bool BuildingGlPass::init() {
     } else {
         std::printf("[gl] custom skyscraper-2.glb not found — downtown stays procedural\n");
     }
+    load_city_tree("gatelys_klassisk.glb", &lamp_glb[0]);
+    load_city_tree("gatelys_moderne.glb", &lamp_glb[1]);
+    std::printf("[glb] Loaded street lamp models: klassisk (%u verts), moderne (%u verts)\n",
+                lamp_glb[0].nverts, lamp_glb[1].nverts);
+    constexpr const char* kGlowFbVs =
+        "#version 330 core\nlayout(location=0) in vec3 aPos; layout(location=3) in vec4 iM0;\n"
+        "layout(location=4) in vec4 iM1; layout(location=5) in vec4 iM2; layout(location=6) in vec4 iM3;\n"
+        "uniform mat4 view,projection; out vec2 UV;\n"
+        "void main(){ mat4 model=mat4(iM0,iM1,iM2,iM3); UV=aPos.xz; gl_Position=projection*view*model*vec4(aPos,1.0); }\n";
+    constexpr const char* kGlowFbFs =
+        "#version 330 core\nin vec2 UV; uniform float uGlow; out vec4 FragColor;\n"
+        "void main(){ float d=length(UV); float a=smoothstep(1.0,0.12,d)*uGlow*0.62; "
+        "if(a<0.012) discard; FragColor=vec4(1.0,0.843,0.0,a); }\n";
+    glow_prog = make_program("shaders/lamp_glow.vert", "shaders/lamp_glow.frag", kGlowFbVs, kGlowFbFs,
+                             "lamp_glow");
+    {
+        constexpr u32 kSeg = 20;
+        float gv[(1u + kSeg) * 3u];
+        unsigned gi[kSeg * 3u];
+        gv[0] = 0.f;
+        gv[1] = 0.f;
+        gv[2] = 0.f;
+        for (u32 i = 0; i < kSeg; ++i) {
+            const float a = static_cast<float>(i) * 6.2831853f / static_cast<float>(kSeg);
+            gv[(i + 1u) * 3u + 0u] = std::cos(a);
+            gv[(i + 1u) * 3u + 1u] = 0.f;
+            gv[(i + 1u) * 3u + 2u] = std::sin(a);
+            gi[i * 3u + 0u]        = 0;
+            gi[i * 3u + 1u]        = 1u + i;
+            gi[i * 3u + 2u]        = 1u + ((i + 1u) % kSeg);
+        }
+        glow_nidx = kSeg * 3u;
+        glGenVertexArrays(1, &glow_vao);
+        glGenBuffers(1, &glow_vbo);
+        glGenBuffers(1, &glow_ibo);
+        glGenBuffers(1, &glow_ivbo);
+        glBindVertexArray(glow_vao);
+        glBindBuffer(GL_ARRAY_BUFFER, glow_vbo);
+        glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(sizeof(gv)), gv, GL_STATIC_DRAW);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), reinterpret_cast<void*>(0));
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, glow_ibo);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(sizeof(gi)), gi, GL_STATIC_DRAW);
+        glBindBuffer(GL_ARRAY_BUFFER, glow_ivbo);
+        glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(kTreeInstanceCap * 16 * sizeof(float)), nullptr,
+                     GL_DYNAMIC_DRAW);
+        const u32 stride = 16 * sizeof(float);
+        for (u32 k = 0; k < 4; ++k) {
+            glEnableVertexAttribArray(3 + k);
+            glVertexAttribPointer(3 + k, 4, GL_FLOAT, GL_FALSE, static_cast<GLsizei>(stride),
+                                  reinterpret_cast<void*>(k * 4 * sizeof(float)));
+            glVertexAttribDivisor(3 + k, 1);
+        }
+        glBindVertexArray(0);
+    }
     std::printf("[gl] tree shadows disabled (perf) — 3 instanced draws, spawn cap %u\n", kTreeSpawnCap);
     std::fflush(stdout);
 
@@ -682,6 +762,48 @@ void BuildingGlPass::buildMesh(World& world) {
     }
     std::printf("[city] Placing %u custom skyscrapers in downtown\n", sky_n);
     std::fflush(stdout);
+
+    static float lamp_mats[kLampKindCount][kTreeInstanceCap * 16];
+    static float glow_mats[kTreeInstanceCap * 16];
+    u32 ln[kLampKindCount] = {0, 0};
+    u32 gn                 = 0;
+    for (Entity e : world.query<StreetLightComponent, TransformComponent>()) {
+        TransformComponent* xf = world.get<TransformComponent>(e);
+        if (!xf) {
+            continue;
+        }
+        const float x = xf->position[0];
+        const float y = xf->position[1];
+        const float z = xf->position[2];
+        const u32 kind = (static_cast<u32>(x) * 13u + static_cast<u32>(z) * 7u) & 1u;
+        if ((ln[0] + ln[1]) >= kLampSpawnCap) {
+            continue;
+        }
+        u32 use = kind;
+        if (lamp_glb[use].nprims == 0) {
+            use = kind ^ 1u;
+        }
+        if (lamp_glb[use].nprims == 0 || ln[use] >= kTreeInstanceCap) {
+            continue;
+        }
+        const float yaw = lamp_yaw_toward_road(x, z);
+        tree_yaw_mat(&lamp_mats[use][ln[use] * 16], x, y, z, yaw, 1.f);
+        ++ln[use];
+        if (gn < kTreeInstanceCap) {
+            tree_yaw_mat(&glow_mats[gn * 16], x, kCityPlateauY + 0.28f, z, 0.f, 5.2f);
+            ++gn;
+        }
+    }
+    for (u32 k = 0; k < kLampKindCount; ++k) {
+        tree_glb_set_instances(&lamp_glb[k], lamp_mats[k], ln[k]);
+    }
+    glow_count = gn;
+    if (glow_ivbo) {
+        glBindBuffer(GL_ARRAY_BUFFER, glow_ivbo);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(gn * 16 * sizeof(float)), glow_mats);
+    }
+    std::printf("[city] Placing %u street lamps (klassisk: %u, moderne: %u)\n", ln[0] + ln[1], ln[0], ln[1]);
+    std::fflush(stdout);
 }
 
 void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target, int width, int height,
@@ -753,20 +875,6 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
             if (++sc > 220) {
                 break;
             }
-        }
-        for (Entity e : world.query<StreetLightComponent, TransformComponent>()) {
-            TransformComponent* xf = world.get<TransformComponent>(e);
-            if (!xf) {
-                continue;
-            }
-            float3 p{xf->position[0], xf->position[1], xf->position[2]};
-            if (!near_xz(p, camera_pos, 90.f)) {
-                continue;
-            }
-            model_axis(sm, p, 0.14f, 7.2f, 0.14f);
-            glBindVertexArray(cyl_vao);
-            glUniformMatrix4fv(glGetUniformLocation(shadow_prog, "model"), 1, GL_FALSE, sm);
-            glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(cyl_count), GL_UNSIGNED_INT, nullptr);
         }
         if (tree_shadow_prog && sky_glb.instance_count > 0) {
             glUseProgram(tree_shadow_prog);
@@ -904,51 +1012,8 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
         }
         ++drawn;
     }
-    const float night = (time_of_day >= 20.f || time_of_day < 6.f) ? 1.f : 0.f;
+    const float night = night_glow_amt(time_of_day);
     const float3 metal{0.18f, 0.18f, 0.20f};
-    const float3 lamp_col{1.f, 0.86f, 0.35f};
-    u32 lamps = 0;
-    for (Entity e : world.query<StreetLightComponent, TransformComponent>()) {
-        TransformComponent* xf = world.get<TransformComponent>(e);
-        if (!xf) {
-            continue;
-        }
-        const float3 p{xf->position[0], xf->position[1], xf->position[2]};
-        if (!near_xz(p, camera_pos, 280.f)) {
-            continue;
-        }
-        const float nx = std::round(p.x / kCityBlockPitch) * kCityBlockPitch;
-        const float nz = std::round(p.z / kCityBlockPitch) * kCityBlockPitch;
-        const bool ew = std::fabs(p.z - nz) > std::fabs(p.x - nx);
-        const float dir = ew ? ((p.z > nz) ? -1.f : 1.f) : ((p.x > nx) ? -1.f : 1.f);
-        glBindVertexArray(cube_vao);
-        draw_box(building_prog, p, 0.42f, 0.32f, 0.42f, float3{0.58f, 0.57f, 0.54f}, 0.f);
-        draw_axis_mesh(building_prog, cyl_vao, cyl_count, p, 0.11f, 7.0f, 0.11f, metal, 0.f, 0, 0);
-        glBindVertexArray(cube_vao);
-        for (u32 s = 0; s < 4; ++s) {
-            const float t = (static_cast<float>(s) + 0.5f) / 4.f;
-            const float along = t * 2.6f;
-            const float drop = t * t * 0.55f;
-            float3 sp = ew ? float3{p.x, p.y + 6.95f - drop, p.z + dir * along}
-                           : float3{p.x + dir * along, p.y + 6.95f - drop, p.z};
-            if (ew) {
-                draw_box(building_prog, sp, 0.10f, 0.10f, 0.72f, metal, 0.f);
-            } else {
-                draw_box(building_prog, sp, 0.72f, 0.10f, 0.10f, metal, 0.f);
-            }
-        }
-        float3 head = ew ? float3{p.x, p.y + 6.45f, p.z + dir * 2.55f}
-                         : float3{p.x + dir * 2.55f, p.y + 6.45f, p.z};
-        draw_box(building_prog, head, ew ? 0.70f : 0.36f, 0.26f, ew ? 0.36f : 0.70f, float3{0.12f, 0.12f, 0.13f},
-                 0.f);
-        draw_box(building_prog, float3{head.x, head.y - 0.16f, head.z}, 0.46f, 0.05f, 0.46f, lamp_col,
-                 0.9f + night * 2.6f);
-        if (night > 0.5f) {
-            draw_box(building_prog, float3{head.x, kCityPlateauY + 0.03f, head.z}, 5.5f, 0.04f, 5.5f,
-                     float3{1.f, 0.85f, 0.35f}, 1.8f);
-        }
-        ++lamps;
-    }
     if (tree_prog) {
         glUseProgram(tree_prog);
         glUniformMatrix4fv(glGetUniformLocation(tree_prog, "view"), 1, GL_FALSE, view);
@@ -959,10 +1024,31 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
         glUniform3f(glGetUniformLocation(tree_prog, "uFogColor"), 0.690f, 0.769f, 0.871f);
         glUniform2f(glGetUniformLocation(tree_prog, "uRes"), static_cast<float>(width),
                     static_cast<float>(height));
+        glUniform1f(glGetUniformLocation(tree_prog, "uNightGlow"), 0.f);
         glActiveTexture(GL_TEXTURE2);
         glBindTexture(GL_TEXTURE_2D, shadow_tex);
+        glUniform1f(glGetUniformLocation(tree_prog, "uNightGlow"), night);
+        draw_instanced_glb(&lamp_glb[0], tree_prog);
+        draw_instanced_glb(&lamp_glb[1], tree_prog);
+        glUniform1f(glGetUniformLocation(tree_prog, "uNightGlow"), 0.f);
         draw_tree_glbs(tree_glb, tree_prog);
         draw_instanced_glb(&sky_glb, tree_prog);
+        glUseProgram(building_prog);
+    }
+    if (glow_prog && glow_count > 0 && night > 0.01f) {
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+        glDepthMask(GL_FALSE);
+        glUseProgram(glow_prog);
+        glUniformMatrix4fv(glGetUniformLocation(glow_prog, "view"), 1, GL_FALSE, view);
+        glUniformMatrix4fv(glGetUniformLocation(glow_prog, "projection"), 1, GL_FALSE, proj);
+        glUniform1f(glGetUniformLocation(glow_prog, "uGlow"), night);
+        glBindVertexArray(glow_vao);
+        glDrawElementsInstanced(GL_TRIANGLES, static_cast<GLsizei>(glow_nidx), GL_UNSIGNED_INT, nullptr,
+                                static_cast<GLsizei>(glow_count));
+        glBindVertexArray(0);
+        glDepthMask(GL_TRUE);
+        glDisable(GL_BLEND);
         glUseProgram(building_prog);
     }
     const float sw = kCityStreetWidth * 0.5f + 1.6f;
@@ -1029,8 +1115,9 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
     }
     static bool logged_detail = false;
     if (!logged_detail) {
-        std::printf("[city] street kit lamps_near=%u trees_instanced=%u+%u+%u\n", lamps,
-                    tree_glb[0].instance_count, tree_glb[1].instance_count, tree_glb[2].instance_count);
+        std::printf("[city] street kit lamps_instanced=%u+%u trees_instanced=%u+%u+%u\n",
+                    lamp_glb[0].instance_count, lamp_glb[1].instance_count, tree_glb[0].instance_count,
+                    tree_glb[1].instance_count, tree_glb[2].instance_count);
         std::fflush(stdout);
         logged_detail = true;
     }
@@ -1085,6 +1172,29 @@ void BuildingGlPass::shutdown() {
         tree_glb_shutdown(&tree_glb[k]);
     }
     tree_glb_shutdown(&sky_glb);
+    for (u32 k = 0; k < kLampKindCount; ++k) {
+        tree_glb_shutdown(&lamp_glb[k]);
+    }
+    if (glow_prog) {
+        glDeleteProgram(glow_prog);
+        glow_prog = 0;
+    }
+    if (glow_vao) {
+        glDeleteVertexArrays(1, &glow_vao);
+        glow_vao = 0;
+    }
+    if (glow_vbo) {
+        glDeleteBuffers(1, &glow_vbo);
+        glow_vbo = 0;
+    }
+    if (glow_ibo) {
+        glDeleteBuffers(1, &glow_ibo);
+        glow_ibo = 0;
+    }
+    if (glow_ivbo) {
+        glDeleteBuffers(1, &glow_ivbo);
+        glow_ivbo = 0;
+    }
     building_prog = street_prog = 0;
 }
 

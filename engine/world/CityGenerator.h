@@ -13,6 +13,7 @@ inline constexpr float kCityBlockPitch  = 120.f;
 inline constexpr float kCityExtentM     = 2400.f;
 inline constexpr float kCityPlateauY    = 5.f;
 inline constexpr float kCityCenterM     = 1200.f;
+inline constexpr u32   kCityLampCap     = 280;
 
 inline constexpr u32 kDistrictDowntown    = 0;
 inline constexpr u32 kDistrictCommercial  = 1;

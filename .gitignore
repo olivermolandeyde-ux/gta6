@@ -11,5 +11,5 @@ __pycache__/
 *.pyc
 *.tar.gz
 *.sha256
-# Local high-poly tree GLBs (too large for git; drop them here on the Mac)
+# Local tree / lamp / skyscraper GLBs (drop them here on the Mac)
 assets/models/*.glb

@@ -366,6 +366,9 @@ void CityGenerator::generateCity(World& world, float3 city_center, float city_ra
     const float sidewalk = kCityStreetWidth * 0.5f + 1.6f;
     const float span     = kCityBlockPitch * static_cast<float>(kCityBlocks);
     auto spawn_lamp = [&](float x, float z) {
+        if (lights_spawned >= kCityLampCap) {
+            return;
+        }
         StreetLightSpawnDesc lamp{};
         lamp.light_handle        = 500u + lights_spawned;
         lamp.power_grid_node_id  = kPowerNode;
@@ -373,12 +376,12 @@ void CityGenerator::generateCity(World& world, float3 city_center, float city_ra
         Entity e                 = instantiate_street_light(world, lamp_req, lamp);
         TransformComponent xf{};
         xf.position[0] = x;
-        xf.position[1] = kCityPlateauY;
+        xf.position[1] = kCityPlateauY + 0.05f;
         xf.position[2] = z;
         xf.rotation[3] = 1.f;
-        xf.scale[0]    = 0.18f;
-        xf.scale[1]    = 6.4f;
-        xf.scale[2]    = 0.18f;
+        xf.scale[0]    = 1.f;
+        xf.scale[1]    = 1.f;
+        xf.scale[2]    = 1.f;
         RenderableComponent rc{};
         rc.mesh_id      = 402;
         rc.material_id  = 22;
