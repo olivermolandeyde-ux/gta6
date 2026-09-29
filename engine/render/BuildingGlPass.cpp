@@ -456,6 +456,18 @@ void draw_instanced_glb(TreeGlb* g, unsigned prog) {
         glBindTexture(GL_TEXTURE_2D, pr.tex_emit ? pr.tex_emit : pr.tex);
         glUniform1i(glGetUniformLocation(prog, "uAlphaMask"), pr.alpha_mask);
         glUniform1f(glGetUniformLocation(prog, "uAlphaCut"), pr.cutoff);
+        const int is_tree = (g->label[0] == 'o' || g->label[0] == 'p') &&
+                            (std::strcmp(g->label, "oak") == 0 || std::strcmp(g->label, "pine") == 0 ||
+                             std::strcmp(g->label, "palm") == 0);
+        // TEMP: solid bark/leaf so we can see OBJ geometry without PNG/UV.
+        glUniform1i(glGetUniformLocation(prog, "uUseTexture"), is_tree ? 0 : 1);
+        if (is_tree) {
+            if (pr.alpha_mask) {
+                glUniform3f(glGetUniformLocation(prog, "uSolidColor"), 0.13f, 0.55f, 0.13f);
+            } else {
+                glUniform3f(glGetUniformLocation(prog, "uSolidColor"), 0.55f, 0.27f, 0.07f);
+            }
+        }
         GLenum md = GL_TRIANGLES;
         switch (pr.gl_mode) {
         case 0:
@@ -648,6 +660,7 @@ bool BuildingGlPass::init() {
     constexpr const char* kTshFbFs = "#version 330 core\nvoid main(){}\n";
     tree_shadow_prog =
         make_program("shaders/tree_shadow.vert", "shaders/tree_shadow.frag", kTshFbVs, kTshFbFs, "tree_shadow");
+    log_tree_obj_files();
     find_and_load_tree_obj("oak_tree.obj", &tree_glb[0]);
     find_and_load_tree_obj("pine_tree.obj", &tree_glb[1]);
     find_and_load_tree_obj("palm_tree.obj", &tree_glb[2]);

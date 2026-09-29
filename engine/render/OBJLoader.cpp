@@ -314,13 +314,44 @@ int find_tex(TexSlot* slots, u32 n, const char* file) {
     return -1;
 }
 
+int str_eq_ci(const char* a, const char* b) {
+    if (!a || !b) {
+        return 0;
+    }
+    while (*a && *b) {
+        const char ca = static_cast<char>(std::tolower(static_cast<unsigned char>(*a++)));
+        const char cb = static_cast<char>(std::tolower(static_cast<unsigned char>(*b++)));
+        if (ca != cb) {
+            return 0;
+        }
+    }
+    return *a == 0 && *b == 0;
+}
+
 int find_mtl(Mtl* mats, u32 n, const char* name) {
     for (u32 i = 0; i < n; ++i) {
-        if (std::strcmp(mats[i].name, name) == 0) {
+        if (str_eq_ci(mats[i].name, name)) {
             return static_cast<int>(i);
         }
     }
     return -1;
+}
+
+int cmd_is(const char* p, const char* cmd) {
+    const u32 n = static_cast<u32>(std::strlen(cmd));
+    if (std::strncmp(p, cmd, n) != 0) {
+        return 0;
+    }
+    return p[n] == 0 || std::isspace(static_cast<unsigned char>(p[n]));
+}
+
+int file_exists(const char* path) {
+    FILE* f = std::fopen(path, "rb");
+    if (!f) {
+        return 0;
+    }
+    std::fclose(f);
+    return 1;
 }
 
 void trim_nl(char* s) {
@@ -370,13 +401,32 @@ bool parse_mtl(const char* path, Mtl* mats, u32* nmat) {
             continue;
         }
         Mtl& m = mats[static_cast<u32>(cur)];
+        std::printf("[obj] mtl: %s\n", p);
         if (std::strncmp(p, "map_Kd", 6) == 0 && std::isspace(static_cast<unsigned char>(p[6]))) {
             const char* t = skip_ws(p + 6);
-            std::snprintf(m.map_kd, sizeof(m.map_kd), "%s", t);
-            if (is_leaf_name(m.map_kd)) {
+            const char* last = t;
+            const char* q = t;
+            while (*q) {
+                q = skip_ws(q);
+                if (*q == 0) {
+                    break;
+                }
+                last = q;
+                while (*q && !std::isspace(static_cast<unsigned char>(*q))) {
+                    ++q;
+                }
+            }
+            u32 i = 0;
+            while (last[i] && !std::isspace(static_cast<unsigned char>(last[i])) && i + 1u < sizeof(m.map_kd)) {
+                m.map_kd[i] = last[i];
+                ++i;
+            }
+            m.map_kd[i] = 0;
+            if (is_leaf_name(m.map_kd) || is_leaf_name(m.name)) {
                 m.is_leaf = 1;
             }
-        } else if (p[0] == 'K' && p[1] == 'd' && std::isspace(static_cast<unsigned char>(p[2]))) {
+            std::printf("[obj] map_Kd -> '%s' leaf=%d\n", m.map_kd, m.is_leaf);
+        } else if (cmd_is(p, "Kd")) {
             std::sscanf(p + 2, " %f %f %f", &m.kd[0], &m.kd[1], &m.kd[2]);
         }
     }
@@ -384,26 +434,40 @@ bool parse_mtl(const char* path, Mtl* mats, u32* nmat) {
     return true;
 }
 
+int parse_obj_int(const char** pp) {
+    const char* p = *pp;
+    int sign = 1;
+    if (*p == '-') {
+        sign = -1;
+        ++p;
+    }
+    if (*p < '0' || *p > '9') {
+        *pp = p;
+        return 0;
+    }
+    int v = 0;
+    while (*p >= '0' && *p <= '9') {
+        v = v * 10 + (*p - '0');
+        ++p;
+    }
+    *pp = p;
+    return sign * v;
+}
+
 void parse_face_vert(const char* tok, int* v, int* vt, int* vn) {
     *v = *vt = *vn = 0;
-    int a = 0, b = 0, c = 0;
-    if (std::sscanf(tok, "%d/%d/%d", &a, &b, &c) == 3) {
-        *v = a;
-        *vt = b;
-        *vn = c;
-        return;
+    const char* p = tok;
+    *v = parse_obj_int(&p);
+    if (*p == '/') {
+        ++p;
+        if (*p != '/') {
+            *vt = parse_obj_int(&p);
+        }
+        if (*p == '/') {
+            ++p;
+            *vn = parse_obj_int(&p);
+        }
     }
-    if (std::sscanf(tok, "%d//%d", &a, &c) == 2) {
-        *v = a;
-        *vn = c;
-        return;
-    }
-    if (std::sscanf(tok, "%d/%d", &a, &b) == 2) {
-        *v = a;
-        *vt = b;
-        return;
-    }
-    std::sscanf(tok, "%d", v);
 }
 
 void bind_instance_attrs(TreeGlb* out) {
@@ -532,13 +596,23 @@ bool load_tree_obj(const char* path, TreeGlb* out) {
         cur_mat = 0;
     };
 
+    u32 nline = 0;
+    u32 logged_face = 0;
     while (std::fgets(line, sizeof(line), f)) {
         trim_nl(line);
-        const char* p = skip_ws(line);
+        char* raw = line;
+        if (nline == 0 && static_cast<unsigned char>(raw[0]) == 0xef) {
+            raw += 3;
+        }
+        ++nline;
+        const char* p = skip_ws(raw);
+        if (nline <= 80u) {
+            std::printf("[obj] line %u: %s\n", nline, p);
+        }
         if (p[0] == 0 || p[0] == '#') {
             continue;
         }
-        if (p[0] == 'v' && p[1] == ' ' ) {
+        if (cmd_is(p, "v")) {
             if (npos >= kPosCap) {
                 continue;
             }
@@ -548,7 +622,7 @@ bool load_tree_obj(const char* path, TreeGlb* out) {
             }
             continue;
         }
-        if (p[0] == 'v' && p[1] == 't' && (p[2] == ' ' || p[2] == '\t')) {
+        if (cmd_is(p, "vt")) {
             if (nuv >= kUvCap) {
                 continue;
             }
@@ -558,7 +632,7 @@ bool load_tree_obj(const char* path, TreeGlb* out) {
             }
             continue;
         }
-        if (p[0] == 'v' && p[1] == 'n' && (p[2] == ' ' || p[2] == '\t')) {
+        if (cmd_is(p, "vn")) {
             if (nnrm >= kNrmCap) {
                 continue;
             }
@@ -568,19 +642,22 @@ bool load_tree_obj(const char* path, TreeGlb* out) {
             }
             continue;
         }
-        if (p[0] == 'o' && (p[1] == ' ' || p[1] == '\t')) {
+        if (cmd_is(p, "o") || cmd_is(p, "g")) {
             ++nobj;
+            std::printf("[obj] object/group: %s\n", skip_ws(p + 1));
             continue;
         }
-        if (std::strncmp(p, "mtllib", 6) == 0 && std::isspace(static_cast<unsigned char>(p[6]))) {
+        if (cmd_is(p, "mtllib")) {
             char name[128];
             name[0] = 0;
             std::sscanf(p + 6, " %127s", name);
             join_path(mtl_path, sizeof(mtl_path), dir, name);
+            std::printf("[obj] mtllib '%s' -> %s EXISTS=%s\n", name, mtl_path,
+                        file_exists(mtl_path) ? "YES" : "NO");
             parse_mtl(mtl_path, mats, &nmat);
             continue;
         }
-        if (std::strncmp(p, "usemtl", 6) == 0 && std::isspace(static_cast<unsigned char>(p[6]))) {
+        if (cmd_is(p, "usemtl")) {
             char name[64];
             name[0] = 0;
             std::sscanf(p + 6, " %63s", name);
@@ -597,14 +674,16 @@ bool load_tree_obj(const char* path, TreeGlb* out) {
                 cur_mat = static_cast<int>(nmat);
                 ++nmat;
             }
+            std::printf("[obj] usemtl '%s' -> mat %d leaf=%d\n", name, cur_mat,
+                        (cur_mat >= 0 && static_cast<u32>(cur_mat) < nmat) ? mats[cur_mat].is_leaf : 0);
             continue;
         }
-        if (p[0] == 'f' && (p[1] == ' ' || p[1] == '\t')) {
+        if (cmd_is(p, "f")) {
             ensure_default_mat();
-            int fv[16], ft[16], fn[16];
+            int fv[64], ft[64], fn[64];
             u32 nv = 0;
             const char* q = p + 1;
-            while (*q && nv < 16) {
+            while (*q && nv < 64) {
                 q = skip_ws(q);
                 if (*q == 0) {
                     break;
@@ -635,10 +714,34 @@ bool load_tree_obj(const char* path, TreeGlb* out) {
                     corners[ncorn++] = c;
                 }
                 ++nface;
+                if (logged_face < 5u) {
+                    const int i0 = fix_idx(fv[0], static_cast<int>(npos));
+                    const int i1 = fix_idx(fv[ids[1]], static_cast<int>(npos));
+                    const int i2 = fix_idx(fv[ids[2]], static_cast<int>(npos));
+                    std::printf("[obj] face[%u]=(%d,%d,%d) raw=(%d,%d,%d) uv=(%d,%d,%d) mat=%d\n", logged_face, i0,
+                                i1, i2, fv[0], fv[ids[1]], fv[ids[2]], ft[0], ft[ids[1]], ft[ids[2]], cur_mat);
+                    ++logged_face;
+                }
             }
         }
     }
     std::fclose(f);
+    std::printf("[obj] parse done lines=%u v=%u vt=%u vn=%u faces=%u mats=%u corners=%u\n", nline, npos, nuv,
+                nnrm, nface, nmat, ncorn);
+    {
+        const u32 show = nuv < 5 ? nuv : 5;
+        for (u32 i = 0; i < show; ++i) {
+            std::printf("[obj] UV[%u]=(%.4f,%.4f)\n", i, uvs[i].u, uvs[i].v);
+        }
+        if (nuv == 0) {
+            std::printf("[obj] WARNING: no vt lines — UVs will be 0,0\n");
+        }
+        const u32 showv = npos < 3 ? npos : 3;
+        for (u32 i = 0; i < showv; ++i) {
+            std::printf("[obj] v[%u]=(%.4f,%.4f,%.4f)\n", i, pos[i].x, pos[i].y, pos[i].z);
+        }
+        std::fflush(stdout);
+    }
 
     TexSlot texs[kTexCap];
     u32 ntex = 0;
@@ -653,6 +756,8 @@ bool load_tree_obj(const char* path, TreeGlb* out) {
             if (slot < 0 && ntex < kTexCap) {
                 u8* rgba = nullptr;
                 u32 w = 0, h = 0;
+                std::printf("[obj] Checking file: %s - EXISTS: %s\n", texpath,
+                            file_exists(texpath) ? "YES" : "NO");
                 if (load_png_rgba(texpath, &rgba, &w, &h) && rgba) {
                     const int ha = png_has_alpha(rgba, w, h) || m.is_leaf;
                     texs[ntex].id = upload_png(rgba, w, h, ha || m.is_leaf);
@@ -660,8 +765,8 @@ bool load_tree_obj(const char* path, TreeGlb* out) {
                     texs[ntex].h = h;
                     texs[ntex].alpha = ha;
                     std::snprintf(texs[ntex].file, sizeof(texs[ntex].file), "%s", m.map_kd);
-                    std::printf("[obj] texture %s: %ux%u alpha=%s id=%u\n", m.map_kd, w, h,
-                                ha ? "YES" : "NO", texs[ntex].id);
+                    std::printf("[obj] Loading texture: %s - size: %ux%u, channels: 4 id=%u alpha=%s\n",
+                                m.map_kd, w, h, texs[ntex].id, ha ? "YES" : "NO");
                     std::free(rgba);
                     loaded = 1;
                     slot = static_cast<int>(ntex);
@@ -758,15 +863,11 @@ bool load_tree_obj(const char* path, TreeGlb* out) {
                 }
             }
             if (!tex) {
-                if (m.is_leaf) {
-                    tex = solid_tex(0x22, 0x8B, 0x22, 255);
-                } else if (m.map_kd[0] == 0) {
-                    tex = solid_tex(static_cast<u8>(m.kd[0] * 255.f), static_cast<u8>(m.kd[1] * 255.f),
-                                    static_cast<u8>(m.kd[2] * 255.f), 255);
-                } else {
-                    tex = solid_tex(0x8B, 0x45, 0x13, 255);
-                }
+                tex = m.is_leaf ? solid_tex(0x22, 0x8B, 0x22, 255) : solid_tex(0x8B, 0x45, 0x13, 255);
+                tw = th = 1;
             }
+            std::printf("[obj] Applying material '%s' with texture ID: %u tris=%u leaf=%d mask=%d %ux%u\n",
+                        m.name, tex, ni / 3u, m.is_leaf, amask, tw, th);
             emit_bucket(out, verts, nv, idx, ni, tex, tw, th, amask, 0.5f);
         }
         std::free(verts);
@@ -786,12 +887,44 @@ bool load_tree_obj(const char* path, TreeGlb* out) {
     if (out->nprims > 0) {
         bind_instance_attrs(out);
     }
-    std::printf("[obj] Loaded %s: %u vertices, %u faces, %u materials (objects=%u prims=%u)\n", path,
-                out->nverts, nface, nmat, nobj, out->nprims);
-    std::printf("[obj] %s AABB y=[%.3f,%.3f] size=(%.2f,%.2f,%.2f)\n", out->label, out->ymin, out->ymax,
-                out->xmax - out->xmin, out->ymax - out->ymin, out->zmax - out->zmin);
+    std::printf("[obj] Loaded %s: %u vertices, %u faces, %u materials\n", path, npos, nface, nmat);
+    std::printf("[obj] %s AABB min=(%.3f,%.3f,%.3f) max=(%.3f,%.3f,%.3f) Y-up (height=%.3f) prims=%u gpu_verts=%u\n",
+                out->label, out->xmin, out->ymin, out->zmin, out->xmax, out->ymax, out->zmax,
+                out->ymax - out->ymin, out->nprims, out->nverts);
+    std::printf("[obj] FORCE SOLID bark=#8B4513 leaf=#228B22 (uUseTexture=0) — textures still logged above\n");
     std::fflush(stdout);
     return out->nprims > 0;
+}
+
+void log_tree_obj_files() {
+    const char* names[] = {"oak_tree.obj",
+                           "oak_tree.mtl",
+                           "oak_tree_bark.png",
+                           "oak_tree_leaves.png",
+                           "pine_tree.obj",
+                           "pine_tree.mtl",
+                           "pine_tree_bark.png",
+                           "pine_tree_leaves.png",
+                           "palm_tree.obj",
+                           "palm_tree.mtl",
+                           "palm_tree_bark.png",
+                           "palm_tree_leaves.png"};
+    char cwd[512];
+    if (!getcwd(cwd, sizeof(cwd))) {
+        cwd[0] = '.';
+        cwd[1] = 0;
+    }
+    for (u32 i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
+        char p0[768], p1[768], p2[768];
+        std::snprintf(p0, sizeof(p0), "%s/assets/models/%s", LEONIDA_SOURCE_DIR, names[i]);
+        std::snprintf(p1, sizeof(p1), "%s/assets/models/%s", cwd, names[i]);
+        std::snprintf(p2, sizeof(p2), "%s/../assets/models/%s", cwd, names[i]);
+        const int ok = file_exists(p0) || file_exists(p1) || file_exists(p2);
+        const char* hit = file_exists(p0) ? p0 : (file_exists(p1) ? p1 : (file_exists(p2) ? p2 : p0));
+        std::printf("[obj] Checking file: assets/models/%s - EXISTS: %s (%s)\n", names[i], ok ? "YES" : "NO",
+                    hit);
+    }
+    std::fflush(stdout);
 }
 
 bool find_and_load_tree_obj(const char* filename, TreeGlb* out) {
