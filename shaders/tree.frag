@@ -3,6 +3,7 @@ in vec3 FragPos;
 in vec3 Normal;
 in vec2 UV;
 in vec4 LightPos;
+in vec4 VertColor;
 uniform vec3 lightDir;
 uniform vec3 uCamPos;
 uniform vec3 uFogColor;
@@ -34,10 +35,11 @@ float shadow_at() {
 }
 
 void main() {
-    vec4 tex = texture(uAlbedo, UV);
+    vec4 tex = texture(uAlbedo, UV) * VertColor;
     if (uAlphaMask == 1 && tex.a < 0.5) {
         discard;
     }
+    tex.rgb = max(tex.rgb, vec3(0.04));
     vec3 emit = texture(uEmissive, UV).rgb;
     float em = max(max(emit.r, emit.g), emit.b);
     vec3 gold = vec3(1.0, 0.843, 0.0);
@@ -55,7 +57,7 @@ void main() {
     vec3 L = normalize(lightDir);
     float ndl = max(dot(N, L), 0.0);
     float sh = shadow_at();
-    vec3 ambient = vec3(0.690, 0.769, 0.871) * 0.38;
+    vec3 ambient = vec3(0.690, 0.769, 0.871) * 0.55;
     vec3 sunCol = vec3(1.0, 0.973, 0.863) * 1.15;
     vec3 lighting = ambient + sunCol * ndl * sh;
     vec3 color = lighting * tex.rgb + mix(emit * 1.8, nightEmit * 7.0, uNightGlow);

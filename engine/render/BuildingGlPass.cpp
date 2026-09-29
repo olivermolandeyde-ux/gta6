@@ -358,7 +358,16 @@ float glb_fit_scale(const TreeGlb* t, float target_h) {
     if (!t) {
         return 1.f;
     }
-    const float h = t->ymax - t->ymin;
+    const float hy = t->ymax - t->ymin;
+    const float hx = t->xmax - t->xmin;
+    const float hz = t->zmax - t->zmin;
+    float h = hy;
+    if (t->z_up) {
+        h = hz;
+    }
+    if (h < hx) {
+        h = hx;
+    }
     if (h < 0.25f) {
         return 1.f;
     }
@@ -366,8 +375,8 @@ float glb_fit_scale(const TreeGlb* t, float target_h) {
     if (s < 0.03f) {
         s = 0.03f;
     }
-    if (s > 25.f) {
-        s = 25.f;
+    if (s > 8.f) {
+        s = 8.f;
     }
     return s;
 }
@@ -399,7 +408,7 @@ LampSnap snap_lamp_to_sidewalk(float x, float z) {
     const float dz     = z - nz;
     const float road_h = kCityStreetWidth * 0.5f;
     const float curb   = road_h + 1.5f;
-    const float cross  = road_h + 8.f;
+    const float cross  = road_h + 5.0f;
     const bool  ew     = std::fabs(dz) <= std::fabs(dx);
     if (ew) {
         if (std::fabs(dx) < cross) {
@@ -432,21 +441,31 @@ void log_glb_textures(const char* name, const TreeGlb* t) {
     }
     for (u32 i = 0; i < t->nprims; ++i) {
         const TreePrim& p = t->prims[i];
+        std::printf("[glb] Tree '%s' has texture: %ux%u, channels: RGBA\n", name, p.tex_w, p.tex_h);
         std::printf("[glb] Tree '%s' texture: %ux%u pixels, material: %s cutoff 0.5\n", name, p.tex_w,
                     p.tex_h, p.alpha_mask ? "alpha-mask" : "opaque");
     }
     std::fflush(stdout);
 }
 
-void tree_yaw_mat(float* m, float x, float y, float z, float yaw, float sc) {
+void tree_yaw_mat(float* m, float x, float y, float z, float yaw, float sc, int z_up) {
     const float c = std::cos(yaw);
     const float s = std::sin(yaw);
     std::memset(m, 0, 16 * sizeof(float));
-    m[0]  = c * sc;
-    m[2]  = -s * sc;
-    m[5]  = sc;
-    m[8]  = s * sc;
-    m[10] = c * sc;
+    if (!z_up) {
+        m[0]  = c * sc;
+        m[2]  = -s * sc;
+        m[5]  = sc;
+        m[8]  = s * sc;
+        m[10] = c * sc;
+    } else {
+        // Ry(yaw) * Rx(-90°) * S  — glTF Z-up assets stand up in Y.
+        m[0]  = c * sc;
+        m[2]  = s * sc;
+        m[4]  = s * sc;
+        m[6]  = -c * sc;
+        m[9]  = sc;
+    }
     m[12] = x;
     m[13] = y;
     m[14] = z;
@@ -618,12 +637,12 @@ bool BuildingGlPass::init() {
     glBindVertexArray(0);
 
     constexpr const char* kTreeFbVs =
-        "#version 330 core\nlayout(location=0) in vec3 aPos; layout(location=3) in vec4 iM0;\n"
-        "layout(location=4) in vec4 iM1; layout(location=5) in vec4 iM2; layout(location=6) in vec4 iM3;\n"
-        "uniform mat4 view,projection,uLightVP; out vec3 FragPos; out vec3 Normal; out vec2 UV; out vec4 LightPos;\n"
-        "void main(){ mat4 model=mat4(iM0,iM1,iM2,iM3); vec4 wp=model*vec4(aPos,1.0); FragPos=wp.xyz; Normal=vec3(0,1,0); UV=vec2(0.0); LightPos=uLightVP*wp; gl_Position=projection*view*wp; }\n";
+        "#version 330 core\nlayout(location=0) in vec3 aPos; layout(location=7) in vec4 aColor;\n"
+        "layout(location=3) in vec4 iM0; layout(location=4) in vec4 iM1; layout(location=5) in vec4 iM2; layout(location=6) in vec4 iM3;\n"
+        "uniform mat4 view,projection,uLightVP; out vec3 FragPos; out vec3 Normal; out vec2 UV; out vec4 LightPos; out vec4 VertColor;\n"
+        "void main(){ mat4 model=mat4(iM0,iM1,iM2,iM3); vec4 wp=model*vec4(aPos,1.0); FragPos=wp.xyz; Normal=vec3(0,1,0); UV=vec2(0.0); VertColor=vec4(1.0); LightPos=uLightVP*wp; gl_Position=projection*view*wp; }\n";
     constexpr const char* kTreeFbFs =
-        "#version 330 core\nin vec3 FragPos; in vec3 Normal; in vec2 UV; in vec4 LightPos; out vec4 FragColor;\n"
+        "#version 330 core\nin vec3 FragPos; in vec3 Normal; in vec2 UV; in vec4 LightPos; in vec4 VertColor; out vec4 FragColor;\n"
         "void main(){ FragColor=vec4(0.2,0.5,0.2,1.0); }\n";
     tree_prog = make_program("shaders/tree.vert", "shaders/tree.frag", kTreeFbVs, kTreeFbFs, "tree");
     constexpr const char* kTshFbVs =
@@ -646,10 +665,14 @@ bool BuildingGlPass::init() {
     } else {
         std::printf("[gl] custom skyscraper-2.glb not found — downtown stays procedural\n");
     }
+    std::printf("[glb] Loading lamp model: gatelys_klassisk.glb\n");
     load_city_tree("gatelys_klassisk.glb", &lamp_glb[0]);
+    std::printf("[glb] Loading lamp model: gatelys_moderne.glb\n");
     load_city_tree("gatelys_moderne.glb", &lamp_glb[1]);
     std::printf("[glb] Loaded street lamp models: klassisk (%u verts), moderne (%u verts)\n",
                 lamp_glb[0].nverts, lamp_glb[1].nverts);
+    log_glb_textures("klassisk", &lamp_glb[0]);
+    log_glb_textures("moderne", &lamp_glb[1]);
     constexpr const char* kGlowFbVs =
         "#version 330 core\nlayout(location=0) in vec3 aPos; layout(location=3) in vec4 iM0;\n"
         "layout(location=4) in vec4 iM1; layout(location=5) in vec4 iM2; layout(location=6) in vec4 iM3;\n"
@@ -774,7 +797,8 @@ void BuildingGlPass::buildMesh(World& world) {
             }
             const float yaw = static_cast<float>(b->building_id % 4u) * 1.5707963f;
             const float sc  = 0.95f + static_cast<float>(b->building_id % 6u) * (0.10f / 5.f);
-            tree_yaw_mat(&sky_mats[sky_n * 16], b->position.x, kCityPlateauY + 0.05f, b->position.z, yaw, sc);
+            tree_yaw_mat(&sky_mats[sky_n * 16], b->position.x, kCityPlateauY + 0.05f, b->position.z, yaw, sc,
+                         sky_glb.z_up);
             ++sky_n;
         }
         tree_glb_set_instances(&sky_glb, sky_mats, sky_n);
@@ -812,8 +836,9 @@ void BuildingGlPass::buildMesh(World& world) {
             continue;
         }
         const float sc = lamp_fit[use];
-        const float y  = kCityPlateauY + 0.05f - lamp_glb[use].ymin * sc;
-        tree_yaw_mat(&lamp_mats[use][ln[use] * 16], sn.x, y, sn.z, sn.yaw, sc);
+        const float y0 = lamp_glb[use].z_up ? lamp_glb[use].zmin : lamp_glb[use].ymin;
+        const float y  = kCityPlateauY + 0.05f - y0 * sc;
+        tree_yaw_mat(&lamp_mats[use][ln[use] * 16], sn.x, y, sn.z, sn.yaw, sc, lamp_glb[use].z_up);
         ++ln[use];
         if (n_lamp_xz < kLampSpawnCap) {
             lamp_xz[n_lamp_xz * 2u]     = sn.x;
@@ -821,12 +846,12 @@ void BuildingGlPass::buildMesh(World& world) {
             ++n_lamp_xz;
         }
         if (gn < kTreeInstanceCap) {
-            tree_yaw_mat(&glow_mats[gn * 16], sn.x, kCityPlateauY + 0.28f, sn.z, 0.f, 5.2f);
+            tree_yaw_mat(&glow_mats[gn * 16], sn.x, kCityPlateauY + 0.28f, sn.z, 0.f, 5.2f, 0);
             ++gn;
         }
         if (lamp_log_n < 12u) {
-            std::printf("[city] Placed lamp at (%.1f, %.1f, %.1f), rotation: %.0f degrees, side: %s\n",
-                        sn.x, y, sn.z, sn.yaw * 57.29578f, sn.left ? "left" : "right");
+            std::printf("[city] Placed lamp at (%.1f, %.1f, %.1f) - sidewalk check: PASS side=%s yaw=%.0f\n",
+                        sn.x, y, sn.z, sn.left ? "left" : "right", sn.yaw * 57.29578f);
             ++lamp_log_n;
         }
     }
@@ -850,14 +875,31 @@ void BuildingGlPass::buildMesh(World& world) {
     const float tree_fit[kTreeKindCount] = {glb_fit_scale(&tree_glb[0], 8.0f),
                                             glb_fit_scale(&tree_glb[1], 11.0f),
                                             glb_fit_scale(&tree_glb[2], 9.0f)};
-    auto skip_cross = [](float t) {
-        const float g = t / kCityBlockPitch;
-        const float f = g - std::floor(g);
-        return f < 0.16f || f > 0.84f;
+    auto on_sidewalk = [](float x, float z) {
+        const float pitch = kCityBlockPitch;
+        const float nx    = std::round(x / pitch) * pitch;
+        const float nz    = std::round(z / pitch) * pitch;
+        const float adx   = std::fabs(x - nx);
+        const float adz   = std::fabs(z - nz);
+        const float inner = kCityStreetWidth * 0.5f + 1.0f;
+        const float outer = kCityStreetWidth * 0.5f + 3.0f + 2.0f;
+        const float along = kCityStreetWidth * 0.5f + 5.0f;
+        const bool ew     = adz >= inner && adz <= outer && adx >= along;
+        const bool ns     = adx >= inner && adx <= outer && adz >= along;
+        return ew || ns;
     };
+    u32 tree_log_n = 0;
     auto push_tree = [&](float x, float z) {
         const u32 total = tn[0] + tn[1] + tn[2];
         if (total >= kTreeSpawnCap) {
+            return;
+        }
+        if (!on_sidewalk(x, z)) {
+            if (tree_log_n < 8u) {
+                std::printf("[city] Skipped tree at (%.1f, %.1f, %.1f) - sidewalk check: FAIL\n", x,
+                            kCityPlateauY + 0.05f, z);
+                ++tree_log_n;
+            }
             return;
         }
         if (xz_too_close(x, z, lamp_xz, n_lamp_xz, 2.0f)) {
@@ -873,42 +915,47 @@ void BuildingGlPass::buildMesh(World& world) {
             return;
         }
         const u32 kind = (static_cast<u32>(x) / 24u + static_cast<u32>(z) / 24u) % 3u;
-        if (tn[kind] >= kTreeInstanceCap) {
+        if (tn[kind] >= kTreeInstanceCap || tree_glb[kind].nprims == 0) {
             return;
         }
         const float yaw = std::fmod(x * 0.173f + z * 0.091f, 6.2831853f);
         const float sc0 = 0.85f + std::fmod(x * 0.031f + z * 0.017f, 0.30f);
-        const float sc  = sc0 * tree_fit[kind];
-        const float y   = kCityPlateauY + 0.05f - tree_glb[kind].ymin * sc;
-        tree_yaw_mat(&tree_mats[kind][tn[kind] * 16], x, y, z, yaw, sc);
+        float sc        = sc0 * tree_fit[kind];
+        const float raw_h =
+            tree_glb[kind].z_up ? (tree_glb[kind].zmax - tree_glb[kind].zmin)
+                                : (tree_glb[kind].ymax - tree_glb[kind].ymin);
+        const float h = raw_h * sc;
+        if (h > 12.f && raw_h > 0.01f) {
+            sc *= 12.f / h;
+        } else if (h < 4.f && h > 0.01f) {
+            sc *= 4.f / h;
+        }
+        const float y0 = tree_glb[kind].z_up ? tree_glb[kind].zmin : tree_glb[kind].ymin;
+        const float y  = kCityPlateauY + 0.05f - y0 * sc;
+        tree_yaw_mat(&tree_mats[kind][tn[kind] * 16], x, y, z, yaw, sc, tree_glb[kind].z_up);
         ++tn[kind];
         tree_xz[n_tree_xz * 2u]     = x;
         tree_xz[n_tree_xz * 2u + 1] = z;
         ++n_tree_xz;
+        if (tree_log_n < 12u) {
+            std::printf("[city] Placed tree at (%.1f, %.1f, %.1f) - sidewalk check: PASS\n", x, y, z);
+            ++tree_log_n;
+        }
     };
-    const float sw = kCityStreetWidth * 0.5f + 3.2f;
-    // Every 4th street, every 4th sidewalk tile (~96 m) — ~200–280 trees total.
-    // 3.2 m past the curb so trunks sit in the lot, not on the lamp line.
-    for (u32 j = 0; j <= kCityBlocks; j += 4) {
+    const float off = kCityStreetWidth * 0.5f + 3.0f + 2.0f;
+    for (u32 j = 0; j <= kCityBlocks; ++j) {
         const float z = static_cast<float>(j) * kCityBlockPitch;
-        for (float x = 48.f; x < kCityExtentM - 48.f; x += 96.f) {
-            if (!skip_cross(x)) {
-                const float side = (static_cast<u32>(x) % 192u < 96u) ? sw : -sw;
-                push_tree(x, z + side);
-            }
+        for (float x = 24.f; x < kCityExtentM - 24.f; x += 72.f) {
+            const float side = (static_cast<u32>(x) % 144u < 72u) ? off : -off;
+            push_tree(x, z + side);
         }
     }
-    for (u32 i = 0; i <= kCityBlocks; i += 4) {
+    for (u32 i = 0; i <= kCityBlocks; ++i) {
         const float x = static_cast<float>(i) * kCityBlockPitch;
-        for (float z = 48.f; z < kCityExtentM - 48.f; z += 96.f) {
-            if (!skip_cross(z)) {
-                const float side = (static_cast<u32>(z) % 192u < 96u) ? sw : -sw;
-                push_tree(x + side, z);
-            }
+        for (float z = 24.f; z < kCityExtentM - 24.f; z += 72.f) {
+            const float side = (static_cast<u32>(z) % 144u < 72u) ? off : -off;
+            push_tree(x + side, z);
         }
-    }
-    for (float t = 80.f; t < 400.f; t += 40.f) {
-        push_tree(80.f + t * 0.15f, 80.f + std::fmod(t * 1.7f, 90.f));
     }
     u32 total_trees = 0;
     for (u32 k = 0; k < kTreeKindCount; ++k) {

@@ -34,6 +34,12 @@ struct TreeGlb {
     u32      instance_count;
     float    ymin;
     float    ymax;
+    float    xmin;
+    float    xmax;
+    float    zmin;
+    float    zmax;
+    int      z_up;
+    char     label[32];
 };
 
 [[nodiscard]] bool load_tree_glb(const char* path, TreeGlb* out);

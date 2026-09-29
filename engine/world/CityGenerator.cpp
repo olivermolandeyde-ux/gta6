@@ -363,7 +363,7 @@ void CityGenerator::generateCity(World& world, float3 city_center, float city_ra
     InstantiationRequest lamp_req{};
     lamp_req.domain      = InstantiationDomain::PersistentWorld;
     lamp_req.debug_label = "city_lamp";
-    const float sidewalk = kCityStreetWidth * 0.5f + 1.6f;
+    const float sidewalk = kCityStreetWidth * 0.5f + 1.5f;
     const float span     = kCityBlockPitch * static_cast<float>(kCityBlocks);
     auto spawn_lamp = [&](float x, float z) {
         if (lights_spawned >= kCityLampCap) {
@@ -393,7 +393,7 @@ void CityGenerator::generateCity(World& world, float3 city_center, float city_ra
     auto near_crossing = [](float t) {
         const float g = t / kCityBlockPitch;
         const float f = g - std::floor(g);
-        return f < 0.16f || f > 0.84f;
+        return f < 0.18f || f > 0.82f;
     };
     for (u32 j = 0; j <= kCityBlocks; ++j) {
         const float z = origin_z + static_cast<float>(j) * kCityBlockPitch;
