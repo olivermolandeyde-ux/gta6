@@ -37,15 +37,14 @@ float shadow_at() {
 }
 
 void main() {
-    vec4 tex;
-    if (uUseTexture == 1) {
-        tex = texture(uAlbedo, UV) * VertColor;
-        if (uAlphaMask == 1 && tex.a < 0.5) {
-            discard;
-        }
-    } else {
-        tex = vec4(uSolidColor, 1.0);
+    vec4 albedo = texture(uAlbedo, UV);
+    if (uUseTexture != 1) {
+        albedo = vec4(uSolidColor, 1.0);
     }
+    if (uAlphaMask == 1 && albedo.a < 0.5) {
+        discard;
+    }
+    vec4 tex = albedo * VertColor;
     tex.rgb = max(tex.rgb, vec3(0.04));
     vec3 emit = texture(uEmissive, UV).rgb;
     float em = max(max(emit.r, emit.g), emit.b);

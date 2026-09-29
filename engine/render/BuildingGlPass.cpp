@@ -456,17 +456,12 @@ void draw_instanced_glb(TreeGlb* g, unsigned prog) {
         glBindTexture(GL_TEXTURE_2D, pr.tex_emit ? pr.tex_emit : pr.tex);
         glUniform1i(glGetUniformLocation(prog, "uAlphaMask"), pr.alpha_mask);
         glUniform1f(glGetUniformLocation(prog, "uAlphaCut"), pr.cutoff);
-        const int is_tree = (g->label[0] == 'o' || g->label[0] == 'p') &&
-                            (std::strcmp(g->label, "oak") == 0 || std::strcmp(g->label, "pine") == 0 ||
-                             std::strcmp(g->label, "palm") == 0);
-        // TEMP: solid bark/leaf so we can see OBJ geometry without PNG/UV.
-        glUniform1i(glGetUniformLocation(prog, "uUseTexture"), is_tree ? 0 : 1);
-        if (is_tree) {
-            if (pr.alpha_mask) {
-                glUniform3f(glGetUniformLocation(prog, "uSolidColor"), 0.13f, 0.55f, 0.13f);
-            } else {
-                glUniform3f(glGetUniformLocation(prog, "uSolidColor"), 0.55f, 0.27f, 0.07f);
-            }
+        glUniform1i(glGetUniformLocation(prog, "uUseTexture"), 1);
+        if (pr.alpha_mask) {
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        } else {
+            glDisable(GL_BLEND);
         }
         GLenum md = GL_TRIANGLES;
         switch (pr.gl_mode) {
@@ -501,16 +496,42 @@ void draw_instanced_glb(TreeGlb* g, unsigned prog) {
         glDrawElementsInstanced(md, static_cast<GLsizei>(pr.nidx), GL_UNSIGNED_INT, nullptr,
                                 static_cast<GLsizei>(g->instance_count));
     }
+    glDisable(GL_BLEND);
+    glDepthMask(GL_TRUE);
     glBindVertexArray(0);
+}
+
+void draw_instanced_glb_pass(TreeGlb* g, unsigned prog, int want_mask) {
+    if (!prog || !g || g->instance_count == 0) {
+        return;
+    }
+    TreeGlb slice = *g;
+    u32 n = 0;
+    for (u32 p = 0; p < g->nprims; ++p) {
+        if ((g->prims[p].alpha_mask != 0) == (want_mask != 0)) {
+            slice.prims[n++] = g->prims[p];
+        }
+    }
+    slice.nprims = n;
+    if (n) {
+        draw_instanced_glb(&slice, prog);
+    }
 }
 
 void draw_tree_glbs(TreeGlb* trees, unsigned prog) {
     if (!prog) {
         return;
     }
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
     for (u32 k = 0; k < kTreeKindCount; ++k) {
-        draw_instanced_glb(&trees[k], prog);
+        draw_instanced_glb_pass(&trees[k], prog, 0);
     }
+    for (u32 k = 0; k < kTreeKindCount; ++k) {
+        draw_instanced_glb_pass(&trees[k], prog, 1);
+    }
+    glDepthMask(GL_TRUE);
+    glDisable(GL_BLEND);
 }
 
 [[nodiscard]] bool custom_sky_lot(const BuildingComponent* b) {

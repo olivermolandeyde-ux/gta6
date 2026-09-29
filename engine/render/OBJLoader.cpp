@@ -765,8 +765,24 @@ bool load_tree_obj(const char* path, TreeGlb* out) {
                     texs[ntex].h = h;
                     texs[ntex].alpha = ha;
                     std::snprintf(texs[ntex].file, sizeof(texs[ntex].file), "%s", m.map_kd);
-                    std::printf("[obj] Loading texture: %s - size: %ux%u, channels: 4 id=%u alpha=%s\n",
-                                m.map_kd, w, h, texs[ntex].id, ha ? "YES" : "NO");
+                    u8 amin = 255, amax = 0;
+                    u32 cut = 0;
+                    const u32 npx = w * h;
+                    for (u32 pi = 0; pi < npx; ++pi) {
+                        const u8 a = rgba[pi * 4u + 3u];
+                        if (a < amin) {
+                            amin = a;
+                        }
+                        if (a > amax) {
+                            amax = a;
+                        }
+                        if (a < 128) {
+                            ++cut;
+                        }
+                    }
+                    std::printf("[obj] Loading texture: %s - size: %ux%u, channels: 4 id=%u alpha=%s "
+                                "a=[%u..%u] cutout=%u/%u\n",
+                                m.map_kd, w, h, texs[ntex].id, ha ? "YES" : "NO", amin, amax, cut, npx);
                     std::free(rgba);
                     loaded = 1;
                     slot = static_cast<int>(ntex);
@@ -891,7 +907,7 @@ bool load_tree_obj(const char* path, TreeGlb* out) {
     std::printf("[obj] %s AABB min=(%.3f,%.3f,%.3f) max=(%.3f,%.3f,%.3f) Y-up (height=%.3f) prims=%u gpu_verts=%u\n",
                 out->label, out->xmin, out->ymin, out->zmin, out->xmax, out->ymax, out->zmax,
                 out->ymax - out->ymin, out->nprims, out->nverts);
-    std::printf("[obj] FORCE SOLID bark=#8B4513 leaf=#228B22 (uUseTexture=0) — textures still logged above\n");
+    std::printf("[obj] textures on, leaf discard a<0.5, bark opaque\n");
     std::fflush(stdout);
     return out->nprims > 0;
 }
