@@ -35,7 +35,7 @@ float shadow_at() {
 
 void main() {
     vec4 tex = texture(uAlbedo, UV);
-    if (uAlphaMask == 1 && tex.a < max(uAlphaCut, 0.15)) {
+    if (uAlphaMask == 1 && tex.a < 0.5) {
         discard;
     }
     vec3 emit = texture(uEmissive, UV).rgb;

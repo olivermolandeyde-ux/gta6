@@ -440,9 +440,9 @@ bool imageio_decode_rgba(const u8* src, u32 slen, u8** out_rgba, u32* out_w, u32
     }
     CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
     const CGBitmapInfo kInfos[3] = {
+        static_cast<CGBitmapInfo>(kCGImageAlphaLast) | kCGBitmapByteOrder32Little,
         static_cast<CGBitmapInfo>(kCGImageAlphaPremultipliedLast) | kCGBitmapByteOrder32Little,
         static_cast<CGBitmapInfo>(kCGImageAlphaPremultipliedLast),
-        static_cast<CGBitmapInfo>(kCGImageAlphaNoneSkipLast) | kCGBitmapByteOrder32Little,
     };
     CGContextRef ctx = nullptr;
     for (u32 i = 0; i < 3 && !ctx; ++i) {
@@ -706,6 +706,10 @@ u32 j_arr_at(const JDoc* d, const JNode* arr, u32 i) {
     return c;
 }
 
+u32 g_last_tex_w     = 1;
+u32 g_last_tex_h     = 1;
+int g_last_tex_alpha = 0;
+
 unsigned upload_rgba(const u8* rgba, u32 w, u32 h) {
     int has_alpha = 0;
     const u32 n = w * h;
@@ -715,6 +719,9 @@ unsigned upload_rgba(const u8* rgba, u32 w, u32 h) {
             break;
         }
     }
+    g_last_tex_w     = w;
+    g_last_tex_h     = h;
+    g_last_tex_alpha = has_alpha;
     unsigned tex = 0;
     glGenTextures(1, &tex);
     glBindTexture(GL_TEXTURE_2D, tex);
@@ -775,17 +782,21 @@ void mat_mul(float* o, const float* a, const float* b) {
 }
 
 void node_local(const JDoc* d, u32 node, float* m) {
-    mat_ident(m);
     const JNode* mat = j_field(d, node, "matrix");
     if (mat && mat->kind == JK_ARR) {
+        mat_ident(m);
         u32 i = 0;
         for (u32 c = mat->child; c != 0 && i < 16; c = d->nodes[c].next, ++i) {
             m[i] = static_cast<float>(d->nodes[c].num);
         }
         return;
     }
-    float t[16];
-    mat_ident(t);
+    // glTF TRS is T * R * S. Applying S then R on a translation matrix
+    // scattered leaf cards ("exploded" canopy).
+    float T[16], R[16], S[16], RS[16];
+    mat_ident(T);
+    mat_ident(R);
+    mat_ident(S);
     const JNode* tr = j_field(d, node, "translation");
     if (tr && tr->kind == JK_ARR) {
         float x = 0, y = 0, z = 0;
@@ -801,9 +812,9 @@ void node_local(const JDoc* d, u32 node, float* m) {
         if (c) {
             z = static_cast<float>(d->nodes[c].num);
         }
-        t[12] = x;
-        t[13] = y;
-        t[14] = z;
+        T[12] = x;
+        T[13] = y;
+        T[14] = z;
     }
     const JNode* sc = j_field(d, node, "scale");
     if (sc && sc->kind == JK_ARR) {
@@ -820,9 +831,9 @@ void node_local(const JDoc* d, u32 node, float* m) {
         if (c) {
             sz = static_cast<float>(d->nodes[c].num);
         }
-        t[0] *= sx;
-        t[5] *= sy;
-        t[10] *= sz;
+        S[0]  = sx;
+        S[5]  = sy;
+        S[10] = sz;
     }
     const JNode* rot = j_field(d, node, "rotation");
     if (rot && rot->kind == JK_ARR) {
@@ -846,20 +857,18 @@ void node_local(const JDoc* d, u32 node, float* m) {
         const float xx = x * x, yy = y * y, zz = z * z;
         const float xy = x * y, xz = x * z, yz = y * z;
         const float wx = w * x, wy = w * y, wz = w * z;
-        float r[16];
-        mat_ident(r);
-        r[0] = 1.f - 2.f * (yy + zz);
-        r[1] = 2.f * (xy + wz);
-        r[2] = 2.f * (xz - wy);
-        r[4] = 2.f * (xy - wz);
-        r[5] = 1.f - 2.f * (xx + zz);
-        r[6] = 2.f * (yz + wx);
-        r[8] = 2.f * (xz + wy);
-        r[9] = 2.f * (yz - wx);
-        r[10] = 1.f - 2.f * (xx + yy);
-        mat_mul(t, t, r);
+        R[0]  = 1.f - 2.f * (yy + zz);
+        R[1]  = 2.f * (xy + wz);
+        R[2]  = 2.f * (xz - wy);
+        R[4]  = 2.f * (xy - wz);
+        R[5]  = 1.f - 2.f * (xx + zz);
+        R[6]  = 2.f * (yz + wx);
+        R[8]  = 2.f * (xz + wy);
+        R[9]  = 2.f * (yz - wx);
+        R[10] = 1.f - 2.f * (xx + yy);
     }
-    std::memcpy(m, t, 16 * sizeof(float));
+    mat_mul(RS, R, S);
+    mat_mul(m, T, RS);
 }
 
 const u8* accessor_bytes(const JDoc* d, u32 acc_i, const u8* bin, u32 bin_len, u32* count, u32* stride,
@@ -965,8 +974,12 @@ u8 slen_sig(const u8* s, u32 bl, u32 i) {
     return i < bl ? s[i] : 0;
 }
 
-unsigned decode_view_image(const JDoc* d, u32 img, const u8* bin, u32 bin_len, u32* out_w, u32* out_h) {
+unsigned decode_view_image(const JDoc* d, u32 img, const u8* bin, u32 bin_len, u32* out_w, u32* out_h,
+                          int* out_a) {
     *out_w = *out_h = 0;
+    if (out_a) {
+        *out_a = 0;
+    }
     if (!img) {
         return 0;
     }
@@ -1006,12 +1019,17 @@ unsigned decode_view_image(const JDoc* d, u32 img, const u8* bin, u32 bin_len, u
     std::free(rgba);
     *out_w = w;
     *out_h = h;
+    if (out_a) {
+        *out_a = g_last_tex_alpha;
+    }
     return tex;
 }
 
 bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const u8* bin, u32 bin_len,
-               unsigned* tex_cache, u32 ntex) {
+               unsigned* tex_cache, const u32* tex_w, const u32* tex_h, const int* tex_a, u32 ntex) {
     if (out->nprims >= kTreePrimCap) {
+        std::printf("[glb] WARNING: primitive cap %u hit — extra leaf meshes dropped\n", kTreePrimCap);
+        std::fflush(stdout);
         return true;
     }
     const JNode* attrs = j_field(d, prim, "attributes");
@@ -1060,15 +1078,27 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
     }
     for (u32 i = 0; i < pc; ++i) {
         const u8* vp = pb + i * ps;
-        float x = read_f32(vp), y = read_f32(vp + 4), z = read_f32(vp + 8);
+        const u32 pel = (pcomp == 5126 || pcomp == 5125) ? 4u : (pcomp == 5123 || pcomp == 5122) ? 2u : 1u;
+        const int pnorm = (pcomp != 5126);
+        float x = read_acc_f(vp, pcomp, pnorm);
+        float y = read_acc_f(vp + pel, pcomp, pnorm);
+        float z = read_acc_f(vp + pel * 2u, pcomp, pnorm);
         float ox, oy, oz;
         mul_mat_vec3(world, x, y, z, &ox, &oy, &oz);
+        if (oy < out->ymin) {
+            out->ymin = oy;
+        }
+        if (oy > out->ymax) {
+            out->ymax = oy;
+        }
         float nx = 0, ny = 1, nz = 0;
         if (nb && i < nc) {
             const u8* np = nb + i * ns;
-            nx = read_f32(np);
-            ny = read_f32(np + 4);
-            nz = read_f32(np + 8);
+            const u32 nel = (ncomp == 5126 || ncomp == 5125) ? 4u : (ncomp == 5123 || ncomp == 5122) ? 2u : 1u;
+            const int nrm = (ncomp != 5126);
+            nx = read_acc_f(np, ncomp, nrm);
+            ny = read_acc_f(np + nel, ncomp, nrm);
+            nz = read_acc_f(np + nel * 2u, ncomp, nrm);
             mul_mat_dir(world, nx, ny, nz, &nx, &ny, &nz);
             const float ls = nx * nx + ny * ny + nz * nz;
             if (ls > 1e-12f) {
@@ -1147,13 +1177,7 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
             if (str_eq(am, "MASK") || str_eq(am, "BLEND")) {
                 pr.alpha_mask = 1;
             }
-            pr.cutoff = static_cast<float>(j_num(d, mat, "alphaCutoff", 0.4));
-            if (pr.alpha_mask && pr.cutoff > 0.45f) {
-                pr.cutoff = 0.4f;
-            }
-            std::printf("[glb] material %u: %s (cutoff %.2f)\n", mat_i,
-                        pr.alpha_mask ? "alpha-mask" : "opaque", pr.cutoff);
-            std::fflush(stdout);
+            pr.cutoff = 0.5f;
             const JNode* pbr = j_field(d, mat, "pbrMetallicRoughness");
             if (pbr) {
                 u32 pbr_id = static_cast<u32>(pbr - d->nodes);
@@ -1161,8 +1185,16 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
                 if (bct) {
                     const u32 tex_i = j_idx(d, static_cast<u32>(bct - d->nodes), "index");
                     if (tex_i < ntex && tex_cache[tex_i]) {
-                        pr.tex = tex_cache[tex_i];
-                        std::printf("[glb] Loaded material %u with texture %u\n", mat_i, tex_i);
+                        pr.tex       = tex_cache[tex_i];
+                        pr.tex_w     = tex_w[tex_i];
+                        pr.tex_h     = tex_h[tex_i];
+                        pr.has_alpha = tex_a[tex_i];
+                        if (pr.has_alpha) {
+                            pr.alpha_mask = 1;
+                            pr.cutoff     = 0.5f;
+                        }
+                        std::printf("[glb] Loaded material %u with texture %u (%ux%u alpha=%s)\n", mat_i,
+                                    tex_i, pr.tex_w, pr.tex_h, pr.has_alpha ? "yes" : "no");
                         std::fflush(stdout);
                     } else {
                         std::printf("[glb] WARNING: Failed to load texture for material %u (tex index %u ntex=%u)\n",
@@ -1217,6 +1249,9 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
     if (!pr.tex_emit) {
         pr.tex_emit = black_tex();
     }
+    std::printf("[glb] material %u: %s cutoff 0.5 texture %ux%u\n", mat_i,
+                pr.alpha_mask ? "alpha-mask" : "opaque", pr.tex_w, pr.tex_h);
+    std::fflush(stdout);
     out->nverts += pc;
     out->nprims++;
     std::free(verts);
@@ -1225,7 +1260,7 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
 }
 
 void walk_node(TreeGlb* out, const JDoc* d, u32 node, const float* parent, const u8* bin, u32 bin_len,
-               unsigned* tex_cache, u32 ntex) {
+               unsigned* tex_cache, const u32* tex_w, const u32* tex_h, const int* tex_a, u32 ntex) {
     float local[16], world[16];
     node_local(d, node, local);
     mat_mul(world, parent, local);
@@ -1236,7 +1271,7 @@ void walk_node(TreeGlb* out, const JDoc* d, u32 node, const float* parent, const
         const JNode* prims = j_field(d, mesh, "primitives");
         if (prims && prims->kind == JK_ARR) {
             for (u32 c = prims->child; c != 0; c = d->nodes[c].next) {
-                emit_prim(out, d, c, world, bin, bin_len, tex_cache, ntex);
+                emit_prim(out, d, c, world, bin, bin_len, tex_cache, tex_w, tex_h, tex_a, ntex);
             }
         }
     }
@@ -1245,7 +1280,7 @@ void walk_node(TreeGlb* out, const JDoc* d, u32 node, const float* parent, const
         for (u32 c = ch->child; c != 0; c = d->nodes[c].next) {
             if (d->nodes[c].kind == JK_NUM) {
                 walk_node(out, d, j_arr_at(d, j_field(d, d->root, "nodes"), static_cast<u32>(d->nodes[c].num)),
-                          world, bin, bin_len, tex_cache, ntex);
+                          world, bin, bin_len, tex_cache, tex_w, tex_h, tex_a, ntex);
             }
         }
     }
@@ -1255,6 +1290,8 @@ void walk_node(TreeGlb* out, const JDoc* d, u32 node, const float* parent, const
 
 bool load_tree_glb(const char* path, TreeGlb* out) {
     std::memset(out, 0, sizeof(*out));
+    out->ymin = 1.0e9f;
+    out->ymax = -1.0e9f;
     FILE* f = std::fopen(path, "rb");
     if (!f) {
         std::printf("[gl] tree glb missing %s\n", path);
@@ -1341,7 +1378,13 @@ bool load_tree_glb(const char* path, TreeGlb* out) {
     doc.root = root;
 
     unsigned tex_cache[64];
+    u32 tex_w[64];
+    u32 tex_h[64];
+    int tex_a[64];
     std::memset(tex_cache, 0, sizeof(tex_cache));
+    std::memset(tex_w, 0, sizeof(tex_w));
+    std::memset(tex_h, 0, sizeof(tex_h));
+    std::memset(tex_a, 0, sizeof(tex_a));
     u32 ntex = 0;
     const JNode* textures = j_field(&doc, root, "textures");
     const JNode* images = j_field(&doc, root, "images");
@@ -1352,19 +1395,29 @@ bool load_tree_glb(const char* path, TreeGlb* out) {
             u32 w = 0, h = 0;
             if (images) {
                 u32 img = j_arr_at(&doc, images, src_i);
-                tex = decode_view_image(&doc, img, bin, bin_len, &w, &h);
+                int ha = 0;
+                tex = decode_view_image(&doc, img, bin, bin_len, &w, &h, &ha);
+                tex_a[ntex] = ha;
             }
             if (!tex) {
                 std::printf("[glb] WARNING: Failed to load texture %u (image source %u)\n", ntex, src_i);
                 std::fflush(stdout);
             }
-            tex_cache[ntex++] = tex;
+            tex_w[ntex]     = w;
+            tex_h[ntex]     = h;
+            tex_cache[ntex] = tex;
+            ++ntex;
         }
     } else if (images && images->kind == JK_ARR) {
         for (u32 c = images->child; c != 0 && ntex < 64; c = doc.nodes[c].next) {
             u32 w = 0, h = 0;
-            unsigned tex = decode_view_image(&doc, c, bin, bin_len, &w, &h);
-            tex_cache[ntex++] = tex;
+            int ha          = 0;
+            unsigned tex    = decode_view_image(&doc, c, bin, bin_len, &w, &h, &ha);
+            tex_w[ntex]     = w;
+            tex_h[ntex]     = h;
+            tex_a[ntex]     = ha;
+            tex_cache[ntex] = tex;
+            ++ntex;
         }
     }
     std::printf("[glb] textures decoded=%u json_nodes=%u bin=%u\n", ntex, doc.n, bin_len);
@@ -1382,7 +1435,7 @@ bool load_tree_glb(const char* path, TreeGlb* out) {
             if (doc.nodes[c].kind == JK_NUM) {
                 u32 ni = j_arr_at(&doc, nodesj, static_cast<u32>(doc.nodes[c].num));
                 if (ni) {
-                    walk_node(out, &doc, ni, ident, bin, bin_len, tex_cache, ntex);
+                    walk_node(out, &doc, ni, ident, bin, bin_len, tex_cache, tex_w, tex_h, tex_a, ntex);
                 }
             }
         }
@@ -1407,8 +1460,12 @@ bool load_tree_glb(const char* path, TreeGlb* out) {
     std::free(nodes);
     std::free(json_z);
     std::free(file);
-    std::printf("[gl] tree glb %s prims=%u verts=%u bytes=%ld\n", path, out->nprims, out->nverts,
-                static_cast<long>(sz));
+    if (out->ymax < out->ymin) {
+        out->ymin = 0.f;
+        out->ymax = 1.f;
+    }
+    std::printf("[gl] tree glb %s prims=%u verts=%u bytes=%ld height=%.2f (y=%.2f..%.2f)\n", path, out->nprims,
+                out->nverts, static_cast<long>(sz), out->ymax - out->ymin, out->ymin, out->ymax);
     std::fflush(stdout);
     return out->nprims > 0;
 }

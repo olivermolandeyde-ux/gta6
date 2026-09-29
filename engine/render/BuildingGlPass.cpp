@@ -354,20 +354,88 @@ float night_glow_amt(float tod) {
     return tod < 12.f ? (dusk > dawn ? dusk : dawn) : dusk;
 }
 
-float lamp_yaw_toward_road(float x, float z) {
-    const float nx = std::round(x / kCityBlockPitch) * kCityBlockPitch;
-    const float nz = std::round(z / kCityBlockPitch) * kCityBlockPitch;
-    const float dx = nx - x;
-    const float dz = nz - z;
-    float tx = 0.f;
-    float tz = 0.f;
-    if (std::fabs(dz) > std::fabs(dx)) {
-        tz = (dz > 0.f) ? 1.f : -1.f;
-    } else {
-        tx = (dx > 0.f) ? 1.f : -1.f;
+float glb_fit_scale(const TreeGlb* t, float target_h) {
+    if (!t) {
+        return 1.f;
     }
-    const float jitter = (std::fmod(x * 0.173f + z * 0.091f, 1.f) - 0.5f) * 0.17453292f;
-    return std::atan2(-tx, tz) + jitter;
+    const float h = t->ymax - t->ymin;
+    if (h < 0.25f) {
+        return 1.f;
+    }
+    float s = target_h / h;
+    if (s < 0.03f) {
+        s = 0.03f;
+    }
+    if (s > 25.f) {
+        s = 25.f;
+    }
+    return s;
+}
+
+bool xz_too_close(float x, float z, const float* xz, u32 n, float min_d) {
+    const float m2 = min_d * min_d;
+    for (u32 i = 0; i < n; ++i) {
+        const float dx = x - xz[i * 2u];
+        const float dz = z - xz[i * 2u + 1u];
+        if (dx * dx + dz * dz < m2) {
+            return true;
+        }
+    }
+    return false;
+}
+
+struct LampSnap {
+    float x, z, yaw;
+    int   left;
+    int   ok;
+};
+
+LampSnap snap_lamp_to_sidewalk(float x, float z) {
+    LampSnap r{};
+    const float pitch  = kCityBlockPitch;
+    const float nx     = std::round(x / pitch) * pitch;
+    const float nz     = std::round(z / pitch) * pitch;
+    const float dx     = x - nx;
+    const float dz     = z - nz;
+    const float road_h = kCityStreetWidth * 0.5f;
+    const float curb   = road_h + 1.5f;
+    const float cross  = road_h + 8.f;
+    const bool  ew     = std::fabs(dz) <= std::fabs(dx);
+    if (ew) {
+        if (std::fabs(dx) < cross) {
+            return r;
+        }
+        const float side = (dz >= 0.f) ? 1.f : -1.f;
+        r.x    = x;
+        r.z    = nz + side * curb;
+        r.left = side > 0.f ? 1 : 0;
+        r.yaw  = side > 0.f ? 3.14159265f : 0.f;
+        r.ok   = 1;
+    } else {
+        if (std::fabs(dz) < cross) {
+            return r;
+        }
+        const float side = (dx >= 0.f) ? 1.f : -1.f;
+        r.x    = nx + side * curb;
+        r.z    = z;
+        r.left = side < 0.f ? 1 : 0;
+        r.yaw  = side > 0.f ? 1.5707963f : -1.5707963f;
+        r.ok   = 1;
+    }
+    r.yaw += (std::fmod(x * 0.173f + z * 0.091f, 1.f) - 0.5f) * 0.17453292f;
+    return r;
+}
+
+void log_glb_textures(const char* name, const TreeGlb* t) {
+    if (!t) {
+        return;
+    }
+    for (u32 i = 0; i < t->nprims; ++i) {
+        const TreePrim& p = t->prims[i];
+        std::printf("[glb] Tree '%s' texture: %ux%u pixels, material: %s cutoff 0.5\n", name, p.tex_w,
+                    p.tex_h, p.alpha_mask ? "alpha-mask" : "opaque");
+    }
+    std::fflush(stdout);
 }
 
 void tree_yaw_mat(float* m, float x, float y, float z, float yaw, float sc) {
@@ -570,6 +638,9 @@ bool BuildingGlPass::init() {
     load_city_tree("palm_tree_realistic.glb", &tree_glb[2]);
     std::printf("[gl] Loaded 3 tree models: oak (%u verts), pine (%u verts), palm (%u verts)\n",
                 tree_glb[0].nverts, tree_glb[1].nverts, tree_glb[2].nverts);
+    log_glb_textures("oak", &tree_glb[0]);
+    log_glb_textures("pine", &tree_glb[1]);
+    log_glb_textures("palm", &tree_glb[2]);
     if (load_city_tree("skyscraper-2.glb", &sky_glb)) {
         std::printf("[gl] Loaded custom skyscraper model: skyscraper-2.glb (%u verts)\n", sky_glb.nverts);
     } else {
@@ -693,8 +764,92 @@ void BuildingGlPass::buildMesh(World& world) {
                 n);
     std::fflush(stdout);
 
+    static float sky_mats[kTreeInstanceCap * 16];
+    u32 sky_n = 0;
+    if (sky_glb.nprims > 0) {
+        for (Entity e : world.query<BuildingComponent>()) {
+            BuildingComponent* b = world.get<BuildingComponent>(e);
+            if (!custom_sky_lot(b) || sky_n >= 16) {
+                continue;
+            }
+            const float yaw = static_cast<float>(b->building_id % 4u) * 1.5707963f;
+            const float sc  = 0.95f + static_cast<float>(b->building_id % 6u) * (0.10f / 5.f);
+            tree_yaw_mat(&sky_mats[sky_n * 16], b->position.x, kCityPlateauY + 0.05f, b->position.z, yaw, sc);
+            ++sky_n;
+        }
+        tree_glb_set_instances(&sky_glb, sky_mats, sky_n);
+    }
+    std::printf("[city] Placing %u custom skyscrapers in downtown\n", sky_n);
+    std::fflush(stdout);
+
+    static float lamp_mats[kLampKindCount][kTreeInstanceCap * 16];
+    static float glow_mats[kTreeInstanceCap * 16];
+    static float lamp_xz[kLampSpawnCap * 2];
+    u32 ln[kLampKindCount] = {0, 0};
+    u32 gn                 = 0;
+    u32 n_lamp_xz          = 0;
+    u32 lamp_log_n         = 0;
+    const float lamp_fit[kLampKindCount] = {glb_fit_scale(&lamp_glb[0], 7.0f),
+                                            glb_fit_scale(&lamp_glb[1], 6.5f)};
+    for (Entity e : world.query<StreetLightComponent, TransformComponent>()) {
+        TransformComponent* xf = world.get<TransformComponent>(e);
+        if (!xf) {
+            continue;
+        }
+        LampSnap sn = snap_lamp_to_sidewalk(xf->position[0], xf->position[2]);
+        if (!sn.ok) {
+            continue;
+        }
+        const u32 kind = (static_cast<u32>(sn.x) * 13u + static_cast<u32>(sn.z) * 7u) & 1u;
+        if ((ln[0] + ln[1]) >= kLampSpawnCap) {
+            continue;
+        }
+        u32 use = kind;
+        if (lamp_glb[use].nprims == 0) {
+            use = kind ^ 1u;
+        }
+        if (lamp_glb[use].nprims == 0 || ln[use] >= kTreeInstanceCap) {
+            continue;
+        }
+        const float sc = lamp_fit[use];
+        const float y  = kCityPlateauY + 0.05f - lamp_glb[use].ymin * sc;
+        tree_yaw_mat(&lamp_mats[use][ln[use] * 16], sn.x, y, sn.z, sn.yaw, sc);
+        ++ln[use];
+        if (n_lamp_xz < kLampSpawnCap) {
+            lamp_xz[n_lamp_xz * 2u]     = sn.x;
+            lamp_xz[n_lamp_xz * 2u + 1] = sn.z;
+            ++n_lamp_xz;
+        }
+        if (gn < kTreeInstanceCap) {
+            tree_yaw_mat(&glow_mats[gn * 16], sn.x, kCityPlateauY + 0.28f, sn.z, 0.f, 5.2f);
+            ++gn;
+        }
+        if (lamp_log_n < 12u) {
+            std::printf("[city] Placed lamp at (%.1f, %.1f, %.1f), rotation: %.0f degrees, side: %s\n",
+                        sn.x, y, sn.z, sn.yaw * 57.29578f, sn.left ? "left" : "right");
+            ++lamp_log_n;
+        }
+    }
+    for (u32 k = 0; k < kLampKindCount; ++k) {
+        tree_glb_set_instances(&lamp_glb[k], lamp_mats[k], ln[k]);
+    }
+    glow_count = gn;
+    if (glow_ivbo) {
+        glBindBuffer(GL_ARRAY_BUFFER, glow_ivbo);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(gn * 16 * sizeof(float)), glow_mats);
+    }
+    std::printf("[city] Placing %u street lamps (klassisk: %u, moderne: %u)\n", ln[0] + ln[1], ln[0], ln[1]);
+    std::fflush(stdout);
+
     static float tree_mats[kTreeKindCount][kTreeInstanceCap * 16];
+    static float tree_xz[kTreeSpawnCap * 2];
     u32 tn[kTreeKindCount] = {0, 0, 0};
+    u32 n_tree_xz          = 0;
+    u32 skip_lamp          = 0;
+    u32 skip_tree          = 0;
+    const float tree_fit[kTreeKindCount] = {glb_fit_scale(&tree_glb[0], 8.0f),
+                                            glb_fit_scale(&tree_glb[1], 11.0f),
+                                            glb_fit_scale(&tree_glb[2], 9.0f)};
     auto skip_cross = [](float t) {
         const float g = t / kCityBlockPitch;
         const float f = g - std::floor(g);
@@ -705,17 +860,35 @@ void BuildingGlPass::buildMesh(World& world) {
         if (total >= kTreeSpawnCap) {
             return;
         }
+        if (xz_too_close(x, z, lamp_xz, n_lamp_xz, 2.0f)) {
+            if (skip_lamp < 8u) {
+                std::printf("[city] Skipped tree placement at (%.1f, %.1f, %.1f) - collision with lamp\n", x,
+                            kCityPlateauY + 0.05f, z);
+            }
+            ++skip_lamp;
+            return;
+        }
+        if (xz_too_close(x, z, tree_xz, n_tree_xz, 3.0f)) {
+            ++skip_tree;
+            return;
+        }
         const u32 kind = (static_cast<u32>(x) / 24u + static_cast<u32>(z) / 24u) % 3u;
         if (tn[kind] >= kTreeInstanceCap) {
             return;
         }
         const float yaw = std::fmod(x * 0.173f + z * 0.091f, 6.2831853f);
-        const float sc  = 0.85f + std::fmod(x * 0.031f + z * 0.017f, 0.30f);
-        tree_yaw_mat(&tree_mats[kind][tn[kind] * 16], x, kCityPlateauY + 0.05f, z, yaw, sc);
+        const float sc0 = 0.85f + std::fmod(x * 0.031f + z * 0.017f, 0.30f);
+        const float sc  = sc0 * tree_fit[kind];
+        const float y   = kCityPlateauY + 0.05f - tree_glb[kind].ymin * sc;
+        tree_yaw_mat(&tree_mats[kind][tn[kind] * 16], x, y, z, yaw, sc);
         ++tn[kind];
+        tree_xz[n_tree_xz * 2u]     = x;
+        tree_xz[n_tree_xz * 2u + 1] = z;
+        ++n_tree_xz;
     };
-    const float sw = kCityStreetWidth * 0.5f + 1.6f;
+    const float sw = kCityStreetWidth * 0.5f + 3.2f;
     // Every 4th street, every 4th sidewalk tile (~96 m) — ~200–280 trees total.
+    // 3.2 m past the curb so trunks sit in the lot, not on the lamp line.
     for (u32 j = 0; j <= kCityBlocks; j += 4) {
         const float z = static_cast<float>(j) * kCityBlockPitch;
         for (float x = 48.f; x < kCityExtentM - 48.f; x += 96.f) {
@@ -742,67 +915,8 @@ void BuildingGlPass::buildMesh(World& world) {
         tree_glb_set_instances(&tree_glb[k], tree_mats[k], tn[k]);
         total_trees += tn[k];
     }
-    std::printf("[city] Spawning %u trees with custom models\n", total_trees);
-    std::fflush(stdout);
-
-    static float sky_mats[kTreeInstanceCap * 16];
-    u32 sky_n = 0;
-    if (sky_glb.nprims > 0) {
-        for (Entity e : world.query<BuildingComponent>()) {
-            BuildingComponent* b = world.get<BuildingComponent>(e);
-            if (!custom_sky_lot(b) || sky_n >= 16) {
-                continue;
-            }
-            const float yaw = static_cast<float>(b->building_id % 4u) * 1.5707963f;
-            const float sc  = 0.95f + static_cast<float>(b->building_id % 6u) * (0.10f / 5.f);
-            tree_yaw_mat(&sky_mats[sky_n * 16], b->position.x, kCityPlateauY + 0.05f, b->position.z, yaw, sc);
-            ++sky_n;
-        }
-        tree_glb_set_instances(&sky_glb, sky_mats, sky_n);
-    }
-    std::printf("[city] Placing %u custom skyscrapers in downtown\n", sky_n);
-    std::fflush(stdout);
-
-    static float lamp_mats[kLampKindCount][kTreeInstanceCap * 16];
-    static float glow_mats[kTreeInstanceCap * 16];
-    u32 ln[kLampKindCount] = {0, 0};
-    u32 gn                 = 0;
-    for (Entity e : world.query<StreetLightComponent, TransformComponent>()) {
-        TransformComponent* xf = world.get<TransformComponent>(e);
-        if (!xf) {
-            continue;
-        }
-        const float x = xf->position[0];
-        const float y = xf->position[1];
-        const float z = xf->position[2];
-        const u32 kind = (static_cast<u32>(x) * 13u + static_cast<u32>(z) * 7u) & 1u;
-        if ((ln[0] + ln[1]) >= kLampSpawnCap) {
-            continue;
-        }
-        u32 use = kind;
-        if (lamp_glb[use].nprims == 0) {
-            use = kind ^ 1u;
-        }
-        if (lamp_glb[use].nprims == 0 || ln[use] >= kTreeInstanceCap) {
-            continue;
-        }
-        const float yaw = lamp_yaw_toward_road(x, z);
-        tree_yaw_mat(&lamp_mats[use][ln[use] * 16], x, y, z, yaw, 1.f);
-        ++ln[use];
-        if (gn < kTreeInstanceCap) {
-            tree_yaw_mat(&glow_mats[gn * 16], x, kCityPlateauY + 0.28f, z, 0.f, 5.2f);
-            ++gn;
-        }
-    }
-    for (u32 k = 0; k < kLampKindCount; ++k) {
-        tree_glb_set_instances(&lamp_glb[k], lamp_mats[k], ln[k]);
-    }
-    glow_count = gn;
-    if (glow_ivbo) {
-        glBindBuffer(GL_ARRAY_BUFFER, glow_ivbo);
-        glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(gn * 16 * sizeof(float)), glow_mats);
-    }
-    std::printf("[city] Placing %u street lamps (klassisk: %u, moderne: %u)\n", ln[0] + ln[1], ln[0], ln[1]);
+    std::printf("[city] Spawning %u trees with custom models (skipped lamp=%u tree=%u)\n", total_trees,
+                skip_lamp, skip_tree);
     std::fflush(stdout);
 }
 

@@ -4,7 +4,7 @@
 
 namespace engine {
 
-inline constexpr u32 kTreePrimCap     = 32;
+inline constexpr u32 kTreePrimCap     = 128;
 inline constexpr u32 kTreeKindCount   = 3;
 inline constexpr u32 kTreeInstanceCap = 300;
 inline constexpr u32 kTreeSpawnCap    = 280;
@@ -21,6 +21,9 @@ struct TreePrim {
     unsigned nidx;
     int      alpha_mask;
     float    cutoff;
+    u32      tex_w;
+    u32      tex_h;
+    int      has_alpha;
 };
 
 struct TreeGlb {
@@ -29,6 +32,8 @@ struct TreeGlb {
     u32      nverts;
     unsigned instance_vbo;
     u32      instance_count;
+    float    ymin;
+    float    ymax;
 };
 
 [[nodiscard]] bool load_tree_glb(const char* path, TreeGlb* out);
