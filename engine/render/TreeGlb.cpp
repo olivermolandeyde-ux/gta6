@@ -460,6 +460,20 @@ bool imageio_decode_rgba(const u8* src, u32 slen, u8** out_rgba, u32* out_w, u32
     CGContextDrawImage(ctx, CGRectMake(0, 0, w, h), img);
     CGContextRelease(ctx);
     CGImageRelease(img);
+    {
+        const u32 stride = w * 4;
+        u8* row = static_cast<u8*>(std::malloc(stride));
+        if (row) {
+            for (u32 y = 0; y < h / 2; ++y) {
+                u8* a = rgba + y * stride;
+                u8* b = rgba + (h - 1 - y) * stride;
+                std::memcpy(row, a, stride);
+                std::memcpy(a, b, stride);
+                std::memcpy(b, row, stride);
+            }
+            std::free(row);
+        }
+    }
     *out_rgba = rgba;
     *out_w = w;
     *out_h = h;
@@ -693,16 +707,36 @@ u32 j_arr_at(const JDoc* d, const JNode* arr, u32 i) {
 }
 
 unsigned upload_rgba(const u8* rgba, u32 w, u32 h) {
+    int has_alpha = 0;
+    const u32 n = w * h;
+    for (u32 i = 0; i < n; ++i) {
+        if (rgba[i * 4 + 3] < 250) {
+            has_alpha = 1;
+            break;
+        }
+    }
     unsigned tex = 0;
     glGenTextures(1, &tex);
     glBindTexture(GL_TEXTURE_2D, tex);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    if (has_alpha) {
+        // Mipmaps average leaf alpha below the cutoff and the canopy vanishes.
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    } else {
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    }
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, static_cast<int>(w), static_cast<int>(h), 0, GL_RGBA,
                  GL_UNSIGNED_BYTE, rgba);
-    glGenerateMipmap(GL_TEXTURE_2D);
+    if (!has_alpha) {
+        glGenerateMipmap(GL_TEXTURE_2D);
+    }
+    std::printf("[glb] Tree texture size: %ux%u, has alpha channel: %s (id=%u)\n", w, h,
+                has_alpha ? "yes" : "no", tex);
+    std::fflush(stdout);
     return tex;
 }
 
@@ -1048,7 +1082,7 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
         if (ub && i < uc) {
             const u8* up = ub + i * us;
             u = read_acc_f(up, ucomp, uv_norm);
-            v = 1.f - read_acc_f(up + uv_es, ucomp, uv_norm);
+            v = read_acc_f(up + uv_es, ucomp, uv_norm);
         }
         verts[i] = TreeVert{ox, oy, oz, nx, ny, nz, u, v};
     }
@@ -1113,7 +1147,13 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
             if (str_eq(am, "MASK") || str_eq(am, "BLEND")) {
                 pr.alpha_mask = 1;
             }
-            pr.cutoff = static_cast<float>(j_num(d, mat, "alphaCutoff", 0.5));
+            pr.cutoff = static_cast<float>(j_num(d, mat, "alphaCutoff", 0.4));
+            if (pr.alpha_mask && pr.cutoff > 0.45f) {
+                pr.cutoff = 0.4f;
+            }
+            std::printf("[glb] material %u: %s (cutoff %.2f)\n", mat_i,
+                        pr.alpha_mask ? "alpha-mask" : "opaque", pr.cutoff);
+            std::fflush(stdout);
             const JNode* pbr = j_field(d, mat, "pbrMetallicRoughness");
             if (pbr) {
                 u32 pbr_id = static_cast<u32>(pbr - d->nodes);
