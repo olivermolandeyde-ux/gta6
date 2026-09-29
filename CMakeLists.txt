@@ -187,6 +187,7 @@ add_executable(leonida_city
     engine/render/BuildingGlPass.cpp
     engine/render/CityProcTex.cpp
     engine/render/TreeGlb.cpp
+    engine/render/OBJLoader.cpp
     engine/render/InputSystem.cpp
 )
 target_link_libraries(leonida_city PRIVATE leonida_core OpenGL::GL)

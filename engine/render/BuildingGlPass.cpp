@@ -4,6 +4,7 @@
 #include "objects/StreetLight.h"
 #include "render/CityProcTex.h"
 #include "render/CitySolidMesh.h"
+#include "render/OBJLoader.h"
 #include "render/RenderPipeline.h"
 #include "world/CityGenerator.h"
 
@@ -647,14 +648,12 @@ bool BuildingGlPass::init() {
     constexpr const char* kTshFbFs = "#version 330 core\nvoid main(){}\n";
     tree_shadow_prog =
         make_program("shaders/tree_shadow.vert", "shaders/tree_shadow.frag", kTshFbVs, kTshFbFs, "tree_shadow");
-    load_city_tree("oak_tree_realistic.glb", &tree_glb[0]);
-    load_city_tree("pine_tree_realistic.glb", &tree_glb[1]);
-    load_city_tree("palm_tree_realistic.glb", &tree_glb[2]);
-    std::printf("[gl] Loaded 3 tree models: oak (%u verts), pine (%u verts), palm (%u verts)\n",
+    find_and_load_tree_obj("oak_tree.obj", &tree_glb[0]);
+    find_and_load_tree_obj("pine_tree.obj", &tree_glb[1]);
+    find_and_load_tree_obj("palm_tree.obj", &tree_glb[2]);
+    std::printf("[gl] Loaded 3 tree OBJ models: oak (%u verts), pine (%u verts), palm (%u verts)\n",
                 tree_glb[0].nverts, tree_glb[1].nverts, tree_glb[2].nverts);
-    log_glb_textures("oak", &tree_glb[0]);
-    log_glb_textures("pine", &tree_glb[1]);
-    log_glb_textures("palm", &tree_glb[2]);
+    std::fflush(stdout);
     if (load_city_tree("skyscraper-2.glb", &sky_glb)) {
         std::printf("[gl] Loaded custom skyscraper model: skyscraper-2.glb (%u verts)\n", sky_glb.nverts);
     } else {
@@ -813,7 +812,7 @@ void BuildingGlPass::buildMesh(World& world) {
     const float road_h     = kCityStreetWidth * 0.5f;
     const float walk_w     = 3.0f;
     const float lamp_off   = road_h + walk_w * 0.5f; // 11.5 m = sidewalk center
-    const float tree_off   = road_h + walk_w * 0.5f; // 11.5 m = sidewalk center, same as lamps
+    const float tree_off   = 12.25f;                 // sidewalk, 12.25 m from road center
     const float cross_clear = 16.0f;
     auto along_ok = [&](float t) {
         const float g = t / kCityBlockPitch;
@@ -943,9 +942,10 @@ void BuildingGlPass::buildMesh(World& world) {
             return;
         }
         const float yaw = std::fmod(x * 0.173f + z * 0.091f, 6.2831853f);
-        const float sc  = 1.f;
+        const u32 sh = static_cast<u32>(x) * 1664525u + static_cast<u32>(z) * 1013904223u;
+        const float sc = 0.85f + static_cast<float>(sh % 1000u) * (0.30f / 999.f);
         const float y0  = tree_glb[kind].ymin;
-        const float y   = kCityPlateauY + 0.05f - y0;
+        const float y   = kCityPlateauY + 0.05f - y0 * sc;
         tree_yaw_mat(&tree_mats[kind][tn[kind] * 16], x, y, z, yaw, sc, 0);
         ++tn[kind];
         tree_xz[n_tree_xz * 2u]     = x;
@@ -981,8 +981,8 @@ void BuildingGlPass::buildMesh(World& world) {
         tree_glb_set_instances(&tree_glb[k], tree_mats[k], tn[k]);
         total_trees += tn[k];
     }
-    std::printf("[city] Spawning %u trees with custom models (skipped lamp=%u tree=%u)\n", total_trees,
-                skip_lamp, skip_tree);
+    std::printf("[city] Placed %u trees (oak: %u, pine: %u, palm: %u) skipped lamp=%u tree=%u\n", total_trees,
+                tn[0], tn[1], tn[2], skip_lamp, skip_tree);
     std::fflush(stdout);
 }
 
