@@ -1556,15 +1556,6 @@ bool load_tree_glb(const char* path, TreeGlb* out) {
                 w = h = 1;
                 ha    = 0;
             }
-            if (is_tree_label(out->label) && g_last_mean_r > g_last_mean_g + 8.f &&
-                (ha || (g_last_mean_r > 150.f && g_last_mean_b > 70.f))) {
-                std::printf("[glb] %s texture %u looks pink (mean RGB %.0f,%.0f,%.0f) — leaf fallback #228B22\n",
-                            out->label, ntex, g_last_mean_r, g_last_mean_g, g_last_mean_b);
-                std::fflush(stdout);
-                tex = leaf_green_tex();
-                w = h = 1;
-                ha    = 1;
-            }
             tex_w[ntex]     = w;
             tex_h[ntex]     = h;
             tex_a[ntex]     = ha;
@@ -1580,11 +1571,6 @@ bool load_tree_glb(const char* path, TreeGlb* out) {
                 tex = fail_red_tex();
                 w = h = 1;
                 ha    = 0;
-            }
-            if (is_tree_label(out->label) && ha && g_last_mean_r > g_last_mean_g + 4.f) {
-                tex = leaf_green_tex();
-                w = h = 1;
-                ha    = 1;
             }
             tex_w[ntex]     = w;
             tex_h[ntex]     = h;

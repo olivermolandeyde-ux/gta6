@@ -783,7 +783,7 @@ void BuildingGlPass::buildMesh(World& world) {
     const float road_h     = kCityStreetWidth * 0.5f;
     const float walk_w     = 3.0f;
     const float lamp_off   = road_h + walk_w * 0.5f; // 11.5 m = sidewalk center
-    const float tree_off   = road_h + walk_w * 0.75f; // 12.25 m, still on the 10–13 m strip
+    const float tree_off   = road_h + walk_w * 0.5f; // 11.5 m = sidewalk center, same as lamps
     const float cross_clear = 16.0f;
     auto along_ok = [&](float t) {
         const float g = t / kCityBlockPitch;
@@ -880,9 +880,6 @@ void BuildingGlPass::buildMesh(World& world) {
     u32 n_tree_xz          = 0;
     u32 skip_lamp          = 0;
     u32 skip_tree          = 0;
-    const float tree_fit[kTreeKindCount] = {glb_fit_scale(&tree_glb[0], 8.0f),
-                                            glb_fit_scale(&tree_glb[1], 11.0f),
-                                            glb_fit_scale(&tree_glb[2], 9.0f)};
     u32 tree_log_n = 0;
     auto push_tree = [&](float x, float z) {
         const u32 total = tn[0] + tn[1] + tn[2];
@@ -916,20 +913,10 @@ void BuildingGlPass::buildMesh(World& world) {
             return;
         }
         const float yaw = std::fmod(x * 0.173f + z * 0.091f, 6.2831853f);
-        const float sc0 = 0.85f + std::fmod(x * 0.031f + z * 0.017f, 0.30f);
-        float sc        = sc0 * tree_fit[kind];
-        const float raw_h =
-            tree_glb[kind].z_up ? (tree_glb[kind].zmax - tree_glb[kind].zmin)
-                                : (tree_glb[kind].ymax - tree_glb[kind].ymin);
-        const float h = raw_h * sc;
-        if (h > 12.f && raw_h > 0.01f) {
-            sc *= 12.f / h;
-        } else if (h < 4.f && h > 0.01f) {
-            sc *= 4.f / h;
-        }
-        const float y0 = tree_glb[kind].z_up ? tree_glb[kind].zmin : tree_glb[kind].ymin;
-        const float y  = kCityPlateauY + 0.05f - y0 * sc;
-        tree_yaw_mat(&tree_mats[kind][tn[kind] * 16], x, y, z, yaw, sc, tree_glb[kind].z_up);
+        const float sc  = 1.f;
+        const float y0  = tree_glb[kind].ymin;
+        const float y   = kCityPlateauY + 0.05f - y0;
+        tree_yaw_mat(&tree_mats[kind][tn[kind] * 16], x, y, z, yaw, sc, 0);
         ++tn[kind];
         tree_xz[n_tree_xz * 2u]     = x;
         tree_xz[n_tree_xz * 2u + 1] = z;
