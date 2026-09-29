@@ -4,7 +4,7 @@
 #include "objects/StreetLight.h"
 #include "render/CityProcTex.h"
 #include "render/CitySolidMesh.h"
-#include "render/OBJLoader.h"
+#include "render/TreeGenerator.h"
 #include "render/RenderPipeline.h"
 #include "world/CityGenerator.h"
 
@@ -681,12 +681,11 @@ bool BuildingGlPass::init() {
     constexpr const char* kTshFbFs = "#version 330 core\nvoid main(){}\n";
     tree_shadow_prog =
         make_program("shaders/tree_shadow.vert", "shaders/tree_shadow.frag", kTshFbVs, kTshFbFs, "tree_shadow");
-    log_tree_obj_files();
-    find_and_load_tree_obj("oak_tree.obj", &tree_glb[0]);
-    find_and_load_tree_obj("pine_tree.obj", &tree_glb[1]);
-    find_and_load_tree_obj("palm_tree.obj", &tree_glb[2]);
-    std::printf("[gl] Loaded 3 tree OBJ models: oak (%u verts), pine (%u verts), palm (%u verts)\n",
-                tree_glb[0].nverts, tree_glb[1].nverts, tree_glb[2].nverts);
+    TreeGenerator::oak(&tree_glb[0]);
+    TreeGenerator::pine(&tree_glb[1]);
+    TreeGenerator::palm(&tree_glb[2]);
+    std::printf("[gl] procedural trees oak=%u verts pine=%u palm=%u\n", tree_glb[0].nverts, tree_glb[1].nverts,
+                tree_glb[2].nverts);
     std::fflush(stdout);
     if (load_city_tree("skyscraper-2.glb", &sky_glb)) {
         std::printf("[gl] Loaded custom skyscraper model: skyscraper-2.glb (%u verts)\n", sky_glb.nverts);
