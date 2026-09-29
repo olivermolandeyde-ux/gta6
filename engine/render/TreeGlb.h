@@ -24,6 +24,8 @@ struct TreePrim {
     u32      tex_w;
     u32      tex_h;
     int      has_alpha;
+    int      gl_mode; // glTF 0 points, 1 lines, 4 triangles, …
+    int      has_color0;
 };
 
 struct TreeGlb {

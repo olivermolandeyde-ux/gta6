@@ -1025,8 +1025,43 @@ u8 slen_sig(const u8* s, u32 bl, u32 i) {
     return i < bl ? s[i] : 0;
 }
 
+void magenta_to_alpha(u8* rgba, u32 w, u32 h) {
+    if (!rgba || !w || !h) {
+        return;
+    }
+    u32 n = 0;
+    const u32 tot = w * h;
+    for (u32 i = 0; i < tot; ++i) {
+        const u8 r = rgba[i * 4 + 0];
+        const u8 g = rgba[i * 4 + 1];
+        const u8 b = rgba[i * 4 + 2];
+        if (r > 200 && b > 180 && g < 140) {
+            rgba[i * 4 + 0] = 0;
+            rgba[i * 4 + 1] = 0;
+            rgba[i * 4 + 2] = 0;
+            rgba[i * 4 + 3] = 0;
+            ++n;
+        }
+    }
+    if (n) {
+        std::printf("[glb] chroma-keyed %u magenta texels to alpha=0 (of %u)\n", n, tot);
+        std::fflush(stdout);
+    }
+}
+
+int read_f3_arr(const JDoc* d, const JNode* arr, float* o) {
+    if (!arr || arr->kind != JK_ARR) {
+        return 0;
+    }
+    u32 i = 0;
+    for (u32 c = arr->child; c != 0 && i < 3; c = d->nodes[c].next, ++i) {
+        o[i] = static_cast<float>(d->nodes[c].num);
+    }
+    return i == 3;
+}
+
 unsigned decode_view_image(const JDoc* d, u32 img, const u8* bin, u32 bin_len, u32* out_w, u32* out_h,
-                          int* out_a) {
+                          int* out_a, int magenta_key) {
     *out_w = *out_h = 0;
     if (out_a) {
         *out_a = 0;
@@ -1064,6 +1099,9 @@ unsigned decode_view_image(const JDoc* d, u32 img, const u8* bin, u32 bin_len, u
         std::fflush(stdout);
         return 0;
     }
+    if (magenta_key) {
+        magenta_to_alpha(rgba, w, h);
+    }
     unsigned tex = upload_rgba(rgba, w, h);
     std::printf("[glb] Created OpenGL texture ID %u (%ux%u pixels, %u src bytes)\n", tex, w, h, bl);
     std::fflush(stdout);
@@ -1092,6 +1130,32 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
     const JNode* nacc = j_field(d, attr_id, "NORMAL");
     const JNode* uacc = j_field(d, attr_id, "TEXCOORD_0");
     const JNode* cacc = j_field(d, attr_id, "COLOR_0");
+    {
+        char alist[160];
+        u32 ap = 0;
+        auto adda = [&](const char* s, const JNode* n) {
+            if (!n || ap + 24 >= sizeof(alist)) {
+                return;
+            }
+            if (ap) {
+                alist[ap++] = ',';
+                alist[ap++] = ' ';
+            }
+            while (*s && ap + 1 < sizeof(alist)) {
+                alist[ap++] = *s++;
+            }
+            alist[ap] = 0;
+        };
+        adda("POSITION", pacc);
+        adda("NORMAL", nacc);
+        adda("TEXCOORD_0", uacc);
+        adda("COLOR_0", cacc);
+        const JNode* t1 = j_field(d, attr_id, "TEXCOORD_1");
+        adda("TEXCOORD_1", t1);
+        std::printf("[glb] %s primitive %u: attributes=[%s] COLOR_0: %s mode=%d\n", out->label, out->nprims,
+                    alist, cacc ? "YES" : "NO", static_cast<int>(j_num(d, prim, "mode", 4)));
+        std::fflush(stdout);
+    }
     if (!pacc) {
         return false;
     }
@@ -1108,6 +1172,33 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
                         : nullptr;
     if (!pb || pc == 0) {
         return false;
+    }
+    const JNode* accessors = j_field(d, d->root, "accessors");
+    u32 pacc_n = accessors ? j_arr_at(d, accessors, static_cast<u32>(pacc->num)) : 0;
+    int pnorm = 0;
+    if (pacc_n) {
+        const JNode* pnrm = j_field(d, pacc_n, "normalized");
+        pnorm = (pnrm && pnrm->kind == JK_BOOL && pnrm->num != 0) ? 1 : 0;
+    }
+    float pmin[3] = {0, 0, 0};
+    float pmax[3] = {0, 0, 0};
+    int has_pmm = pacc_n ? read_f3_arr(d, j_field(d, pacc_n, "min"), pmin) &&
+                               read_f3_arr(d, j_field(d, pacc_n, "max"), pmax)
+                         : 0;
+    std::printf("[glb] %s prim %u POSITION count=%u comp=%u stride=%u normalized=%d minmax=%d\n", out->label,
+                out->nprims, pc, pcomp, ps, pnorm, has_pmm);
+    if (cacc && cc > 0 && cb) {
+        const u32 cel = (ccomp == 5126 || ccomp == 5125) ? 4u : (ccomp == 5123 || ccomp == 5122) ? 2u : 1u;
+        const int cnorm = (ccomp != 5126);
+        const u32 show = cc < 5 ? cc : 5;
+        for (u32 i = 0; i < show; ++i) {
+            const u8* cp = cb + i * cs;
+            std::printf("[glb] %s vertex %u color=(%.3f,%.3f,%.3f,%.3f) — IGNORED\n", out->label, i,
+                        read_acc_f(cp, ccomp, cnorm), read_acc_f(cp + cel, ccomp, cnorm),
+                        read_acc_f(cp + cel * 2u, ccomp, cnorm),
+                        cn >= 4 ? read_acc_f(cp + cel * 3u, ccomp, cnorm) : 1.f);
+        }
+        std::fflush(stdout);
     }
     u32 uv_es = 4;
     int uv_norm = 0;
@@ -1134,10 +1225,13 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
     for (u32 i = 0; i < pc; ++i) {
         const u8* vp = pb + i * ps;
         const u32 pel = (pcomp == 5126 || pcomp == 5125) ? 4u : (pcomp == 5123 || pcomp == 5122) ? 2u : 1u;
-        const int pnorm = (pcomp != 5126);
         float x = read_acc_f(vp, pcomp, pnorm);
         float y = read_acc_f(vp + pel, pcomp, pnorm);
         float z = read_acc_f(vp + pel * 2u, pcomp, pnorm);
+        if (i < 3u) {
+            std::printf("[glb] %s prim %u vtx %u pos=(%.4f,%.4f,%.4f) acc_min=(%.4f,%.4f,%.4f) acc_max=(%.4f,%.4f,%.4f)\n",
+                        out->label, out->nprims, i, x, y, z, pmin[0], pmin[1], pmin[2], pmax[0], pmax[1], pmax[2]);
+        }
         float ox, oy, oz;
         mul_mat_vec3(world, x, y, z, &ox, &oy, &oz);
         if (ox < out->xmin) {
@@ -1248,6 +1342,8 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
     pr.cutoff = 0.5f;
     pr.tex = 0;
     pr.tex_emit = 0;
+    pr.gl_mode = static_cast<int>(j_num(d, prim, "mode", 4));
+    pr.has_color0 = cacc ? 1 : 0;
     const JNode* matn = j_field(d, prim, "material");
     u32 mat_i = 0;
     if (matn && matn->kind == JK_NUM) {
@@ -1256,10 +1352,18 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
         u32 mat = j_arr_at(d, materials, mat_i);
         if (mat) {
             const JNode* am = j_field(d, mat, "alphaMode");
+            const JNode* mnm = j_field(d, mat, "name");
             if (str_eq(am, "MASK") || str_eq(am, "BLEND")) {
                 pr.alpha_mask = 1;
             }
-            pr.cutoff = 0.5f;
+            pr.cutoff = static_cast<float>(j_num(d, mat, "alphaCutoff", 0.5));
+            if (pr.cutoff < 0.01f) {
+                pr.cutoff = 0.5f;
+            }
+            std::printf("[glb] %s material %u: name='%.*s' alphaMode=%s alphaCutoff=%.2f\n", out->label, mat_i,
+                        mnm && mnm->kind == JK_STR ? static_cast<int>(mnm->slen) : 1,
+                        mnm && mnm->kind == JK_STR ? mnm->s : "-",
+                        pr.alpha_mask ? (str_eq(am, "BLEND") ? "BLEND" : "MASK") : "OPAQUE", pr.cutoff);
             const JNode* pbr = j_field(d, mat, "pbrMetallicRoughness");
             if (pbr) {
                 u32 pbr_id = static_cast<u32>(pbr - d->nodes);
@@ -1281,11 +1385,13 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
                                     pr.tex_w, pr.tex_h);
                         std::fflush(stdout);
                     } else {
-                        std::printf("[glb] WARNING: Failed to load texture for material %u — debug RED\n",
-                                    mat_i);
+                        std::printf("[glb] WARNING: Failed to load texture for material %u%s\n", mat_i,
+                                    is_tree_label(out->label) ? " — tree fallback later" : " — debug RED");
                         std::fflush(stdout);
-                        pr.tex   = fail_red_tex();
-                        pr.tex_w = pr.tex_h = 1;
+                        if (!is_tree_label(out->label)) {
+                            pr.tex   = fail_red_tex();
+                            pr.tex_w = pr.tex_h = 1;
+                        }
                     }
                 }
                 if (!pr.tex) {
@@ -1349,8 +1455,20 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
     if (!pr.tex_emit) {
         pr.tex_emit = black_tex();
     }
-    std::printf("[glb] material %u: %s cutoff 0.5 texture %ux%u\n", mat_i,
-                pr.alpha_mask ? "alpha-mask" : "opaque", pr.tex_w, pr.tex_h);
+    {
+        const char* solid = std::getenv("LEONIDA_TREE_SOLID");
+        if (solid && solid[0] == '1' && is_tree_label(out->label)) {
+            const int leaf = pr.alpha_mask;
+            pr.tex = leaf ? leaf_green_tex() : bark_brown_tex();
+            pr.alpha_mask = 0;
+            pr.tex_w = pr.tex_h = 1;
+            std::printf("[glb] %s SOLID DEBUG: %s # %s (alpha off)\n", out->label, leaf ? "leaf" : "bark",
+                        leaf ? "228B22" : "8B4513");
+        }
+    }
+    std::printf("[glb] %s prim %u draw mode=%d nidx=%u nvert=%u tex=%ux%u mask=%d cutoff=%.2f COLOR_0=%s\n",
+                out->label, out->nprims, pr.gl_mode, nidx, pc, pr.tex_w, pr.tex_h, pr.alpha_mask, pr.cutoff,
+                pr.has_color0 ? "YES-ignored" : "NO");
     std::fflush(stdout);
     out->nverts += pc;
     out->nprims++;
@@ -1364,11 +1482,30 @@ void walk_node(TreeGlb* out, const JDoc* d, u32 node, const float* parent, const
     float local[16], world[16];
     node_local(d, node, local);
     mat_mul(world, parent, local);
+    {
+        const JNode* nn = j_field(d, node, "name");
+        const JNode* mesh_n0 = j_field(d, node, "mesh");
+        std::printf("[glb] %s node '%.*s' mesh=%s T=(%.3f,%.3f,%.3f)\n", out->label,
+                    nn && nn->kind == JK_STR ? static_cast<int>(nn->slen) : 1, nn && nn->kind == JK_STR ? nn->s : "-",
+                    mesh_n0 && mesh_n0->kind == JK_NUM ? "yes" : "no", local[12], local[13], local[14]);
+        std::fflush(stdout);
+    }
     const JNode* mesh_n = j_field(d, node, "mesh");
     if (mesh_n && mesh_n->kind == JK_NUM) {
         const JNode* meshes = j_field(d, d->root, "meshes");
         u32 mesh = j_arr_at(d, meshes, static_cast<u32>(mesh_n->num));
         const JNode* prims = j_field(d, mesh, "primitives");
+        const JNode* mname = j_field(d, mesh, "name");
+        u32 npr = 0;
+        if (prims && prims->kind == JK_ARR) {
+            for (u32 c = prims->child; c != 0; c = d->nodes[c].next) {
+                ++npr;
+            }
+        }
+        std::printf("[glb] %s mesh '%.*s': %u primitives\n", out->label,
+                    mname && mname->kind == JK_STR ? static_cast<int>(mname->slen) : 1,
+                    mname && mname->kind == JK_STR ? mname->s : "-", npr);
+        std::fflush(stdout);
         if (prims && prims->kind == JK_ARR) {
             for (u32 c = prims->child; c != 0; c = d->nodes[c].next) {
                 emit_prim(out, d, c, world, bin, bin_len, tex_cache, tex_w, tex_h, tex_a, ntex);
@@ -1546,15 +1683,17 @@ bool load_tree_glb(const char* path, TreeGlb* out) {
             int ha = 0;
             if (images) {
                 u32 img = j_arr_at(&doc, images, src_i);
-                tex = decode_view_image(&doc, img, bin, bin_len, &w, &h, &ha);
+                tex = decode_view_image(&doc, img, bin, bin_len, &w, &h, &ha, is_tree_label(out->label));
             }
             if (!tex) {
-                std::printf("[glb] WARNING: Failed to load texture %u (image source %u) — debug RED\n", ntex,
-                            src_i);
+                std::printf("[glb] WARNING: Failed to load texture %u (image source %u)%s\n", ntex, src_i,
+                            is_tree_label(out->label) ? " — tree will use brown/green fallback" : " — debug RED");
                 std::fflush(stdout);
-                tex = fail_red_tex();
-                w = h = 1;
-                ha    = 0;
+                if (!is_tree_label(out->label)) {
+                    tex = fail_red_tex();
+                    w = h = 1;
+                    ha    = 0;
+                }
             }
             tex_w[ntex]     = w;
             tex_h[ntex]     = h;
@@ -1566,8 +1705,8 @@ bool load_tree_glb(const char* path, TreeGlb* out) {
         for (u32 c = images->child; c != 0 && ntex < 64; c = doc.nodes[c].next) {
             u32 w = 0, h = 0;
             int ha          = 0;
-            unsigned tex    = decode_view_image(&doc, c, bin, bin_len, &w, &h, &ha);
-            if (!tex) {
+            unsigned tex = decode_view_image(&doc, c, bin, bin_len, &w, &h, &ha, is_tree_label(out->label));
+            if (!tex && !is_tree_label(out->label)) {
                 tex = fail_red_tex();
                 w = h = 1;
                 ha    = 0;
@@ -1640,6 +1779,10 @@ bool load_tree_glb(const char* path, TreeGlb* out) {
         const float hz = out->zmax - out->zmin;
         out->z_up = (hz > hy * 1.5f && hz > hx) ? 1 : 0;
     }
+    std::printf("[glb] %s AABB x=[%.3f,%.3f] y=[%.3f,%.3f] z=[%.3f,%.3f] size=(%.3f,%.3f,%.3f) z_up=%d prims=%u verts=%u\n",
+                out->label, out->xmin, out->xmax, out->ymin, out->ymax, out->zmin, out->zmax,
+                out->xmax - out->xmin, out->ymax - out->ymin, out->zmax - out->zmin, out->z_up, out->nprims,
+                out->nverts);
     std::printf("[gl] tree glb %s prims=%u verts=%u bytes=%ld height=%.2f (y=%.2f..%.2f) z_up=%d\n", path,
                 out->nprims, out->nverts, static_cast<long>(sz), out->ymax - out->ymin, out->ymin, out->ymax,
                 out->z_up);

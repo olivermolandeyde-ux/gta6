@@ -36,7 +36,10 @@ float shadow_at() {
 
 void main() {
     vec4 tex = texture(uAlbedo, UV) * VertColor;
-    if (uAlphaMask == 1 && tex.a < 0.5) {
+    if (uAlphaMask == 1 && tex.a < uAlphaCut) {
+        discard;
+    }
+    if (tex.r > 0.80 && tex.b > 0.72 && tex.g < 0.50) {
         discard;
     }
     tex.rgb = max(tex.rgb, vec3(0.04));

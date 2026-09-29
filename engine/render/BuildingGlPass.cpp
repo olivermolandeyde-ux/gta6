@@ -455,7 +455,37 @@ void draw_instanced_glb(TreeGlb* g, unsigned prog) {
         glBindTexture(GL_TEXTURE_2D, pr.tex_emit ? pr.tex_emit : pr.tex);
         glUniform1i(glGetUniformLocation(prog, "uAlphaMask"), pr.alpha_mask);
         glUniform1f(glGetUniformLocation(prog, "uAlphaCut"), pr.cutoff);
-        glDrawElementsInstanced(GL_TRIANGLES, static_cast<GLsizei>(pr.nidx), GL_UNSIGNED_INT, nullptr,
+        GLenum md = GL_TRIANGLES;
+        switch (pr.gl_mode) {
+        case 0:
+            md = GL_POINTS;
+            glPointSize(4.f);
+            break;
+        case 1:
+            md = GL_LINES;
+            break;
+        case 2:
+            md = GL_LINE_LOOP;
+            break;
+        case 3:
+            md = GL_LINE_STRIP;
+            break;
+        case 5:
+            md = GL_TRIANGLE_STRIP;
+            break;
+        case 6:
+            md = GL_TRIANGLE_FAN;
+            break;
+        default:
+            md = GL_TRIANGLES;
+            break;
+        }
+        if (logged_bind <= 8) {
+            std::printf("[glb] draw '%s' prim %u mode=%d gl=0x%x nidx=%u inst=%u mask=%d\n", g->label, p,
+                        pr.gl_mode, static_cast<unsigned>(md), pr.nidx, g->instance_count, pr.alpha_mask);
+            std::fflush(stdout);
+        }
+        glDrawElementsInstanced(md, static_cast<GLsizei>(pr.nidx), GL_UNSIGNED_INT, nullptr,
                                 static_cast<GLsizei>(g->instance_count));
     }
     glBindVertexArray(0);
