@@ -1064,7 +1064,7 @@ void mean_rgb(const u8* p, u32 tot, float* mr, float* mg, float* mb) {
 }
 
 int looks_magenta(float mr, float mg, float mb) {
-    return (mr > mg * 1.12f && mb > mg * 0.85f) ? 1 : 0;
+    return (mr > mg * 1.40f && mb > mg * 1.15f) ? 1 : 0;
 }
 
 void repair_tree_tex(u8* p, u32 w, u32 h) {
@@ -1909,7 +1909,8 @@ bool load_tree_glb(const char* path, TreeGlb* out) {
         const float x_plant = std::min(std::fabs(out->xmin), std::fabs(out->xmax)) / (hx + 1e-4f);
         out->z_up = 0;
         if (is_tree_label(out->label) && std::strcmp(out->label, "oak") == 0) {
-            out->z_up = 1;
+            // tree.glb trunk is +X. Rx(-90) left it on its side.
+            out->z_up = 2;
         } else if (z_plant < y_plant * 0.5f && hz >= hy * 0.45f) {
             out->z_up = 1;
         } else if (hz > hy * 1.5f && hz > hx * 1.15f) {

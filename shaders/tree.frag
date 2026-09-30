@@ -46,6 +46,7 @@ void main() {
     }
     vec4 tex = albedo * VertColor;
     tex.rgb = max(tex.rgb, vec3(0.04));
+    tex.rgb *= vec3(1.04, 1.12, 0.78);
     vec3 emit = texture(uEmissive, UV).rgb;
     float em = max(max(emit.r, emit.g), emit.b);
     vec3 gold = vec3(1.0, 0.843, 0.0);
@@ -63,14 +64,14 @@ void main() {
     vec3 L = normalize(lightDir);
     float ndl = max(dot(N, L), 0.0);
     float sh = shadow_at();
-    vec3 ambient = vec3(0.690, 0.769, 0.871) * 0.55;
-    vec3 sunCol = vec3(1.0, 0.973, 0.863) * 1.15;
+    vec3 ambient = vec3(0.50, 0.54, 0.40) * 0.62;
+    vec3 sunCol = vec3(1.0, 0.96, 0.78) * 1.05;
     vec3 lighting = ambient + sunCol * ndl * sh;
     vec3 color = lighting * tex.rgb + mix(emit * 1.8, nightEmit * 7.0, uNightGlow);
     float d = length(FragPos.xz - uCamPos.xz);
     float fog = 1.0 - exp(-max(d - 400.0, 0.0) * 0.0022);
     color = mix(color, uFogColor, clamp(fog, 0.0, 0.88));
-    color = mix(color, vec3(dot(color, vec3(0.33))), 0.08);
+    color = mix(color, vec3(dot(color, vec3(0.33))), 0.03);
     vec2 q = gl_FragCoord.xy / max(uRes, vec2(1.0));
     float vig = smoothstep(1.15, 0.35, length(q - 0.5));
     color *= mix(0.85, 1.0, vig);
