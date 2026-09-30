@@ -1042,8 +1042,30 @@ int is_tree_label(const char* s) {
                  std::strcmp(s, "tree") == 0 || std::strcmp(s, "coconut") == 0);
 }
 
+int is_lamp_label(const char* s) {
+    return s && (std::strcmp(s, "klassisk") == 0 || std::strcmp(s, "moderne") == 0);
+}
+
+unsigned klassisk_iron_tex() {
+    return solid_tex(42, 40, 36, 255);
+}
+
+unsigned moderne_steel_tex() {
+    return solid_tex(30, 34, 40, 255);
+}
+
 unsigned fail_red_tex() {
     return solid_tex(255, 32, 32, 255);
+}
+
+unsigned lamp_or_fail_tex(const char* label) {
+    if (label && std::strcmp(label, "klassisk") == 0) {
+        return klassisk_iron_tex();
+    }
+    if (label && std::strcmp(label, "moderne") == 0) {
+        return moderne_steel_tex();
+    }
+    return fail_red_tex();
 }
 
 unsigned black_tex() {
@@ -1190,6 +1212,42 @@ void kind_oak(u8* p, u32 tot) {
     std::fflush(stdout);
 }
 
+void kind_klassisk(u8* p, u32 tot) {
+    float mr = 0.f, mg = 0.f, mb = 0.f;
+    mean_rgb(p, tot, &mr, &mg, &mb);
+    if (looks_magenta(mr, mg, mb)) {
+        argb_to_rgba(p, tot);
+        mean_rgb(p, tot, &mr, &mg, &mb);
+    }
+    if ((mr + mg + mb) * (1.f / 3.f) > 140.f) {
+        for (u32 i = 0; i < tot; ++i) {
+            p[i * 4 + 0] = static_cast<u8>(std::min(255, static_cast<int>(p[i * 4 + 0]) * 22 / 100 + 38));
+            p[i * 4 + 1] = static_cast<u8>(std::min(255, static_cast<int>(p[i * 4 + 1]) * 22 / 100 + 36));
+            p[i * 4 + 2] = static_cast<u8>(std::min(255, static_cast<int>(p[i * 4 + 2]) * 22 / 100 + 32));
+        }
+        std::printf("[glb] klassisk: pulled washed-white metal to dark iron (mean %.0f,%.0f,%.0f)\n", mr, mg, mb);
+        std::fflush(stdout);
+    }
+}
+
+void kind_moderne(u8* p, u32 tot) {
+    float mr = 0.f, mg = 0.f, mb = 0.f;
+    mean_rgb(p, tot, &mr, &mg, &mb);
+    if (looks_magenta(mr, mg, mb)) {
+        argb_to_rgba(p, tot);
+        mean_rgb(p, tot, &mr, &mg, &mb);
+    }
+    if ((mr + mg + mb) * (1.f / 3.f) > 140.f) {
+        for (u32 i = 0; i < tot; ++i) {
+            p[i * 4 + 0] = static_cast<u8>(std::min(255, static_cast<int>(p[i * 4 + 0]) * 20 / 100 + 30));
+            p[i * 4 + 1] = static_cast<u8>(std::min(255, static_cast<int>(p[i * 4 + 1]) * 20 / 100 + 34));
+            p[i * 4 + 2] = static_cast<u8>(std::min(255, static_cast<int>(p[i * 4 + 2]) * 20 / 100 + 40));
+        }
+        std::printf("[glb] moderne: pulled washed-white metal to anthracite (mean %.0f,%.0f,%.0f)\n", mr, mg, mb);
+        std::fflush(stdout);
+    }
+}
+
 void repair_tree_tex(u8* p, u32 w, u32 h, const char* label) {
     if (!p || !w || !h) {
         return;
@@ -1205,6 +1263,14 @@ void repair_tree_tex(u8* p, u32 w, u32 h, const char* label) {
     }
     if (label && std::strcmp(label, "oak") == 0) {
         kind_oak(p, tot);
+        return;
+    }
+    if (label && std::strcmp(label, "klassisk") == 0) {
+        kind_klassisk(p, tot);
+        return;
+    }
+    if (label && std::strcmp(label, "moderne") == 0) {
+        kind_moderne(p, tot);
         return;
     }
 }
@@ -1252,8 +1318,8 @@ unsigned decode_view_image(const JDoc* d, u32 img, const u8* bin, u32 bin_len, u
     }
     u8* rgba = nullptr;
     u32 w = 0, h = 0;
-    const int is_tree = is_tree_label(tree_label);
-    const int ok_img  = is_tree ? decode_image_rgba_tree(bin + off, bl, &rgba, &w, &h)
+    const int is_prop = is_tree_label(tree_label) || is_lamp_label(tree_label);
+    const int ok_img  = is_prop ? decode_image_rgba_tree(bin + off, bl, &rgba, &w, &h)
                                 : decode_image_rgba(bin + off, bl, &rgba, &w, &h);
     if (!ok_img || !rgba) {
         const u8* s = bin + off;
@@ -1262,7 +1328,7 @@ unsigned decode_view_image(const JDoc* d, u32 img, const u8* bin, u32 bin_len, u
         std::fflush(stdout);
         return 0;
     }
-    if (is_tree_label(tree_label)) {
+    if (is_prop) {
         repair_tree_tex(rgba, w, h, tree_label);
     }
     unsigned tex = upload_rgba(rgba, w, h);
@@ -1439,7 +1505,7 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
             v = read_acc_f(up + uv_es, ucomp, uv_norm);
         }
         float cr = 1.f, cg = 1.f, cbv = 1.f, ca = 1.f;
-        if (cb && i < cc && !is_tree_label(out->label)) {
+        if (cb && i < cc && !is_tree_label(out->label) && !is_lamp_label(out->label)) {
             const u8* cp = cb + i * cs;
             const u32 cel = (ccomp == 5126 || ccomp == 5125) ? 4u : (ccomp == 5123 || ccomp == 5122) ? 2u : 1u;
             const int cnorm = (ccomp != 5126);
@@ -1549,10 +1615,12 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
                         std::fflush(stdout);
                     } else {
                         std::printf("[glb] WARNING: Failed to load texture for material %u%s\n", mat_i,
-                                    is_tree_label(out->label) ? " — tree fallback later" : " — debug RED");
+                                    is_tree_label(out->label) ? " — tree fallback later"
+                                    : is_lamp_label(out->label) ? " — lamp metal fallback"
+                                                                : " — debug RED");
                         std::fflush(stdout);
                         if (!is_tree_label(out->label)) {
-                            pr.tex   = fail_red_tex();
+                            pr.tex   = lamp_or_fail_tex(out->label);
                             pr.tex_w = pr.tex_h = 1;
                         }
                     }
@@ -1608,6 +1676,12 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
             pr.tex = pr.alpha_mask ? leaf_green_tex() : bark_brown_tex();
             std::printf("[glb] %s material %u has no albedo — fallback %s\n", out->label, mat_i,
                         pr.alpha_mask ? "leaf green #228B22" : "bark brown #8B4513");
+        } else if (out->label[0] && std::strcmp(out->label, "klassisk") == 0) {
+            pr.tex = klassisk_iron_tex();
+            std::printf("[glb] klassisk material %u has no albedo — dark iron\n", mat_i);
+        } else if (out->label[0] && std::strcmp(out->label, "moderne") == 0) {
+            pr.tex = moderne_steel_tex();
+            std::printf("[glb] moderne material %u has no albedo — anthracite\n", mat_i);
         } else {
             std::printf("[glb] WARNING: Failed to load texture for material %u — using gray metal\n", mat_i);
             pr.tex = gray_metal_tex();
@@ -1853,10 +1927,12 @@ bool load_tree_glb(const char* path, TreeGlb* out) {
             }
             if (!tex) {
                 std::printf("[glb] WARNING: Failed to load texture %u (image source %u)%s\n", ntex, src_i,
-                            is_tree_label(out->label) ? " — tree will use brown/green fallback" : " — debug RED");
+                            is_tree_label(out->label) ? " — tree will use brown/green fallback"
+                            : is_lamp_label(out->label) ? " — lamp metal fallback"
+                                                        : " — debug RED");
                 std::fflush(stdout);
                 if (!is_tree_label(out->label)) {
-                    tex = fail_red_tex();
+                    tex = lamp_or_fail_tex(out->label);
                     w = h = 1;
                     ha    = 0;
                 }
@@ -1873,7 +1949,7 @@ bool load_tree_glb(const char* path, TreeGlb* out) {
             int ha          = 0;
             unsigned tex = decode_view_image(&doc, c, bin, bin_len, &w, &h, &ha, out->label);
             if (!tex && !is_tree_label(out->label)) {
-                tex = fail_red_tex();
+                tex = lamp_or_fail_tex(out->label);
                 w = h = 1;
                 ha    = 0;
             }
