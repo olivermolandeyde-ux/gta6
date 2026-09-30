@@ -336,9 +336,70 @@ void finish(TreeGlb* out, const char* label) {
         out->ymax = 1;
     }
     bind_instances(out);
-    std::printf("[tree] procedural %s prims=%u verts=%u height=%.2f\n", label, out->nprims, out->nverts,
-                out->ymax - out->ymin);
-    std::fflush(stdout);
+}
+
+float fr01(u32* s) {
+    *s = *s * 1664525u + 1013904223u;
+    return static_cast<float>((*s >> 8) & 0x00ffffffu) / 16777215.f;
+}
+
+void tint_last(Acc* a, u32 n, float r, float g, float b) {
+    const u32 start = a->nv > n ? a->nv - n : 0;
+    for (u32 i = start; i < a->nv; ++i) {
+        a->v[i].cr = r;
+        a->v[i].cg = g;
+        a->v[i].cb = b;
+    }
+}
+
+void add_jagged_cone(Acc* a, float cx, float cy, float cz, float r, float h, int slices, u32 seed) {
+    const int n = slices < 8 ? 8 : slices;
+    const u32 base = a->nv;
+    for (int ring = 0; ring < 2; ++ring) {
+        for (int i = 0; i < n; ++i) {
+            u32 st = seed + static_cast<u32>(i * 17 + ring * 9);
+            const float ang = 6.2831853f * static_cast<float>(i) / static_cast<float>(n);
+            const float jig = 0.82f + 0.28f * fr01(&st);
+            const float rad = (ring == 0) ? r * jig : 0.04f + 0.03f * fr01(&st);
+            const float ox = std::cos(ang) * rad;
+            const float oz = std::sin(ang) * rad;
+            const float y = cy + (ring == 0 ? 0.f : h);
+            push_v(a, cx + ox, y, cz + oz, ox, 0.35f, oz, 0.5f, 0.5f);
+        }
+    }
+    for (int i = 0; i < n; ++i) {
+        const u32 i0 = base + static_cast<u32>(i);
+        const u32 i1 = base + static_cast<u32>((i + 1) % n);
+        const u32 i2 = base + static_cast<u32>(n + i);
+        const u32 i3 = base + static_cast<u32>(n + ((i + 1) % n));
+        tri(a, i0, i2, i1);
+        tri(a, i1, i2, i3);
+    }
+}
+
+void leaf_cluster(Acc* a, float x, float y, float z, float w, u32 seed) {
+    const int n = 3 + static_cast<int>(fr01(&seed) * 2.99f);
+    for (int i = 0; i < n; ++i) {
+        const float yaw = fr01(&seed) * 6.2831853f;
+        const float pit = (fr01(&seed) - 0.5f) * 1.1f;
+        const float roll = (fr01(&seed) - 0.5f) * 0.8f;
+        const float c = std::cos(yaw);
+        const float s = std::sin(yaw);
+        const float cp = std::cos(pit);
+        const float rx = c * cp;
+        const float ry = std::sin(pit) * 0.4f;
+        const float rz = s * cp;
+        const float ux = -s * std::cos(roll);
+        const float uy = std::cos(pit) * 0.85f + 0.2f;
+        const float uz = c * std::cos(roll);
+        const float jx = (fr01(&seed) - 0.5f) * 0.55f;
+        const float jy = (fr01(&seed) - 0.5f) * 0.45f;
+        const float jz = (fr01(&seed) - 0.5f) * 0.55f;
+        const float ws = w * (0.82f + 0.28f * fr01(&seed));
+        add_card(a, x + jx, y + jy, z + jz, rx, ry, rz, ux, uy, uz, ws, ws * 0.92f);
+        const float g = 0.78f + 0.35f * fr01(&seed);
+        tint_last(a, 4, 0.72f + 0.2f * fr01(&seed), g, 0.55f + 0.25f * fr01(&seed));
+    }
 }
 
 void reset_glb(TreeGlb* out) {
@@ -354,28 +415,48 @@ bool TreeGenerator::oak(TreeGlb* out) {
     Acc bark{}, leaf{};
     acc_init(&bark);
     acc_init(&leaf);
-    add_cyl(&bark, 0.f, 0.f, 0.f, 0.f, 9.0f, 0.f, 0.30f, 0.15f, 10);
-    for (int b = 0; b < 5; ++b) {
-        const float yaw = 6.2831853f * static_cast<float>(b) / 5.f + 0.31f;
-        const float pit = -0.55f - 0.12f * static_cast<float>(b % 3);
-        const float y0 = 5.4f + 0.45f * static_cast<float>(b);
-        const float len = 2.2f + 0.15f * static_cast<float>(b);
-        const float c = std::cos(yaw) * std::cos(pit);
-        const float s = std::sin(yaw) * std::cos(pit);
-        const float up = std::sin(pit);
-        add_cyl(&bark, 0.f, y0, 0.f, c * len, y0 + up * len + 0.4f, s * len, 0.08f, 0.03f, 7);
+    const float trunk_h = 3.6f;
+    add_cyl(&bark, 0.f, 0.f, 0.f, 0.f, trunk_h, 0.f, 0.40f, 0.20f, 11);
+    u32 seed = 0xA41C17u;
+    struct Tip {
+        float x, y, z;
+    };
+    Tip tips[8];
+    const int nbr = 6;
+    for (int b = 0; b < nbr; ++b) {
+        const float yaw = 6.2831853f * static_cast<float>(b) / static_cast<float>(nbr) + 0.18f +
+                          (fr01(&seed) - 0.5f) * 0.35f;
+        const float elev = (30.f + 30.f * fr01(&seed) + (fr01(&seed) - 0.5f) * 15.f) * 0.0174533f;
+        const float y0 = 2.15f + 1.15f * fr01(&seed);
+        const float len = 1.55f + 0.95f * fr01(&seed);
+        const float c = std::cos(yaw) * std::cos(elev);
+        const float s = std::sin(yaw) * std::cos(elev);
+        const float up = std::sin(elev);
+        const float x1 = c * len;
+        const float y1 = y0 + up * len;
+        const float z1 = s * len;
+        add_cyl(&bark, 0.04f * c, y0, 0.04f * s, x1, y1, z1, 0.15f, 0.08f, 8);
+        tips[b].x = x1;
+        tips[b].y = y1;
+        tips[b].z = z1;
     }
-    for (int c = 0; c < 10; ++c) {
-        const float yaw = 2.399963f * static_cast<float>(c);
-        const float pit = -0.15f + 0.22f * static_cast<float>(c % 4);
-        const float rr = 1.35f + 0.25f * static_cast<float>(c % 3);
-        const float cx = std::cos(yaw) * std::cos(pit) * rr;
-        const float cz = std::sin(yaw) * std::cos(pit) * rr;
-        const float cy = 7.4f + std::sin(pit) * rr + 0.35f * static_cast<float>(c % 3);
-        const float w = 1.55f + 0.12f * static_cast<float>(c % 3);
-        add_card(&leaf, cx, cy, cz, 1.f, 0.f, 0.f, 0.f, 1.f, 0.f, w, w);
-        add_card(&leaf, cx, cy, cz, 0.f, 0.f, 1.f, 0.f, 1.f, 0.f, w, w);
-        add_card(&leaf, cx, cy, cz, 0.70f, 0.f, 0.70f, -0.2f, 1.f, 0.1f, w * 0.85f, w * 0.85f);
+    tips[6].x = 0.f;
+    tips[6].y = trunk_h + 0.15f;
+    tips[6].z = 0.f;
+    tips[7].x = 0.12f;
+    tips[7].y = trunk_h - 0.2f;
+    tips[7].z = -0.08f;
+    int ncl = 0;
+    for (int t = 0; t < 8 && ncl < 20; ++t) {
+        const int extra = (t < nbr) ? 2 : 1;
+        for (int k = 0; k < extra && ncl < 20; ++k) {
+            const float jx = (fr01(&seed) - 0.5f) * 0.60f;
+            const float jy = (fr01(&seed) - 0.5f) * 0.50f;
+            const float jz = (fr01(&seed) - 0.5f) * 0.60f;
+            const float w = 0.80f + 0.40f * fr01(&seed);
+            leaf_cluster(&leaf, tips[t].x + jx, tips[t].y + jy, tips[t].z + jz, w, seed + static_cast<u32>(ncl * 97));
+            ++ncl;
+        }
     }
     emit(out, &bark, solid_tex(0x8B, 0x45, 0x13, 255), 1, 1, 0);
     emit(out, &leaf, leaf_card_tex(0x22, 0x8B, 0x22), 32, 32, 1);
@@ -390,19 +471,23 @@ bool TreeGenerator::pine(TreeGlb* out) {
     Acc bark{}, leaf{};
     acc_init(&bark);
     acc_init(&leaf);
-    add_cyl(&bark, 0.f, 0.f, 0.f, 0.f, 11.2f, 0.f, 0.20f, 0.12f, 9);
-    const float ys[5] = {2.6f, 4.6f, 6.4f, 8.0f, 9.4f};
-    const float rs[5] = {1.55f, 1.22f, 0.92f, 0.62f, 0.38f};
-    const float hs[5] = {2.55f, 2.20f, 1.85f, 1.50f, 1.25f};
-    for (int k = 0; k < 5; ++k) {
-        add_cone(&leaf, 0.f, ys[k], 0.f, rs[k], hs[k], 10);
-        const int ncard = 6 + k;
+    add_cyl(&bark, 0.f, 0.f, 0.f, 0.f, 2.05f, 0.f, 0.25f, 0.18f, 9);
+    const float width[6] = {3.0f, 2.6f, 2.2f, 1.8f, 1.4f, 1.0f};
+    const float ht[6]    = {1.5f, 1.2f, 1.2f, 1.2f, 1.2f, 1.0f};
+    float y = 1.85f;
+    u32 seed = 0x51C0u;
+    for (int k = 0; k < 6; ++k) {
+        const float ox = (fr01(&seed) - 0.5f) * 0.18f;
+        const float oz = (fr01(&seed) - 0.5f) * 0.18f;
+        add_jagged_cone(&leaf, ox, y, oz, width[k] * 0.5f, ht[k], 12, seed);
+        const int ncard = 5 + (k & 1);
         for (int i = 0; i < ncard; ++i) {
-            const float yaw = 6.2831853f * static_cast<float>(i) / static_cast<float>(ncard) + 0.2f * k;
-            const float cr = rs[k] * 0.72f;
-            add_card(&leaf, std::cos(yaw) * cr, ys[k] + hs[k] * 0.35f, std::sin(yaw) * cr, -std::sin(yaw), 0.25f,
-                     std::cos(yaw), 0.f, 1.f, 0.f, 1.1f, 1.35f);
+            const float yaw = 6.2831853f * static_cast<float>(i) / static_cast<float>(ncard) + 0.15f * k;
+            const float cr = width[k] * 0.38f;
+            add_card(&leaf, ox + std::cos(yaw) * cr, y + ht[k] * 0.40f, oz + std::sin(yaw) * cr, -std::sin(yaw),
+                     0.35f, std::cos(yaw), 0.1f, 1.f, 0.05f, 0.85f, 1.05f);
         }
+        y += 1.05f;
     }
     emit(out, &bark, solid_tex(0x65, 0x43, 0x21, 255), 1, 1, 0);
     emit(out, &leaf, leaf_card_tex(0x00, 0x64, 0x00), 32, 32, 1);
@@ -417,48 +502,50 @@ bool TreeGenerator::palm(TreeGlb* out) {
     Acc bark{}, leaf{};
     acc_init(&bark);
     acc_init(&leaf);
-    float px = 0.f, py = 0.f, pz = 0.f;
-    const int segs = 10;
-    for (int s = 0; s < segs; ++s) {
-        const float t0 = static_cast<float>(s) / static_cast<float>(segs);
-        const float t1 = static_cast<float>(s + 1) / static_cast<float>(segs);
-        const float x0 = 0.38f * std::sin(t0 * 1.4f);
-        const float x1 = 0.38f * std::sin(t1 * 1.4f);
-        const float y0 = t0 * 11.0f;
-        const float y1 = t1 * 11.0f;
-        add_cyl(&bark, x0, y0, 0.f, x1, y1, 0.f, 0.26f - 0.08f * t0, 0.26f - 0.08f * t1, 8);
-        px = x1;
-        py = y1;
-        pz = 0.f;
+    const float seg_y[5] = {0.f, 1.45f, 2.95f, 4.35f, 5.55f};
+    const float seg_x[5] = {0.f, 0.12f, 0.28f, 0.38f, 0.42f};
+    for (int s = 0; s < 4; ++s) {
+        const float t0 = static_cast<float>(s) / 4.f;
+        const float t1 = static_cast<float>(s + 1) / 4.f;
+        add_cyl(&bark, seg_x[s], seg_y[s], 0.f, seg_x[s + 1], seg_y[s + 1], 0.f, 0.30f - 0.10f * t0,
+                0.30f - 0.10f * t1, 9);
     }
-    for (int f = 0; f < 7; ++f) {
-        const float yaw = 6.2831853f * static_cast<float>(f) / 7.f;
-        const float droop = 0.62f;
-        float x = px;
-        float y = py + 0.15f;
-        float z = pz;
-        const float len = 3.05f;
-        const int nq = 6;
+    const float tx = seg_x[4];
+    const float ty = seg_y[4];
+    u32 seed = 0x91A2u;
+    const int nfr = 8;
+    for (int f = 0; f < nfr; ++f) {
+        const float yaw = 6.2831853f * static_cast<float>(f) / static_cast<float>(nfr) + (fr01(&seed) - 0.5f) * 0.2f;
+        const float len = 2.55f + 0.40f * fr01(&seed);
+        const float tip_el = -(45.f + 15.f * fr01(&seed)) * 0.0174533f;
+        float x = tx;
+        float y = ty + 0.12f;
+        float z = 0.f;
+        const int nq = 5;
         for (int q = 0; q < nq; ++q) {
             const float t0 = static_cast<float>(q) / static_cast<float>(nq);
             const float t1 = static_cast<float>(q + 1) / static_cast<float>(nq);
-            const float x1 = px + std::cos(yaw) * len * t1;
-            const float z1 = pz + std::sin(yaw) * len * t1;
-            const float y1 = py - droop * t1 * t1 * 2.4f;
+            const float el0 = 0.f * (1.f - t0) + tip_el * t0;
+            const float el1 = 0.f * (1.f - t1) + tip_el * t1;
+            const float step = len / static_cast<float>(nq);
+            const float x1 = x + std::cos(yaw) * std::cos(el1) * step;
+            const float y1 = y + std::sin(el1) * step;
+            const float z1 = z + std::sin(yaw) * std::cos(el1) * step;
             const float mx = (x + x1) * 0.5f;
             const float my = (y + y1) * 0.5f;
             const float mz = (z + z1) * 0.5f;
-            const float dx = x1 - x;
-            const float dy = y1 - y;
-            const float dz = z1 - z;
-            add_card(&leaf, mx, my, mz, dx, dy, dz, -std::sin(yaw), 0.15f, std::cos(yaw), 0.55f, 0.95f);
+            add_card(&leaf, mx, my, mz, x1 - x, y1 - y, z1 - z, -std::sin(yaw), 0.12f, std::cos(yaw), 0.40f,
+                     step * 1.15f);
+            const float young = t1;
+            tint_last(&leaf, 4, 0.55f + 0.35f * young, 0.85f + 0.15f * young, 0.35f + 0.40f * young);
             x = x1;
             y = y1;
             z = z1;
+            (void)el0;
         }
     }
-    emit(out, &bark, solid_tex(0x8B, 0x73, 0x55, 255), 1, 1, 0);
-    emit(out, &leaf, leaf_card_tex(0x32, 0xCD, 0x32), 32, 32, 1);
+    emit(out, &bark, solid_tex(0xD2, 0xB4, 0x8C, 255), 1, 1, 0);
+    emit(out, &leaf, leaf_card_tex(0x22, 0x8B, 0x22), 32, 32, 1);
     acc_free(&bark);
     acc_free(&leaf);
     finish(out, "palm");

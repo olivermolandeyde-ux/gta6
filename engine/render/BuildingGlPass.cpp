@@ -440,18 +440,11 @@ void draw_instanced_glb(TreeGlb* g, unsigned prog) {
     glUniform1i(glGetUniformLocation(prog, "uAlbedo"), 0);
     glUniform1i(glGetUniformLocation(prog, "uEmissive"), 1);
     glUniform1i(glGetUniformLocation(prog, "uShadow"), 2);
-    static int logged_bind = 0;
     for (u32 p = 0; p < g->nprims; ++p) {
         TreePrim& pr = g->prims[p];
         glBindVertexArray(pr.vao);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, pr.tex);
-        if (logged_bind < 8) {
-            std::printf("[glb] bind '%s' prim %u tex id=%u %ux%u mask=%d\n", g->label, p, pr.tex, pr.tex_w,
-                        pr.tex_h, pr.alpha_mask);
-            std::fflush(stdout);
-            ++logged_bind;
-        }
         glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_2D, pr.tex_emit ? pr.tex_emit : pr.tex);
         glUniform1i(glGetUniformLocation(prog, "uAlphaMask"), pr.alpha_mask);
@@ -487,11 +480,6 @@ void draw_instanced_glb(TreeGlb* g, unsigned prog) {
         default:
             md = GL_TRIANGLES;
             break;
-        }
-        if (logged_bind <= 8) {
-            std::printf("[glb] draw '%s' prim %u mode=%d gl=0x%x nidx=%u inst=%u mask=%d\n", g->label, p,
-                        pr.gl_mode, static_cast<unsigned>(md), pr.nidx, g->instance_count, pr.alpha_mask);
-            std::fflush(stdout);
         }
         glDrawElementsInstanced(md, static_cast<GLsizei>(pr.nidx), GL_UNSIGNED_INT, nullptr,
                                 static_cast<GLsizei>(g->instance_count));
@@ -684,8 +672,7 @@ bool BuildingGlPass::init() {
     TreeGenerator::oak(&tree_glb[0]);
     TreeGenerator::pine(&tree_glb[1]);
     TreeGenerator::palm(&tree_glb[2]);
-    std::printf("[gl] procedural trees oak=%u verts pine=%u palm=%u\n", tree_glb[0].nverts, tree_glb[1].nverts,
-                tree_glb[2].nverts);
+    std::printf("[trees] Generated 3 procedural tree types\n");
     std::fflush(stdout);
     if (load_city_tree("skyscraper-2.glb", &sky_glb)) {
         std::printf("[gl] Loaded custom skyscraper model: skyscraper-2.glb (%u verts)\n", sky_glb.nverts);
@@ -942,7 +929,6 @@ void BuildingGlPass::buildMesh(World& world) {
     u32 n_tree_xz          = 0;
     u32 skip_lamp          = 0;
     u32 skip_tree          = 0;
-    u32 tree_log_n = 0;
     auto push_tree = [&](float x, float z) {
         const u32 total = tn[0] + tn[1] + tn[2];
         if (total >= kTreeSpawnCap) {
@@ -951,18 +937,9 @@ void BuildingGlPass::buildMesh(World& world) {
         const float droad = dist_to_road_edge(x, z);
         const int on_sw   = (droad >= 0.4f && droad <= 3.2f) ? 1 : 0;
         if (!on_sw) {
-            if (tree_log_n < 8u) {
-                std::printf("[city] Tree placement at (%.1f, %.1f, %.1f) - on sidewalk: NO\n", x,
-                            kCityPlateauY + 0.05f, z);
-                ++tree_log_n;
-            }
             return;
         }
         if (xz_too_close(x, z, lamp_xz, n_lamp_xz, 2.0f)) {
-            if (skip_lamp < 8u) {
-                std::printf("[city] Skipped tree placement at (%.1f, %.1f, %.1f) - collision with lamp\n", x,
-                            kCityPlateauY + 0.05f, z);
-            }
             ++skip_lamp;
             return;
         }
@@ -976,7 +953,7 @@ void BuildingGlPass::buildMesh(World& world) {
         }
         const float yaw = std::fmod(x * 0.173f + z * 0.091f, 6.2831853f);
         const u32 sh = static_cast<u32>(x) * 1664525u + static_cast<u32>(z) * 1013904223u;
-        const float sc = 0.85f + static_cast<float>(sh % 1000u) * (0.30f / 999.f);
+        const float sc = 0.90f + static_cast<float>(sh % 1000u) * (0.20f / 999.f);
         const float y0  = tree_glb[kind].ymin;
         const float y   = kCityPlateauY + 0.05f - y0 * sc;
         tree_yaw_mat(&tree_mats[kind][tn[kind] * 16], x, y, z, yaw, sc, 0);
@@ -984,10 +961,6 @@ void BuildingGlPass::buildMesh(World& world) {
         tree_xz[n_tree_xz * 2u]     = x;
         tree_xz[n_tree_xz * 2u + 1] = z;
         ++n_tree_xz;
-        if (tree_log_n < 12u) {
-            std::printf("[city] Tree placement at (%.1f, %.1f, %.1f) - on sidewalk: YES\n", x, y, z);
-            ++tree_log_n;
-        }
     };
     for (u32 j = 0; j <= kCityBlocks; ++j) {
         const float z = static_cast<float>(j) * kCityBlockPitch;
@@ -1014,9 +987,9 @@ void BuildingGlPass::buildMesh(World& world) {
         tree_glb_set_instances(&tree_glb[k], tree_mats[k], tn[k]);
         total_trees += tn[k];
     }
-    std::printf("[city] Placed %u trees (oak: %u, pine: %u, palm: %u) skipped lamp=%u tree=%u\n", total_trees,
-                tn[0], tn[1], tn[2], skip_lamp, skip_tree);
-    std::fflush(stdout);
+    (void)total_trees;
+    (void)skip_lamp;
+    (void)skip_tree;
 }
 
 void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target, int width, int height,
