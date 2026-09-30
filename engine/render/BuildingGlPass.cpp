@@ -968,9 +968,10 @@ void BuildingGlPass::buildMesh(World& world) {
         if (lamp_glb[use].nprims == 0 || ln[use] >= kTreeInstanceCap) {
             return;
         }
-        // Same curb; 180° so the arm faces the other way.
-        const float yaw = ew ? ((side > 0.f) ? -1.5707963f : 1.5707963f)
-                             : ((side > 0.f) ? 0.f : 3.14159265f);
+        // Same sidewalk. +π — both klassisk and moderne face the other way.
+        float yaw = ew ? ((side > 0.f) ? -1.5707963f : 1.5707963f)
+                       : ((side > 0.f) ? 0.f : 3.14159265f);
+        yaw += 3.14159265f;
         const float sc  = lamp_fit[use];
         const float y0  = lamp_glb[use].z_up ? lamp_glb[use].zmin : lamp_glb[use].ymin;
         const float y   = kCityPlateauY + 0.05f - y0 * sc;
