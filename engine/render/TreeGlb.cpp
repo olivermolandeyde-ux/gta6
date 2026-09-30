@@ -1067,24 +1067,61 @@ int looks_magenta(float mr, float mg, float mb) {
     return (mr > mg * 1.40f && mb > mg * 1.15f) ? 1 : 0;
 }
 
-void repair_pine_tex(u8* p, u32 tot) {
-    (void)p;
-    (void)tot;
+void decode_tree_rgba_layout(u8* p, u32 tot) {
+    u32 vote_argb = 0;
+    u32 vote_rgba = 0;
+    u32 vote_bgra = 0;
+    for (u32 i = 0; i < tot; ++i) {
+        const u8 c0 = p[i * 4 + 0];
+        const u8 c1 = p[i * 4 + 1];
+        const u8 c2 = p[i * 4 + 2];
+        const u8 c3 = p[i * 4 + 3];
+        if (c2 > 55 && c2 > c1 && c2 > c3 && c2 + 8 > c0) {
+            ++vote_argb;
+        }
+        if (c1 > 55 && c1 >= c0 && c1 >= c2 && c3 > 40) {
+            if (c0 + 12 < c2) {
+                ++vote_bgra;
+            } else {
+                ++vote_rgba;
+            }
+        }
+    }
+    if (vote_argb > vote_rgba && vote_argb > vote_bgra && vote_argb > 24) {
+        argb_to_rgba(p, tot);
+        std::printf("[trees] Texture layout ARGB->RGBA (votes argb=%u rgba=%u bgra=%u)\n", vote_argb, vote_rgba,
+                    vote_bgra);
+        std::fflush(stdout);
+        return;
+    }
+    if (vote_bgra > vote_rgba && vote_bgra > 24) {
+        for (u32 i = 0; i < tot; ++i) {
+            const u8 t = p[i * 4 + 0];
+            p[i * 4 + 0] = p[i * 4 + 2];
+            p[i * 4 + 2] = t;
+        }
+        std::printf("[trees] Texture layout BGRA->RGBA (votes argb=%u rgba=%u bgra=%u)\n", vote_argb, vote_rgba,
+                    vote_bgra);
+        std::fflush(stdout);
+        return;
+    }
+    float mr = 0.f, mg = 0.f, mb = 0.f;
+    mean_rgb(p, tot, &mr, &mg, &mb);
+    if (looks_magenta(mr, mg, mb)) {
+        argb_to_rgba(p, tot);
+        std::printf("[trees] Texture layout ARGB->RGBA (pink mean %.0f,%.0f,%.0f)\n", mr, mg, mb);
+        std::fflush(stdout);
+    }
 }
 
 void repair_oak_tex(u8* p, u32 tot) {
     u32 bark = 0;
-    u32 mag  = 0;
     for (u32 i = 0; i < tot; ++i) {
         const u8 r = p[i * 4 + 0];
         const u8 g = p[i * 4 + 1];
         const u8 b = p[i * 4 + 2];
         if (is_hot_magenta(r, g, b)) {
-            p[i * 4 + 0] = 0;
-            p[i * 4 + 1] = 0;
-            p[i * 4 + 2] = 0;
             p[i * 4 + 3] = 0;
-            ++mag;
             continue;
         }
         const int leaf = (g > r + 12 && g > b + 12) ? 1 : 0;
@@ -1093,38 +1130,8 @@ void repair_oak_tex(u8* p, u32 tot) {
             ++bark;
         }
     }
-    if (bark || mag) {
-        std::printf("[trees] oak: filled %u bark alpha, keyed %u magenta\n", bark, mag);
-        std::fflush(stdout);
-    }
-}
-
-void repair_palm_tex(u8* p, u32 tot) {
-    u32 trunk = 0;
-    u32 mag   = 0;
-    for (u32 i = 0; i < tot; ++i) {
-        const u8 r = p[i * 4 + 0];
-        const u8 g = p[i * 4 + 1];
-        const u8 b = p[i * 4 + 2];
-        if (is_hot_magenta(r, g, b)) {
-            p[i * 4 + 0] = 0;
-            p[i * 4 + 1] = 0;
-            p[i * 4 + 2] = 0;
-            p[i * 4 + 3] = 0;
-            ++mag;
-            continue;
-        }
-        const u32 luma = static_cast<u32>(r) + g + b;
-        if (luma < 90u && p[i * 4 + 3] > 80) {
-            p[i * 4 + 0] = static_cast<u8>(std::min(255, static_cast<int>(r) + 110));
-            p[i * 4 + 1] = static_cast<u8>(std::min(255, static_cast<int>(g) + 58));
-            p[i * 4 + 2] = static_cast<u8>(std::min(255, static_cast<int>(b) + 28));
-            p[i * 4 + 3] = 255;
-            ++trunk;
-        }
-    }
-    if (trunk || mag) {
-        std::printf("[trees] palm: lifted %u dark trunk texels, keyed %u magenta\n", trunk, mag);
+    if (bark) {
+        std::printf("[trees] oak: filled %u bark alpha\n", bark);
         std::fflush(stdout);
     }
 }
@@ -1134,126 +1141,9 @@ void repair_tree_tex(u8* p, u32 w, u32 h, const char* label) {
         return;
     }
     const u32 tot = w * h;
-    if (label && std::strcmp(label, "pine") == 0) {
-        repair_pine_tex(p, tot);
-        return;
-    }
+    decode_tree_rgba_layout(p, tot);
     if (label && std::strcmp(label, "oak") == 0) {
         repair_oak_tex(p, tot);
-        return;
-    }
-    if (label && std::strcmp(label, "palm") == 0) {
-        repair_palm_tex(p, tot);
-        return;
-    }
-    u32 vote_argb = 0;
-    u32 vote_rgba = 0;
-    u32 vote_bgra = 0;
-    u32 opaque    = 0;
-    for (u32 i = 0; i < tot; ++i) {
-        const u8 c0 = p[i * 4 + 0];
-        const u8 c1 = p[i * 4 + 1];
-        const u8 c2 = p[i * 4 + 2];
-        const u8 c3 = p[i * 4 + 3];
-        if (c3 > 128) {
-            ++opaque;
-        }
-        if (c2 > 55 && c2 > c1 && c2 > c3 && c2 + 8 > c0) {
-            ++vote_argb;
-        }
-        if (c1 > 55 && c1 >= c0 && c1 >= c2) {
-            if (c3 > 40) {
-                if (c0 + 12 < c2) {
-                    ++vote_bgra;
-                } else {
-                    ++vote_rgba;
-                }
-            }
-        }
-    }
-    int converted = 0;
-    if (vote_argb > vote_rgba && vote_argb > vote_bgra && vote_argb > 24) {
-        argb_to_rgba(p, tot);
-        converted = 1;
-        std::printf("[trees] Texture layout ARGB->RGBA (votes argb=%u rgba=%u bgra=%u)\n", vote_argb, vote_rgba,
-                    vote_bgra);
-        std::fflush(stdout);
-    } else if (vote_bgra > vote_rgba && vote_bgra > 24) {
-        for (u32 i = 0; i < tot; ++i) {
-            const u8 t = p[i * 4 + 0];
-            p[i * 4 + 0] = p[i * 4 + 2];
-            p[i * 4 + 2] = t;
-        }
-        converted = 1;
-        std::printf("[trees] Texture layout BGRA->RGBA (votes argb=%u rgba=%u bgra=%u)\n", vote_argb, vote_rgba,
-                    vote_bgra);
-        std::fflush(stdout);
-    }
-    float mr = 0.f, mg = 0.f, mb = 0.f;
-    mean_rgb(p, tot, &mr, &mg, &mb);
-    if (!converted && looks_magenta(mr, mg, mb)) {
-        argb_to_rgba(p, tot);
-        converted = 1;
-        std::printf("[trees] Texture layout ARGB->RGBA (pink mean %.0f,%.0f,%.0f)\n", mr, mg, mb);
-        std::fflush(stdout);
-        mean_rgb(p, tot, &mr, &mg, &mb);
-    }
-    if (looks_magenta(mr, mg, mb)) {
-        for (u32 i = 0; i < tot; ++i) {
-            const u8 t = p[i * 4 + 0];
-            p[i * 4 + 0] = p[i * 4 + 1];
-            p[i * 4 + 1] = t;
-        }
-        std::printf("[trees] Texture R/G swap (still pink mean %.0f,%.0f,%.0f)\n", mr, mg, mb);
-        std::fflush(stdout);
-    }
-    opaque = 0;
-    u32 mag = 0;
-    for (u32 i = 0; i < tot; ++i) {
-        if (is_hot_magenta(p[i * 4 + 0], p[i * 4 + 1], p[i * 4 + 2])) {
-            p[i * 4 + 0] = 0;
-            p[i * 4 + 1] = 0;
-            p[i * 4 + 2] = 0;
-            p[i * 4 + 3] = 0;
-            ++mag;
-        }
-        if (p[i * 4 + 3] > 128) {
-            ++opaque;
-        }
-    }
-    if (opaque * 8u < tot) {
-        u32 filled = 0;
-        for (u32 i = 0; i < tot; ++i) {
-            if (p[i * 4 + 3] > 8) {
-                continue;
-            }
-            const u8 r = p[i * 4 + 0];
-            const u8 g = p[i * 4 + 1];
-            const u8 b = p[i * 4 + 2];
-            if (is_hot_magenta(r, g, b)) {
-                continue;
-            }
-            if (static_cast<u32>(r) + g + b < 24u) {
-                continue;
-            }
-            p[i * 4 + 3] = 255;
-            ++filled;
-        }
-        std::printf("[trees] Alpha was glitter (opaque %u/%u) — restored %u texels\n", opaque, tot, filled);
-        std::fflush(stdout);
-    } else if (mag) {
-        std::printf("[trees] Chroma-keyed %u hot-magenta texels (of %u)\n", mag, tot);
-        std::fflush(stdout);
-    }
-    mean_rgb(p, tot, &mr, &mg, &mb);
-    if (opaque * 5u > tot * 4u && mg > mr * 1.12f && (mr + mg + mb) < 340.f) {
-        for (u32 i = 0; i < tot; ++i) {
-            const u8 t = p[i * 4 + 0];
-            p[i * 4 + 0] = p[i * 4 + 1];
-            p[i * 4 + 1] = t;
-        }
-        std::printf("[trees] Opaque dark-green bark -> brown (R/G swap, mean %.0f,%.0f,%.0f)\n", mr, mg, mb);
-        std::fflush(stdout);
     }
 }
 
