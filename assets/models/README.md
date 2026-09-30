@@ -11,4 +11,7 @@ Lamps / downtown:
 - `skyscraper-2.glb`
 - `gatelys_klassisk.glb` / `gatelys_moderne.glb`
 
+Cars:
+- `suv_car.glb`
+
 Paths tried: project `assets/models/`, cwd, `../assets/models`, next to `leonida_city`, `build/assets/models/`.

@@ -442,6 +442,32 @@ float tree_height_m(const TreeGlb* t) {
     return tree_up_extent(t);
 }
 
+float suv_fit_scale(const TreeGlb* t) {
+    if (!t || t->nprims == 0) {
+        return 1.f;
+    }
+    const float hx = t->xmax - t->xmin;
+    const float hy = t->ymax - t->ymin;
+    const float hz = t->zmax - t->zmin;
+    float length = hx > hz ? hx : hz;
+    if (t->z_up == 1) {
+        length = hx > hy ? hx : hy;
+    } else if (t->z_up == 2) {
+        length = hy > hz ? hy : hz;
+    }
+    if (length < 0.001f) {
+        return 1.f;
+    }
+    float s = 5.0f / length;
+    if (s > 50.f) {
+        s = 50.f;
+    }
+    if (s < 0.0008f) {
+        s = 0.0008f;
+    }
+    return s;
+}
+
 bool xz_too_close(float x, float z, const float* xz, u32 n, float min_d) {
     const float m2 = min_d * min_d;
     for (u32 i = 0; i < n; ++i) {
@@ -606,6 +632,7 @@ bool BuildingGlPass::init() {
     std::memset(tree_glb, 0, sizeof(tree_glb));
     std::memset(&sky_glb, 0, sizeof(sky_glb));
     std::memset(lamp_glb, 0, sizeof(lamp_glb));
+    std::memset(&suv_glb, 0, sizeof(suv_glb));
     glow_prog = glow_vao = glow_vbo = glow_ibo = glow_ivbo = glow_nidx = 0;
     glow_count = 0;
     cube_vao = cube_vbo = cube_ibo = 0;
@@ -785,6 +812,24 @@ bool BuildingGlPass::init() {
     load_city_tree("gatelys_klassisk.glb", &lamp_glb[0]);
     std::printf("[glb] Loading lamp model: gatelys_moderne.glb\n");
     load_city_tree("gatelys_moderne.glb", &lamp_glb[1]);
+    if (load_city_tree("suv_car.glb", &suv_glb)) {
+        u32 ntex = 0;
+        for (u32 p = 0; p < suv_glb.nprims; ++p) {
+            if (suv_glb.prims[p].tex_w > 1) {
+                ++ntex;
+            }
+        }
+        std::printf("[cars] Loaded SUV model: %u verts, %u textures\n", suv_glb.nverts, ntex);
+        const float hx = suv_glb.xmax - suv_glb.xmin;
+        const float hy = suv_glb.ymax - suv_glb.ymin;
+        const float hz = suv_glb.zmax - suv_glb.zmin;
+        std::printf("[cars] SUV bounds: %.2fx%.2fx%.2f meters\n", hx, hy, hz);
+        std::printf("[cars] Scale factor applied: %.5f\n", suv_fit_scale(&suv_glb));
+        std::fflush(stdout);
+    } else {
+        std::printf("[cars] suv_car.glb not found — no parked SUVs\n");
+        std::fflush(stdout);
+    }
     std::printf("[glb] Loaded street lamp models: klassisk (%u verts), moderne (%u verts)\n",
                 lamp_glb[0].nverts, lamp_glb[1].nverts);
     log_glb_textures("klassisk", &lamp_glb[0]);
@@ -1094,6 +1139,56 @@ void BuildingGlPass::buildMesh(World& world) {
     (void)skip_lamp;
     (void)skip_tree;
 #endif
+    if (suv_glb.nprims > 0) {
+        static float suv_mats[kSuvSpawnCap * 16];
+        static float suv_xz[kSuvSpawnCap * 2];
+        u32 sn       = 0;
+        u32 n_suv_xz = 0;
+        const float sc   = suv_fit_scale(&suv_glb);
+        const int   zup  = suv_glb.z_up;
+        const float y0   = tree_up_min(&suv_glb);
+        const float y    = kCityPlateauY + 0.05f - y0 * sc;
+        const float park = 7.2f; // on asphalt, ~2.8 m inside the 10 m curb
+        auto push_suv = [&](float x, float z, float yaw) {
+            if (sn >= kSuvSpawnCap) {
+                return;
+            }
+            const float nx = std::round(x / kCityBlockPitch) * kCityBlockPitch;
+            const float nz = std::round(z / kCityBlockPitch) * kCityBlockPitch;
+            const float dx = std::fabs(x - nx);
+            const float dz = std::fabs(z - nz);
+            if (dx < 22.f && dz < 22.f) {
+                return;
+            }
+            if (xz_too_close(x, z, suv_xz, n_suv_xz, 5.0f)) {
+                return;
+            }
+            tree_yaw_mat(&suv_mats[sn * 16], x, y, z, yaw, sc, zup);
+            suv_xz[n_suv_xz * 2u]     = x;
+            suv_xz[n_suv_xz * 2u + 1] = z;
+            ++n_suv_xz;
+            ++sn;
+        };
+        for (u32 j = 0; j <= kCityBlocks && sn < kSuvSpawnCap; ++j) {
+            const float z = static_cast<float>(j) * kCityBlockPitch;
+            for (float x = 80.f; x < kCityExtentM - 80.f && sn < kSuvSpawnCap; x += 96.f) {
+                const float side = (static_cast<u32>(x) % 192u < 96u) ? park : -park;
+                const float yaw  = (side > 0.f) ? 0.f : 3.14159265f;
+                push_suv(x, z + side, yaw);
+            }
+        }
+        for (u32 i = 0; i <= kCityBlocks && sn < kSuvSpawnCap; ++i) {
+            const float x = static_cast<float>(i) * kCityBlockPitch;
+            for (float z = 80.f; z < kCityExtentM - 80.f && sn < kSuvSpawnCap; z += 96.f) {
+                const float side = (static_cast<u32>(z) % 192u < 96u) ? park : -park;
+                const float yaw  = (side > 0.f) ? 1.5707963f : -1.5707963f;
+                push_suv(x + side, z, yaw);
+            }
+        }
+        tree_glb_set_instances(&suv_glb, suv_mats, sn);
+        std::printf("[cars] Parked %u SUVs along roads\n", sn);
+        std::fflush(stdout);
+    }
 }
 
 void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target, int width, int height,
@@ -1173,6 +1268,9 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
                 draw_instanced_glb(&sky_glb, tree_shadow_prog);
             }
             draw_tree_glbs(tree_glb, tree_shadow_prog);
+            if (suv_glb.instance_count > 0) {
+                draw_instanced_glb(&suv_glb, tree_shadow_prog);
+            }
             glUseProgram(shadow_prog);
         }
         glDisable(GL_POLYGON_OFFSET_FILL);
@@ -1326,6 +1424,8 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
         glUniform1f(glGetUniformLocation(tree_prog, "uNightGlow"), 0.f);
         draw_tree_glbs(tree_glb, tree_prog);
         draw_instanced_glb(&sky_glb, tree_prog);
+        glUniform1f(glGetUniformLocation(tree_prog, "uNightGlow"), 0.f);
+        draw_instanced_glb(&suv_glb, tree_prog);
         glUseProgram(building_prog);
     }
     if (glow_prog && glow_count > 0 && night > 0.01f) {
@@ -1468,6 +1568,7 @@ void BuildingGlPass::shutdown() {
     for (u32 k = 0; k < kLampKindCount; ++k) {
         tree_glb_shutdown(&lamp_glb[k]);
     }
+    tree_glb_shutdown(&suv_glb);
     if (glow_prog) {
         glDeleteProgram(glow_prog);
         glow_prog = 0;
