@@ -1,7 +1,13 @@
 # Local GLB models (not in git)
 
-Trees are generated in code (`TreeGenerator`). Drop these on the Mac for lamps and downtown:
+Drop these on the Mac:
 
+Trees:
+- `tree.glb`
+- `pine_tree_low-poly.glb`
+- `coconut_tree_low_poly.glb`
+
+Lamps / downtown:
 - `skyscraper-2.glb`
 - `gatelys_klassisk.glb` / `gatelys_moderne.glb`
 

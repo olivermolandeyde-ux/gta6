@@ -1010,7 +1010,8 @@ unsigned leaf_green_tex() {
 }
 
 int is_tree_label(const char* s) {
-    return s && (std::strcmp(s, "oak") == 0 || std::strcmp(s, "pine") == 0 || std::strcmp(s, "palm") == 0);
+    return s && (std::strcmp(s, "oak") == 0 || std::strcmp(s, "pine") == 0 || std::strcmp(s, "palm") == 0 ||
+                 std::strcmp(s, "tree") == 0 || std::strcmp(s, "coconut") == 0);
 }
 
 unsigned fail_red_tex() {
@@ -1532,14 +1533,17 @@ const char* glb_short_name(const char* path) {
             base = p + 1;
         }
     }
-    if (std::strstr(base, "oak")) {
-        return "oak";
+    if (std::strstr(base, "coconut")) {
+        return "palm";
     }
     if (std::strstr(base, "pine")) {
         return "pine";
     }
-    if (std::strstr(base, "palm")) {
-        return "palm";
+    if (std::strstr(base, "palm") || std::strstr(base, "oak")) {
+        return std::strstr(base, "palm") ? "palm" : "oak";
+    }
+    if (std::strcmp(base, "tree.glb") == 0) {
+        return "oak";
     }
     if (std::strstr(base, "klassisk")) {
         return "klassisk";

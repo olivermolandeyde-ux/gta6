@@ -4,10 +4,8 @@ uniform sampler2D uAlbedo;
 uniform int uAlphaMask;
 uniform float uAlphaCut;
 void main() {
-    if (uAlphaMask == 1) {
-        float a = texture(uAlbedo, UV).a;
-        if (a < uAlphaCut) {
-            discard;
-        }
+    float a = texture(uAlbedo, UV).a;
+    if (a < 0.5) {
+        discard;
     }
 }

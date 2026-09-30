@@ -4,7 +4,6 @@
 #include "objects/StreetLight.h"
 #include "render/CityProcTex.h"
 #include "render/CitySolidMesh.h"
-#include "render/TreeGenerator.h"
 #include "render/RenderPipeline.h"
 #include "world/CityGenerator.h"
 
@@ -678,30 +677,26 @@ bool BuildingGlPass::init() {
         "#version 330 core\nlayout(location=0) in vec3 aPos; layout(location=3) in vec4 iM0;\n"
         "layout(location=4) in vec4 iM1; layout(location=5) in vec4 iM2; layout(location=6) in vec4 iM3;\n"
         "uniform mat4 uLightVP; void main(){ mat4 model=mat4(iM0,iM1,iM2,iM3); gl_Position=uLightVP*model*vec4(aPos,1.0); }\n";
-    constexpr const char* kTshFbFs = "#version 330 core\nvoid main(){}\n";
+    constexpr const char* kTshFbFs =
+        "#version 330 core\nin vec2 UV; uniform sampler2D uAlbedo;\n"
+        "void main(){ if(texture(uAlbedo,UV).a<0.5) discard; }\n";
     tree_shadow_prog =
         make_program("shaders/tree_shadow.vert", "shaders/tree_shadow.frag", kTshFbVs, kTshFbFs, "tree_shadow");
-    auto load_tree_kind = [&](const char* glb_a, const char* glb_b, TreeGlb* dst, int kind) {
-        if (load_city_tree(glb_a, dst) || (glb_b && load_city_tree(glb_b, dst))) {
-            for (u32 p = 0; p < dst->nprims; ++p) {
-                if (dst->prims[p].has_alpha) {
-                    dst->prims[p].alpha_mask = 1;
-                    dst->prims[p].cutoff = 0.5f;
-                }
+    auto prep_tree = [](TreeGlb* dst) {
+        for (u32 p = 0; p < dst->nprims; ++p) {
+            if (dst->prims[p].has_alpha) {
+                dst->prims[p].alpha_mask = 1;
+                dst->prims[p].cutoff = 0.5f;
             }
-            return;
-        }
-        if (kind == 0) {
-            TreeGenerator::oak(dst);
-        } else if (kind == 1) {
-            TreeGenerator::pine(dst);
-        } else {
-            TreeGenerator::palm(dst);
         }
     };
-    load_tree_kind("oak_tree_realistic.glb", "oak_tree.glb", &tree_glb[0], 0);
-    load_tree_kind("pine_tree_realistic.glb", "pine_tree.glb", &tree_glb[1], 1);
-    load_tree_kind("palm_tree_realistic.glb", "palm_tree.glb", &tree_glb[2], 2);
+    load_city_tree("tree.glb", &tree_glb[0]);
+    prep_tree(&tree_glb[0]);
+    load_city_tree("pine_tree_low-poly.glb", &tree_glb[1]);
+    prep_tree(&tree_glb[1]);
+    load_city_tree("coconut_tree_low_poly.glb", &tree_glb[2]);
+    prep_tree(&tree_glb[2]);
+    std::printf("[trees] Loaded 3 tree models from GLB files\n");
     std::printf("[trees] Alpha discard enabled for leaf materials\n");
     std::fflush(stdout);
     if (load_city_tree("skyscraper-2.glb", &sky_glb)) {
@@ -768,9 +763,6 @@ bool BuildingGlPass::init() {
         }
         glBindVertexArray(0);
     }
-    std::printf("[gl] tree shadows disabled (perf) — 3 instanced draws, spawn cap %u\n", kTreeSpawnCap);
-    std::fflush(stdout);
-
     std::printf("[gl] BUILDING SHADER COMPILED SUCCESSFULLY\n");
     std::fflush(stdout);
     ok = true;
@@ -982,7 +974,8 @@ void BuildingGlPass::buildMesh(World& world) {
             return;
         }
         const float yaw = std::fmod(x * 0.173f + z * 0.091f, 6.2831853f);
-        const float sc  = 1.f;
+        const u32 sh = static_cast<u32>(x) * 1664525u + static_cast<u32>(z) * 1013904223u;
+        const float sc = 0.85f + static_cast<float>(sh % 1000u) * (0.30f / 999.f);
         const int zup   = tree_glb[kind].z_up;
         const float y0  = zup ? tree_glb[kind].zmin : tree_glb[kind].ymin;
         const float y   = kCityPlateauY + 0.05f - y0 * sc;
@@ -1092,10 +1085,13 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
                 break;
             }
         }
-        if (tree_shadow_prog && sky_glb.instance_count > 0) {
+        if (tree_shadow_prog) {
             glUseProgram(tree_shadow_prog);
             glUniformMatrix4fv(glGetUniformLocation(tree_shadow_prog, "uLightVP"), 1, GL_FALSE, light_vp);
-            draw_instanced_glb(&sky_glb, tree_shadow_prog);
+            if (sky_glb.instance_count > 0) {
+                draw_instanced_glb(&sky_glb, tree_shadow_prog);
+            }
+            draw_tree_glbs(tree_glb, tree_shadow_prog);
             glUseProgram(shadow_prog);
         }
         glDisable(GL_POLYGON_OFFSET_FILL);
