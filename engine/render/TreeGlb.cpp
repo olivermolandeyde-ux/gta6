@@ -1169,33 +1169,24 @@ void kind_oak(u8* p, u32 tot) {
     if (looks_magenta(mr, mg, mb)) {
         argb_to_rgba(p, tot);
     }
-    u32 opaque = 0;
-    for (u32 i = 0; i < tot; ++i) {
-        if (p[i * 4 + 3] > 128) {
-            ++opaque;
-        }
-    }
-    u32 filled = 0;
+    u32 punched = 0;
+    u32 bark    = 0;
     for (u32 i = 0; i < tot; ++i) {
         const u8 r = p[i * 4 + 0];
         const u8 g = p[i * 4 + 1];
         const u8 b = p[i * 4 + 2];
-        if (is_hot_magenta(r, g, b)) {
+        if (is_hot_magenta(r, g, b) || (r < 32 && g < 32 && b < 32)) {
             p[i * 4 + 3] = 0;
+            ++punched;
             continue;
         }
-        const int leaf = (g > r + 12 && g > b + 12) ? 1 : 0;
-        if (opaque * 8u < tot) {
-            if (static_cast<u32>(r) + g + b > 18u) {
-                p[i * 4 + 3] = 255;
-                ++filled;
-            }
-        } else if (!leaf && p[i * 4 + 3] < 250) {
+        const int leaf = (g > r + 8 && g > b + 8) ? 1 : 0;
+        if (!leaf && p[i * 4 + 3] < 250) {
             p[i * 4 + 3] = 255;
-            ++filled;
+            ++bark;
         }
     }
-    std::printf("[trees] oak: restored %u texels (opaque %u/%u)\n", filled, opaque, tot);
+    std::printf("[trees] oak: punched %u black/magenta card texels, filled %u bark\n", punched, bark);
     std::fflush(stdout);
 }
 
