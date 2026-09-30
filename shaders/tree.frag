@@ -41,6 +41,9 @@ void main() {
     if (albedo.a < 0.5) {
         discard;
     }
+    if (albedo.r > 0.85 && albedo.b > 0.80 && albedo.g < 0.28) {
+        discard;
+    }
     vec4 tex = albedo * VertColor;
     tex.rgb = max(tex.rgb, vec3(0.04));
     vec3 emit = texture(uEmissive, UV).rgb;

@@ -1026,51 +1026,39 @@ u8 slen_sig(const u8* s, u32 bl, u32 i) {
     return i < bl ? s[i] : 0;
 }
 
-void magenta_to_alpha(u8* rgba, u32 w, u32 h) {
-    if (!rgba || !w || !h) {
-        return;
-    }
-    u32 n = 0;
-    const u32 tot = w * h;
-    for (u32 i = 0; i < tot; ++i) {
-        const u8 r = rgba[i * 4 + 0];
-        const u8 g = rgba[i * 4 + 1];
-        const u8 b = rgba[i * 4 + 2];
-        if (r > 120 && b > 100 && g * 2u < static_cast<u32>(r) + b && g < 160) {
-            rgba[i * 4 + 0] = 0;
-            rgba[i * 4 + 1] = 0;
-            rgba[i * 4 + 2] = 0;
-            rgba[i * 4 + 3] = 0;
-            ++n;
-        }
-    }
-    if (n) {
-        std::printf("[glb] chroma-keyed %u magenta texels to alpha=0 (of %u)\n", n, tot);
-        std::fflush(stdout);
-    }
+int is_hot_magenta(u8 r, u8 g, u8 b) {
+    return (r > 230 && b > 220 && g < 50) ? 1 : 0;
 }
 
-void fix_tree_rgba_layout(u8* p, u32 w, u32 h) {
+void repair_tree_tex(u8* p, u32 w, u32 h) {
     if (!p || !w || !h) {
         return;
     }
     const u32 tot = w * h;
-    u64 s0 = 0, s1 = 0, s2 = 0, s3 = 0;
-    u32 c0_hi = 0;
+    u32 vote_argb = 0;
+    u32 vote_rgba = 0;
+    u32 vote_bgra = 0;
+    u32 opaque    = 0;
     for (u32 i = 0; i < tot; ++i) {
-        s0 += p[i * 4 + 0];
-        s1 += p[i * 4 + 1];
-        s2 += p[i * 4 + 2];
-        s3 += p[i * 4 + 3];
-        if (p[i * 4 + 0] > 220) {
-            ++c0_hi;
+        const u8 c0 = p[i * 4 + 0];
+        const u8 c1 = p[i * 4 + 1];
+        const u8 c2 = p[i * 4 + 2];
+        const u8 c3 = p[i * 4 + 3];
+        if (c3 > 128) {
+            ++opaque;
+        }
+        if (c0 > 200 && c2 > 70 && c2 > c1 && c2 > c3) {
+            ++vote_argb;
+        }
+        if (c3 > 180 && c1 > 70 && c1 >= c0 && c1 >= c2) {
+            if (c0 + 12 < c2) {
+                ++vote_bgra;
+            } else {
+                ++vote_rgba;
+            }
         }
     }
-    const float m0 = static_cast<float>(s0 / tot);
-    const float m1 = static_cast<float>(s1 / tot);
-    const float m2 = static_cast<float>(s2 / tot);
-    const float m3 = static_cast<float>(s3 / tot);
-    if (c0_hi * 2u > tot && m0 > 180.f && m1 < m2) {
+    if (vote_argb > vote_rgba && vote_argb > vote_bgra && vote_argb > 64) {
         for (u32 i = 0; i < tot; ++i) {
             const u8 a = p[i * 4 + 0];
             const u8 r = p[i * 4 + 1];
@@ -1081,17 +1069,55 @@ void fix_tree_rgba_layout(u8* p, u32 w, u32 h) {
             p[i * 4 + 2] = b;
             p[i * 4 + 3] = a;
         }
-        std::printf("[trees] Texture channels ARGB->RGBA (mean %.0f,%.0f,%.0f,%.0f)\n", m0, m1, m2, m3);
+        std::printf("[trees] Texture layout ARGB->RGBA (votes argb=%u rgba=%u bgra=%u)\n", vote_argb, vote_rgba,
+                    vote_bgra);
         std::fflush(stdout);
-        return;
-    }
-    if (m0 > m1 * 1.25f && m2 > m1 * 0.9f) {
+    } else if (vote_bgra > vote_rgba && vote_bgra > 64) {
         for (u32 i = 0; i < tot; ++i) {
             const u8 t = p[i * 4 + 0];
             p[i * 4 + 0] = p[i * 4 + 2];
             p[i * 4 + 2] = t;
         }
-        std::printf("[trees] Texture channels swapped R/B (mean %.0f,%.0f,%.0f)\n", m0, m1, m2);
+        std::printf("[trees] Texture layout BGRA->RGBA (votes argb=%u rgba=%u bgra=%u)\n", vote_argb, vote_rgba,
+                    vote_bgra);
+        std::fflush(stdout);
+    }
+    opaque = 0;
+    u32 mag = 0;
+    for (u32 i = 0; i < tot; ++i) {
+        if (is_hot_magenta(p[i * 4 + 0], p[i * 4 + 1], p[i * 4 + 2])) {
+            p[i * 4 + 0] = 0;
+            p[i * 4 + 1] = 0;
+            p[i * 4 + 2] = 0;
+            p[i * 4 + 3] = 0;
+            ++mag;
+        }
+        if (p[i * 4 + 3] > 128) {
+            ++opaque;
+        }
+    }
+    if (opaque * 20u < tot) {
+        u32 filled = 0;
+        for (u32 i = 0; i < tot; ++i) {
+            if (p[i * 4 + 3] > 8) {
+                continue;
+            }
+            const u8 r = p[i * 4 + 0];
+            const u8 g = p[i * 4 + 1];
+            const u8 b = p[i * 4 + 2];
+            if (is_hot_magenta(r, g, b)) {
+                continue;
+            }
+            if (static_cast<u32>(r) + g + b < 24u) {
+                continue;
+            }
+            p[i * 4 + 3] = 255;
+            ++filled;
+        }
+        std::printf("[trees] Alpha was glitter (opaque %u/%u) — restored %u texels\n", opaque, tot, filled);
+        std::fflush(stdout);
+    } else if (mag) {
+        std::printf("[trees] Chroma-keyed %u hot-magenta texels (of %u)\n", mag, tot);
         std::fflush(stdout);
     }
 }
@@ -1147,8 +1173,7 @@ unsigned decode_view_image(const JDoc* d, u32 img, const u8* bin, u32 bin_len, u
         return 0;
     }
     if (magenta_key) {
-        fix_tree_rgba_layout(rgba, w, h);
-        magenta_to_alpha(rgba, w, h);
+        repair_tree_tex(rgba, w, h);
     }
     unsigned tex = upload_rgba(rgba, w, h);
     std::printf("[glb] Created OpenGL texture ID %u (%ux%u pixels, %u src bytes)\n", tex, w, h, bl);
