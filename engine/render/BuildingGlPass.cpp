@@ -389,15 +389,40 @@ float glb_fit_scale(const TreeGlb* t, float target_h) {
     return s;
 }
 
+float tree_up_extent(const TreeGlb* t) {
+    if (!t) {
+        return 1.f;
+    }
+    if (t->z_up == 2) {
+        return t->xmax - t->xmin;
+    }
+    if (t->z_up == 1) {
+        return t->zmax - t->zmin;
+    }
+    return t->ymax - t->ymin;
+}
+
+float tree_up_min(const TreeGlb* t) {
+    if (!t) {
+        return 0.f;
+    }
+    if (t->z_up == 2) {
+        return t->xmin;
+    }
+    if (t->z_up == 1) {
+        return t->zmin;
+    }
+    return t->ymin;
+}
+
 float tree_fit_scale(const TreeGlb* t, float target_h) {
     if (!t || t->nprims == 0) {
         return 1.f;
     }
-    const float hy = t->ymax - t->ymin;
-    const float hx = t->xmax - t->xmin;
-    const float hz = t->zmax - t->zmin;
-    float h = t->z_up ? hz : hy;
+    float h = tree_up_extent(t);
     if (h < 0.001f) {
+        const float hx = t->xmax - t->xmin;
+        const float hz = t->zmax - t->zmin;
         h = hx > hz ? hx : hz;
     }
     if (h < 0.001f) {
@@ -414,12 +439,7 @@ float tree_fit_scale(const TreeGlb* t, float target_h) {
 }
 
 float tree_height_m(const TreeGlb* t) {
-    if (!t) {
-        return 0.f;
-    }
-    const float hy = t->ymax - t->ymin;
-    const float hz = t->zmax - t->zmin;
-    return t->z_up ? hz : hy;
+    return tree_up_extent(t);
 }
 
 bool xz_too_close(float x, float z, const float* xz, u32 n, float min_d) {
@@ -451,19 +471,26 @@ void tree_yaw_mat(float* m, float x, float y, float z, float yaw, float sc, int 
     const float c = std::cos(yaw);
     const float s = std::sin(yaw);
     std::memset(m, 0, 16 * sizeof(float));
-    if (!z_up) {
-        m[0]  = c * sc;
-        m[2]  = -s * sc;
-        m[5]  = sc;
+    if (z_up == 2) {
+        // Ry(yaw) * Rz(90°) * S  — X-up trunk stands up in Y.
+        m[1]  = sc;
+        m[4]  = -c * sc;
+        m[6]  = s * sc;
         m[8]  = s * sc;
         m[10] = c * sc;
-    } else {
-        // Ry(yaw) * Rx(-90°) * S  — glTF Z-up assets stand up in Y.
+    } else if (z_up) {
+        // Ry(yaw) * Rx(-90°) * S  — Z-up assets stand up in Y.
         m[0]  = c * sc;
         m[2]  = s * sc;
         m[4]  = s * sc;
         m[6]  = -c * sc;
         m[9]  = sc;
+    } else {
+        m[0]  = c * sc;
+        m[2]  = -s * sc;
+        m[5]  = sc;
+        m[8]  = s * sc;
+        m[10] = c * sc;
     }
     m[12] = x;
     m[13] = y;
@@ -1029,7 +1056,7 @@ void BuildingGlPass::buildMesh(World& world) {
         const float fit = tree_fit_scale(&tree_glb[kind], kind == 1 ? 9.f : 8.f);
         const float sc = fit * (0.85f + static_cast<float>(sh % 1000u) * (0.30f / 999.f));
         const int zup   = tree_glb[kind].z_up;
-        const float y0  = zup ? tree_glb[kind].zmin : tree_glb[kind].ymin;
+        const float y0  = tree_up_min(&tree_glb[kind]);
         const float y   = kCityPlateauY + 0.05f - y0 * sc;
         tree_yaw_mat(&tree_mats[kind][tn[kind] * 16], x, y, z, yaw, sc, zup);
         ++tn[kind];

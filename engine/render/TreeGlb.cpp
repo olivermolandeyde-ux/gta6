@@ -1030,6 +1030,42 @@ int is_hot_magenta(u8 r, u8 g, u8 b) {
     return (r > 230 && b > 220 && g < 50) ? 1 : 0;
 }
 
+void argb_to_rgba(u8* p, u32 tot) {
+    for (u32 i = 0; i < tot; ++i) {
+        const u8 a = p[i * 4 + 0];
+        const u8 r = p[i * 4 + 1];
+        const u8 g = p[i * 4 + 2];
+        const u8 b = p[i * 4 + 3];
+        p[i * 4 + 0] = r;
+        p[i * 4 + 1] = g;
+        p[i * 4 + 2] = b;
+        p[i * 4 + 3] = a;
+    }
+}
+
+void mean_rgb(const u8* p, u32 tot, float* mr, float* mg, float* mb) {
+    u64 sr = 0, sg = 0, sb = 0, n = 0;
+    for (u32 i = 0; i < tot; ++i) {
+        const u8 r = p[i * 4 + 0];
+        const u8 g = p[i * 4 + 1];
+        const u8 b = p[i * 4 + 2];
+        if (static_cast<u32>(r) + g + b < 24u) {
+            continue;
+        }
+        sr += r;
+        sg += g;
+        sb += b;
+        ++n;
+    }
+    *mr = n ? static_cast<float>(sr / n) : 0.f;
+    *mg = n ? static_cast<float>(sg / n) : 0.f;
+    *mb = n ? static_cast<float>(sb / n) : 0.f;
+}
+
+int looks_magenta(float mr, float mg, float mb) {
+    return (mr > mg * 1.12f && mb > mg * 0.85f) ? 1 : 0;
+}
+
 void repair_tree_tex(u8* p, u32 w, u32 h) {
     if (!p || !w || !h) {
         return;
@@ -1047,39 +1083,53 @@ void repair_tree_tex(u8* p, u32 w, u32 h) {
         if (c3 > 128) {
             ++opaque;
         }
-        if (c0 > 200 && c2 > 70 && c2 > c1 && c2 > c3) {
+        if (c2 > 55 && c2 > c1 && c2 > c3 && c2 + 8 > c0) {
             ++vote_argb;
         }
-        if (c3 > 180 && c1 > 70 && c1 >= c0 && c1 >= c2) {
-            if (c0 + 12 < c2) {
-                ++vote_bgra;
-            } else {
-                ++vote_rgba;
+        if (c1 > 55 && c1 >= c0 && c1 >= c2) {
+            if (c3 > 40) {
+                if (c0 + 12 < c2) {
+                    ++vote_bgra;
+                } else {
+                    ++vote_rgba;
+                }
             }
         }
     }
-    if (vote_argb > vote_rgba && vote_argb > vote_bgra && vote_argb > 64) {
-        for (u32 i = 0; i < tot; ++i) {
-            const u8 a = p[i * 4 + 0];
-            const u8 r = p[i * 4 + 1];
-            const u8 g = p[i * 4 + 2];
-            const u8 b = p[i * 4 + 3];
-            p[i * 4 + 0] = r;
-            p[i * 4 + 1] = g;
-            p[i * 4 + 2] = b;
-            p[i * 4 + 3] = a;
-        }
+    int converted = 0;
+    if (vote_argb > vote_rgba && vote_argb > vote_bgra && vote_argb > 24) {
+        argb_to_rgba(p, tot);
+        converted = 1;
         std::printf("[trees] Texture layout ARGB->RGBA (votes argb=%u rgba=%u bgra=%u)\n", vote_argb, vote_rgba,
                     vote_bgra);
         std::fflush(stdout);
-    } else if (vote_bgra > vote_rgba && vote_bgra > 64) {
+    } else if (vote_bgra > vote_rgba && vote_bgra > 24) {
         for (u32 i = 0; i < tot; ++i) {
             const u8 t = p[i * 4 + 0];
             p[i * 4 + 0] = p[i * 4 + 2];
             p[i * 4 + 2] = t;
         }
+        converted = 1;
         std::printf("[trees] Texture layout BGRA->RGBA (votes argb=%u rgba=%u bgra=%u)\n", vote_argb, vote_rgba,
                     vote_bgra);
+        std::fflush(stdout);
+    }
+    float mr = 0.f, mg = 0.f, mb = 0.f;
+    mean_rgb(p, tot, &mr, &mg, &mb);
+    if (!converted && looks_magenta(mr, mg, mb)) {
+        argb_to_rgba(p, tot);
+        converted = 1;
+        std::printf("[trees] Texture layout ARGB->RGBA (pink mean %.0f,%.0f,%.0f)\n", mr, mg, mb);
+        std::fflush(stdout);
+        mean_rgb(p, tot, &mr, &mg, &mb);
+    }
+    if (looks_magenta(mr, mg, mb)) {
+        for (u32 i = 0; i < tot; ++i) {
+            const u8 t = p[i * 4 + 0];
+            p[i * 4 + 0] = p[i * 4 + 1];
+            p[i * 4 + 1] = t;
+        }
+        std::printf("[trees] Texture R/G swap (still pink mean %.0f,%.0f,%.0f)\n", mr, mg, mb);
         std::fflush(stdout);
     }
     opaque = 0;
@@ -1096,7 +1146,7 @@ void repair_tree_tex(u8* p, u32 w, u32 h) {
             ++opaque;
         }
     }
-    if (opaque * 20u < tot) {
+    if (opaque * 8u < tot) {
         u32 filled = 0;
         for (u32 i = 0; i < tot; ++i) {
             if (p[i * 4 + 3] > 8) {
@@ -1470,519 +1520,4 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
                 if (!pr.tex) {
                     const JNode* bcf = j_field(d, pbr_id, "baseColorFactor");
                     if (bcf && bcf->kind == JK_ARR) {
-                        float f[4] = {1.f, 1.f, 1.f, 1.f};
-                        u32 ci = 0;
-                        for (u32 c = bcf->child; c != 0 && ci < 4; c = d->nodes[c].next, ++ci) {
-                            f[ci] = static_cast<float>(d->nodes[c].num);
-                        }
-                        const float lum = f[0] * 0.30f + f[1] * 0.59f + f[2] * 0.11f;
-                        if (lum < 0.18f) {
-                            f[0] = 0.62f;
-                            f[1] = 0.63f;
-                            f[2] = 0.66f;
-                        }
-                        pr.tex = solid_tex(static_cast<u8>(clampf(f[0], 0.f, 1.f) * 255.f),
-                                           static_cast<u8>(clampf(f[1], 0.f, 1.f) * 255.f),
-                                           static_cast<u8>(clampf(f[2], 0.f, 1.f) * 255.f),
-                                           static_cast<u8>(clampf(f[3], 0.f, 1.f) * 255.f));
-                        pr.tex_w = pr.tex_h = 1;
-                    }
-                }
-            }
-            const JNode* emt = j_field(d, mat, "emissiveTexture");
-            if (emt) {
-                const u32 tex_i = j_idx(d, static_cast<u32>(emt - d->nodes), "index");
-                if (tex_i < ntex) {
-                    pr.tex_emit = tex_cache[tex_i];
-                }
-            }
-            if (!pr.tex_emit) {
-                const JNode* emf = j_field(d, mat, "emissiveFactor");
-                if (emf && emf->kind == JK_ARR) {
-                    float f[3] = {0, 0, 0};
-                    u32 ci = 0;
-                    for (u32 c = emf->child; c != 0 && ci < 3; c = d->nodes[c].next, ++ci) {
-                        f[ci] = static_cast<float>(d->nodes[c].num);
-                    }
-                    if (f[0] + f[1] + f[2] > 0.01f) {
-                        pr.tex_emit = solid_tex(static_cast<u8>(clampf(f[0], 0.f, 1.f) * 255.f),
-                                                static_cast<u8>(clampf(f[1], 0.f, 1.f) * 255.f),
-                                                static_cast<u8>(clampf(f[2], 0.f, 1.f) * 255.f), 255);
-                    }
-                }
-            }
-        }
-    }
-    if (!pr.tex) {
-        if (is_tree_label(out->label)) {
-            pr.tex = pr.alpha_mask ? leaf_green_tex() : bark_brown_tex();
-            std::printf("[glb] %s material %u has no albedo — fallback %s\n", out->label, mat_i,
-                        pr.alpha_mask ? "leaf green #228B22" : "bark brown #8B4513");
-        } else {
-            std::printf("[glb] WARNING: Failed to load texture for material %u — using gray metal\n", mat_i);
-            pr.tex = gray_metal_tex();
-        }
-        std::fflush(stdout);
-        pr.tex_w = pr.tex_h = 1;
-    }
-    if (!pr.tex_emit) {
-        pr.tex_emit = black_tex();
-    }
-    {
-        const char* solid = std::getenv("LEONIDA_TREE_SOLID");
-        if (solid && solid[0] == '1' && is_tree_label(out->label)) {
-            const int leaf = pr.alpha_mask;
-            pr.tex = leaf ? leaf_green_tex() : bark_brown_tex();
-            pr.alpha_mask = 0;
-            pr.tex_w = pr.tex_h = 1;
-            std::printf("[glb] %s SOLID DEBUG: %s # %s (alpha off)\n", out->label, leaf ? "leaf" : "bark",
-                        leaf ? "228B22" : "8B4513");
-        }
-    }
-    std::printf("[glb] %s prim %u draw mode=%d nidx=%u nvert=%u tex=%ux%u mask=%d cutoff=%.2f COLOR_0=%s\n",
-                out->label, out->nprims, pr.gl_mode, nidx, pc, pr.tex_w, pr.tex_h, pr.alpha_mask, pr.cutoff,
-                pr.has_color0 ? "YES-ignored" : "NO");
-    std::fflush(stdout);
-    out->nverts += pc;
-    out->nprims++;
-    std::free(verts);
-    std::free(idx);
-    return true;
-}
-
-void walk_node(TreeGlb* out, const JDoc* d, u32 node, const float* parent, const u8* bin, u32 bin_len,
-               unsigned* tex_cache, const u32* tex_w, const u32* tex_h, const int* tex_a, u32 ntex) {
-    float local[16], world[16];
-    node_local(d, node, local);
-    mat_mul(world, parent, local);
-    {
-        const JNode* nn = j_field(d, node, "name");
-        const JNode* mesh_n0 = j_field(d, node, "mesh");
-        std::printf("[glb] %s node '%.*s' mesh=%s T=(%.3f,%.3f,%.3f)\n", out->label,
-                    nn && nn->kind == JK_STR ? static_cast<int>(nn->slen) : 1, nn && nn->kind == JK_STR ? nn->s : "-",
-                    mesh_n0 && mesh_n0->kind == JK_NUM ? "yes" : "no", local[12], local[13], local[14]);
-        std::fflush(stdout);
-    }
-    const JNode* mesh_n = j_field(d, node, "mesh");
-    if (mesh_n && mesh_n->kind == JK_NUM) {
-        const JNode* meshes = j_field(d, d->root, "meshes");
-        u32 mesh = j_arr_at(d, meshes, static_cast<u32>(mesh_n->num));
-        const JNode* prims = j_field(d, mesh, "primitives");
-        const JNode* mname = j_field(d, mesh, "name");
-        u32 npr = 0;
-        if (prims && prims->kind == JK_ARR) {
-            for (u32 c = prims->child; c != 0; c = d->nodes[c].next) {
-                ++npr;
-            }
-        }
-        std::printf("[glb] %s mesh '%.*s': %u primitives\n", out->label,
-                    mname && mname->kind == JK_STR ? static_cast<int>(mname->slen) : 1,
-                    mname && mname->kind == JK_STR ? mname->s : "-", npr);
-        std::fflush(stdout);
-        if (prims && prims->kind == JK_ARR) {
-            for (u32 c = prims->child; c != 0; c = d->nodes[c].next) {
-                emit_prim(out, d, c, world, bin, bin_len, tex_cache, tex_w, tex_h, tex_a, ntex);
-            }
-        }
-    }
-    const JNode* ch = j_field(d, node, "children");
-    if (ch && ch->kind == JK_ARR) {
-        for (u32 c = ch->child; c != 0; c = d->nodes[c].next) {
-            if (d->nodes[c].kind == JK_NUM) {
-                walk_node(out, d, j_arr_at(d, j_field(d, d->root, "nodes"), static_cast<u32>(d->nodes[c].num)),
-                          world, bin, bin_len, tex_cache, tex_w, tex_h, tex_a, ntex);
-            }
-        }
-    }
-}
-
-} // namespace
-
-const char* glb_short_name(const char* path) {
-    const char* base = path;
-    for (const char* p = path; p && *p; ++p) {
-        if (*p == '/') {
-            base = p + 1;
-        }
-    }
-    if (std::strstr(base, "coconut")) {
-        return "palm";
-    }
-    if (std::strstr(base, "pine")) {
-        return "pine";
-    }
-    if (std::strstr(base, "palm") || std::strstr(base, "oak")) {
-        return std::strstr(base, "palm") ? "palm" : "oak";
-    }
-    if (std::strcmp(base, "tree.glb") == 0) {
-        return "oak";
-    }
-    if (std::strstr(base, "klassisk")) {
-        return "klassisk";
-    }
-    if (std::strstr(base, "moderne")) {
-        return "moderne";
-    }
-    if (std::strstr(base, "skyscraper")) {
-        return "skyscraper";
-    }
-    return base;
-}
-
-u32 j_arr_len(const JDoc* d, const JNode* arr) {
-    if (!arr || arr->kind != JK_ARR) {
-        return 0;
-    }
-    u32 n = 0;
-    for (u32 c = arr->child; c != 0; c = d->nodes[c].next) {
-        ++n;
-    }
-    return n;
-}
-
-bool load_tree_glb(const char* path, TreeGlb* out) {
-    std::memset(out, 0, sizeof(*out));
-    out->ymin = out->xmin = out->zmin = 1.0e9f;
-    out->ymax = out->xmax = out->zmax = -1.0e9f;
-    {
-        const char* sn = glb_short_name(path);
-        u32 i = 0;
-        while (sn[i] && i + 1u < 32u) {
-            out->label[i] = sn[i];
-            ++i;
-        }
-        out->label[i] = 0;
-    }
-    std::printf("[glb] Loading tree model: %s\n", path);
-    std::fflush(stdout);
-    FILE* f = std::fopen(path, "rb");
-    if (!f) {
-        std::printf("[gl] tree glb missing %s\n", path);
-        std::fflush(stdout);
-        return false;
-    }
-    std::fseek(f, 0, SEEK_END);
-    const long sz = std::ftell(f);
-    std::fseek(f, 0, SEEK_SET);
-    if (sz < 20) {
-        std::fclose(f);
-        return false;
-    }
-    u8* file = static_cast<u8*>(std::malloc(static_cast<usize>(sz) + 1));
-    if (!file) {
-        std::fclose(f);
-        return false;
-    }
-    const usize nread = std::fread(file, 1, static_cast<usize>(sz), f);
-    std::fclose(f);
-    file[nread] = 0;
-    u32 magic = 0, ver = 0, length = 0;
-    std::memcpy(&magic, file, 4);
-    std::memcpy(&ver, file + 4, 4);
-    std::memcpy(&length, file + 8, 4);
-    if (magic != 0x46546C67u || ver != 2) {
-        std::printf("[gl] not a GLB2: %s\n", path);
-        std::free(file);
-        return false;
-    }
-    u32 cursor = 12;
-    const char* json = nullptr;
-    u32 json_len = 0;
-    const u8* bin = nullptr;
-    u32 bin_len = 0;
-    while (cursor + 8 <= nread) {
-        u32 clen = 0, cty = 0;
-        std::memcpy(&clen, file + cursor, 4);
-        std::memcpy(&cty, file + cursor + 4, 4);
-        cursor += 8;
-        if (cursor + clen > nread) {
-            break;
-        }
-        if (cty == 0x4E4F534Au) {
-            json = reinterpret_cast<const char*>(file + cursor);
-            json_len = clen;
-        } else if (cty == 0x004E4942u) {
-            bin = file + cursor;
-            bin_len = clen;
-        }
-        cursor += clen;
-    }
-    if (!json || !bin) {
-        std::free(file);
-        return false;
-    }
-    char* json_z = static_cast<char*>(std::malloc(json_len + 1));
-    if (!json_z) {
-        std::free(file);
-        return false;
-    }
-    std::memcpy(json_z, json, json_len);
-    json_z[json_len] = 0;
-    const u32 jcap = 65536;
-    JNode* nodes = static_cast<JNode*>(std::malloc(sizeof(JNode) * jcap));
-    if (!nodes) {
-        std::free(json_z);
-        std::free(file);
-        return false;
-    }
-    JDoc doc{};
-    doc.nodes = nodes;
-    doc.cap = jcap;
-    doc.n = 1; // 0 unused so child=0 means empty
-    const char* jp = json_z;
-    u32 root = 0;
-    if (!j_parse_value(&doc, &jp, &root)) {
-        std::printf("[gl] tree glb JSON parse failed %s\n", path);
-        std::free(nodes);
-        std::free(json_z);
-        std::free(file);
-        return false;
-    }
-    doc.root = root;
-
-    unsigned tex_cache[64];
-    u32 tex_w[64];
-    u32 tex_h[64];
-    int tex_a[64];
-    std::memset(tex_cache, 0, sizeof(tex_cache));
-    std::memset(tex_w, 0, sizeof(tex_w));
-    std::memset(tex_h, 0, sizeof(tex_h));
-    std::memset(tex_a, 0, sizeof(tex_a));
-    u32 ntex = 0;
-    const JNode* textures = j_field(&doc, root, "textures");
-    const JNode* images = j_field(&doc, root, "images");
-    if (textures && textures->kind == JK_ARR && textures->child != 0) {
-        for (u32 c = textures->child; c != 0 && ntex < 64; c = doc.nodes[c].next) {
-            const u32 src_i = j_idx(&doc, c, "source");
-            unsigned tex = 0;
-            u32 w = 0, h = 0;
-            int ha = 0;
-            if (images) {
-                u32 img = j_arr_at(&doc, images, src_i);
-                tex = decode_view_image(&doc, img, bin, bin_len, &w, &h, &ha, is_tree_label(out->label));
-            }
-            if (!tex) {
-                std::printf("[glb] WARNING: Failed to load texture %u (image source %u)%s\n", ntex, src_i,
-                            is_tree_label(out->label) ? " — tree will use brown/green fallback" : " — debug RED");
-                std::fflush(stdout);
-                if (!is_tree_label(out->label)) {
-                    tex = fail_red_tex();
-                    w = h = 1;
-                    ha    = 0;
-                }
-            }
-            tex_w[ntex]     = w;
-            tex_h[ntex]     = h;
-            tex_a[ntex]     = ha;
-            tex_cache[ntex] = tex;
-            ++ntex;
-        }
-    } else if (images && images->kind == JK_ARR) {
-        for (u32 c = images->child; c != 0 && ntex < 64; c = doc.nodes[c].next) {
-            u32 w = 0, h = 0;
-            int ha          = 0;
-            unsigned tex = decode_view_image(&doc, c, bin, bin_len, &w, &h, &ha, is_tree_label(out->label));
-            if (!tex && !is_tree_label(out->label)) {
-                tex = fail_red_tex();
-                w = h = 1;
-                ha    = 0;
-            }
-            tex_w[ntex]     = w;
-            tex_h[ntex]     = h;
-            tex_a[ntex]     = ha;
-            tex_cache[ntex] = tex;
-            ++ntex;
-        }
-    }
-    std::printf("[glb] textures decoded=%u json_nodes=%u bin=%u\n", ntex, doc.n, bin_len);
-    std::printf("[glb] Tree '%s' meshes: %u, materials: %u, textures: %u\n", out->label,
-                j_arr_len(&doc, j_field(&doc, root, "meshes")),
-                j_arr_len(&doc, j_field(&doc, root, "materials")), ntex);
-    std::fflush(stdout);
-
-    float ident[16];
-    mat_ident(ident);
-    const JNode* scenes = j_field(&doc, root, "scenes");
-    const JNode* nodesj = j_field(&doc, root, "nodes");
-    u32 scene_i = static_cast<u32>(j_num(&doc, root, "scene", 0));
-    u32 scene = scenes ? j_arr_at(&doc, scenes, scene_i) : 0;
-    const JNode* snodes = scene ? j_field(&doc, scene, "nodes") : nullptr;
-    if (snodes && snodes->kind == JK_ARR && nodesj) {
-        for (u32 c = snodes->child; c != 0; c = doc.nodes[c].next) {
-            if (doc.nodes[c].kind == JK_NUM) {
-                u32 ni = j_arr_at(&doc, nodesj, static_cast<u32>(doc.nodes[c].num));
-                if (ni) {
-                    walk_node(out, &doc, ni, ident, bin, bin_len, tex_cache, tex_w, tex_h, tex_a, ntex);
-                }
-            }
-        }
-    }
-
-    glGenBuffers(1, &out->instance_vbo);
-    glBindBuffer(GL_ARRAY_BUFFER, out->instance_vbo);
-    glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(kTreeInstanceCap * 16 * sizeof(float)), nullptr,
-                 GL_DYNAMIC_DRAW);
-    for (u32 i = 0; i < out->nprims; ++i) {
-        glBindVertexArray(out->prims[i].vao);
-        glBindBuffer(GL_ARRAY_BUFFER, out->instance_vbo);
-        const u32 stride = 16 * sizeof(float);
-        for (u32 k = 0; k < 4; ++k) {
-            glEnableVertexAttribArray(3 + k);
-            glVertexAttribPointer(3 + k, 4, GL_FLOAT, GL_FALSE, static_cast<GLsizei>(stride),
-                                  reinterpret_cast<void*>(k * 4 * sizeof(float)));
-            glVertexAttribDivisor(3 + k, 1);
-        }
-    }
-    glBindVertexArray(0);
-    std::free(nodes);
-    std::free(json_z);
-    std::free(file);
-    if (out->ymax < out->ymin) {
-        out->ymin = 0.f;
-        out->ymax = 1.f;
-    }
-    if (out->xmax < out->xmin) {
-        out->xmin = -0.5f;
-        out->xmax = 0.5f;
-    }
-    if (out->zmax < out->zmin) {
-        out->zmin = -0.5f;
-        out->zmax = 0.5f;
-    }
-    {
-        const float hy = out->ymax - out->ymin;
-        const float hx = out->xmax - out->xmin;
-        const float hz = out->zmax - out->zmin;
-        out->z_up = (hz > hy * 1.5f && hz > hx) ? 1 : 0;
-    }
-    std::printf("[glb] %s AABB x=[%.3f,%.3f] y=[%.3f,%.3f] z=[%.3f,%.3f] size=(%.3f,%.3f,%.3f) z_up=%d prims=%u verts=%u\n",
-                out->label, out->xmin, out->xmax, out->ymin, out->ymax, out->zmin, out->zmax,
-                out->xmax - out->xmin, out->ymax - out->ymin, out->zmax - out->zmin, out->z_up, out->nprims,
-                out->nverts);
-    std::printf("[gl] tree glb %s prims=%u verts=%u bytes=%ld height=%.2f (y=%.2f..%.2f) z_up=%d\n", path,
-                out->nprims, out->nverts, static_cast<long>(sz), out->ymax - out->ymin, out->ymin, out->ymax,
-                out->z_up);
-    std::fflush(stdout);
-    return out->nprims > 0;
-}
-
-bool try_load_path(const char* path, TreeGlb* out) {
-    FILE* f = std::fopen(path, "rb");
-    if (!f) {
-        return false;
-    }
-    std::fclose(f);
-    std::printf("[gl] found tree model %s\n", path);
-    std::fflush(stdout);
-    return load_tree_glb(path, out);
-}
-
-void dir_of(const char* path, char* dst, u32 cap) {
-    dst[0] = 0;
-    if (!path) {
-        return;
-    }
-    u32 last = 0;
-    u32 n = 0;
-    while (path[n] && n + 1 < cap) {
-        if (path[n] == '/') {
-            last = n;
-        }
-        ++n;
-    }
-    if (n >= cap) {
-        n = cap - 1;
-    }
-    const u32 len = last > 0 ? last : n;
-    std::memcpy(dst, path, len);
-    dst[len] = 0;
-}
-
-bool find_and_load_tree_glb(const char* filename, TreeGlb* out) {
-    char cwd[512];
-    cwd[0] = 0;
-    if (!getcwd(cwd, sizeof(cwd))) {
-        cwd[0] = '.';
-        cwd[1] = 0;
-    }
-    char exe_dir[512];
-    exe_dir[0] = 0;
-#if defined(__APPLE__)
-    char exe[512];
-    u32 esz = sizeof(exe);
-    if (_NSGetExecutablePath(exe, &esz) == 0) {
-        dir_of(exe, exe_dir, sizeof(exe_dir));
-    }
-#endif
-    const char* cands[12];
-    char buf[12][768];
-    u32 n = 0;
-    auto add = [&](const char* fmt, const char* a) {
-        if (n >= 12) {
-            return;
-        }
-        std::snprintf(buf[n], sizeof(buf[n]), fmt, a, filename);
-        cands[n] = buf[n];
-        ++n;
-    };
-    add("%s/assets/models/%s", LEONIDA_SOURCE_DIR);
-    add("%s/assets/models/%s", cwd);
-    add("%s/../assets/models/%s", cwd);
-    add("%s/assets/models/%s", ".");
-    add("%s/assets/models/%s", "..");
-    if (exe_dir[0]) {
-        add("%s/assets/models/%s", exe_dir);
-        add("%s/../assets/models/%s", exe_dir);
-        add("%s/../../assets/models/%s", exe_dir);
-    }
-    add("%s/build/assets/models/%s", LEONIDA_SOURCE_DIR);
-    for (u32 i = 0; i < n; ++i) {
-        if (try_load_path(cands[i], out)) {
-            return true;
-        }
-    }
-    std::printf("[gl] tree glb not found: %s (drop it in assets/models/)\n", filename);
-    std::fflush(stdout);
-    return false;
-}
-
-void tree_glb_shutdown(TreeGlb* t) {
-    if (!t) {
-        return;
-    }
-    for (u32 i = 0; i < t->nprims; ++i) {
-        if (t->prims[i].vao) {
-            glDeleteVertexArrays(1, &t->prims[i].vao);
-        }
-        if (t->prims[i].vbo) {
-            glDeleteBuffers(1, &t->prims[i].vbo);
-        }
-        if (t->prims[i].ibo) {
-            glDeleteBuffers(1, &t->prims[i].ibo);
-        }
-        if (t->prims[i].tex) {
-            glDeleteTextures(1, &t->prims[i].tex);
-        }
-        if (t->prims[i].tex_emit && t->prims[i].tex_emit != t->prims[i].tex) {
-            glDeleteTextures(1, &t->prims[i].tex_emit);
-        }
-    }
-    if (t->instance_vbo) {
-        glDeleteBuffers(1, &t->instance_vbo);
-    }
-    std::memset(t, 0, sizeof(*t));
-}
-
-void tree_glb_set_instances(TreeGlb* t, const float* mats16, u32 count) {
-    if (!t || !t->instance_vbo) {
-        return;
-    }
-    if (count > kTreeInstanceCap) {
-        count = kTreeInstanceCap;
-    }
-    t->instance_count = count;
-    glBindBuffer(GL_ARRAY_BUFFER, t->instance_vbo);
-    glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(count * 16 * sizeof(float)), mats16);
-}
-
-} // namespace engine
+    
