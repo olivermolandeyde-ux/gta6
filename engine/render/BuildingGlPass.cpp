@@ -68,11 +68,15 @@ void mat_persp(float* m, float fovy, float aspect, float n, float fa) {
 }
 
 bool load_text_file(const char* rel, char* dst, u32 cap) {
-    char abs0[512];
-    std::snprintf(abs0, sizeof(abs0), "%s/%s", LEONIDA_SOURCE_DIR, rel);
-    const char* paths[3] = {rel, abs0, nullptr};
-    for (u32 i = 0; paths[i]; ++i) {
-        FILE* f = std::fopen(paths[i], "rb");
+    char buf[6][512];
+    std::snprintf(buf[0], sizeof(buf[0]), "%s", rel);
+    std::snprintf(buf[1], sizeof(buf[1]), "%s/%s", LEONIDA_SOURCE_DIR, rel);
+    std::snprintf(buf[2], sizeof(buf[2]), "../%s", rel);
+    std::snprintf(buf[3], sizeof(buf[3]), "../../%s", rel);
+    std::snprintf(buf[4], sizeof(buf[4]), "%s/../%s", LEONIDA_SOURCE_DIR, rel);
+    std::snprintf(buf[5], sizeof(buf[5]), "./%s", rel);
+    for (u32 i = 0; i < 6; ++i) {
+        FILE* f = std::fopen(buf[i], "rb");
         if (!f) {
             continue;
         }
@@ -654,13 +658,21 @@ bool BuildingGlPass::init() {
     glBindVertexArray(0);
 
     constexpr const char* kTreeFbVs =
-        "#version 330 core\nlayout(location=0) in vec3 aPos; layout(location=7) in vec4 aColor;\n"
-        "layout(location=3) in vec4 iM0; layout(location=4) in vec4 iM1; layout(location=5) in vec4 iM2; layout(location=6) in vec4 iM3;\n"
-        "uniform mat4 view,projection,uLightVP; out vec3 FragPos; out vec3 Normal; out vec2 UV; out vec4 LightPos; out vec4 VertColor;\n"
-        "void main(){ mat4 model=mat4(iM0,iM1,iM2,iM3); vec4 wp=model*vec4(aPos,1.0); FragPos=wp.xyz; Normal=vec3(0,1,0); UV=vec2(0.0); VertColor=vec4(1.0); LightPos=uLightVP*wp; gl_Position=projection*view*wp; }\n";
+        "#version 330 core\n"
+        "layout(location=0) in vec3 aPos; layout(location=1) in vec3 aNormal; layout(location=2) in vec2 aUV;\n"
+        "layout(location=7) in vec4 aColor;\n"
+        "layout(location=3) in vec4 iM0; layout(location=4) in vec4 iM1;\n"
+        "layout(location=5) in vec4 iM2; layout(location=6) in vec4 iM3;\n"
+        "uniform mat4 view,projection,uLightVP;\n"
+        "out vec3 FragPos; out vec3 Normal; out vec2 UV; out vec4 LightPos; out vec4 VertColor;\n"
+        "void main(){ mat4 model=mat4(iM0,iM1,iM2,iM3); vec4 wp=model*vec4(aPos,1.0);\n"
+        " FragPos=wp.xyz; Normal=mat3(model)*aNormal; UV=aUV; VertColor=vec4(1.0);\n"
+        " LightPos=uLightVP*wp; gl_Position=projection*view*wp; }\n";
     constexpr const char* kTreeFbFs =
-        "#version 330 core\nin vec3 FragPos; in vec3 Normal; in vec2 UV; in vec4 LightPos; in vec4 VertColor; out vec4 FragColor;\n"
-        "void main(){ FragColor=vec4(0.2,0.5,0.2,1.0); }\n";
+        "#version 330 core\n"
+        "in vec3 FragPos; in vec3 Normal; in vec2 UV; in vec4 LightPos; in vec4 VertColor;\n"
+        "uniform sampler2D uAlbedo; out vec4 FragColor;\n"
+        "void main(){ vec4 albedo=texture(uAlbedo, UV); if(albedo.a<0.5) discard; FragColor=vec4(albedo.rgb,1.0); }\n";
     tree_prog = make_program("shaders/tree.vert", "shaders/tree.frag", kTreeFbVs, kTreeFbFs, "tree");
     constexpr const char* kTshFbVs =
         "#version 330 core\nlayout(location=0) in vec3 aPos; layout(location=3) in vec4 iM0;\n"
@@ -669,10 +681,28 @@ bool BuildingGlPass::init() {
     constexpr const char* kTshFbFs = "#version 330 core\nvoid main(){}\n";
     tree_shadow_prog =
         make_program("shaders/tree_shadow.vert", "shaders/tree_shadow.frag", kTshFbVs, kTshFbFs, "tree_shadow");
-    TreeGenerator::oak(&tree_glb[0]);
-    TreeGenerator::pine(&tree_glb[1]);
-    TreeGenerator::palm(&tree_glb[2]);
-    std::printf("[trees] Generated 3 procedural tree types\n");
+    auto load_tree_kind = [&](const char* glb_a, const char* glb_b, TreeGlb* dst, int kind) {
+        if (load_city_tree(glb_a, dst) || (glb_b && load_city_tree(glb_b, dst))) {
+            for (u32 p = 0; p < dst->nprims; ++p) {
+                if (dst->prims[p].has_alpha) {
+                    dst->prims[p].alpha_mask = 1;
+                    dst->prims[p].cutoff = 0.5f;
+                }
+            }
+            return;
+        }
+        if (kind == 0) {
+            TreeGenerator::oak(dst);
+        } else if (kind == 1) {
+            TreeGenerator::pine(dst);
+        } else {
+            TreeGenerator::palm(dst);
+        }
+    };
+    load_tree_kind("oak_tree_realistic.glb", "oak_tree.glb", &tree_glb[0], 0);
+    load_tree_kind("pine_tree_realistic.glb", "pine_tree.glb", &tree_glb[1], 1);
+    load_tree_kind("palm_tree_realistic.glb", "palm_tree.glb", &tree_glb[2], 2);
+    std::printf("[trees] Alpha discard enabled for leaf materials\n");
     std::fflush(stdout);
     if (load_city_tree("skyscraper-2.glb", &sky_glb)) {
         std::printf("[gl] Loaded custom skyscraper model: skyscraper-2.glb (%u verts)\n", sky_glb.nverts);
@@ -952,11 +982,11 @@ void BuildingGlPass::buildMesh(World& world) {
             return;
         }
         const float yaw = std::fmod(x * 0.173f + z * 0.091f, 6.2831853f);
-        const u32 sh = static_cast<u32>(x) * 1664525u + static_cast<u32>(z) * 1013904223u;
-        const float sc = 0.90f + static_cast<float>(sh % 1000u) * (0.20f / 999.f);
-        const float y0  = tree_glb[kind].ymin;
+        const float sc  = 1.f;
+        const int zup   = tree_glb[kind].z_up;
+        const float y0  = zup ? tree_glb[kind].zmin : tree_glb[kind].ymin;
         const float y   = kCityPlateauY + 0.05f - y0 * sc;
-        tree_yaw_mat(&tree_mats[kind][tn[kind] * 16], x, y, z, yaw, sc, 0);
+        tree_yaw_mat(&tree_mats[kind][tn[kind] * 16], x, y, z, yaw, sc, zup);
         ++tn[kind];
         tree_xz[n_tree_xz * 2u]     = x;
         tree_xz[n_tree_xz * 2u + 1] = z;

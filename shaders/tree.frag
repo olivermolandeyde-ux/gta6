@@ -38,10 +38,7 @@ float shadow_at() {
 
 void main() {
     vec4 albedo = texture(uAlbedo, UV);
-    if (uUseTexture != 1) {
-        albedo = vec4(uSolidColor, 1.0);
-    }
-    if (uAlphaMask == 1 && albedo.a < 0.5) {
+    if (albedo.a < 0.5) {
         discard;
     }
     vec4 tex = albedo * VertColor;
