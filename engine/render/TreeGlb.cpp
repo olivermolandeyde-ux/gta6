@@ -421,7 +421,7 @@ bool png_decode_rgba(const u8* src, u32 slen, u8** out_rgba, u32* out_w, u32* ou
 }
 
 #if defined(__APPLE__)
-bool imageio_decode_rgba(const u8* src, u32 slen, u8** out_rgba, u32* out_w, u32* out_h) {
+bool imageio_decode_rgba(const u8* src, u32 slen, u8** out_rgba, u32* out_w, u32* out_h, int tree_rgba) {
     CFDataRef data = CFDataCreate(kCFAllocatorDefault, src, static_cast<CFIndex>(slen));
     if (!data) {
         return false;
@@ -448,14 +448,24 @@ bool imageio_decode_rgba(const u8* src, u32 slen, u8** out_rgba, u32* out_w, u32
         return false;
     }
     CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
-    const CGBitmapInfo kInfos[3] = {
+    const CGBitmapInfo kTree[4] = {
+        static_cast<CGBitmapInfo>(kCGImageAlphaPremultipliedLast) | kCGBitmapByteOrder32Big,
+        static_cast<CGBitmapInfo>(kCGImageAlphaLast) | kCGBitmapByteOrder32Big,
+        static_cast<CGBitmapInfo>(kCGImageAlphaPremultipliedLast),
+        static_cast<CGBitmapInfo>(kCGImageAlphaLast) | kCGBitmapByteOrder32Little,
+    };
+    const CGBitmapInfo kNorm[3] = {
         static_cast<CGBitmapInfo>(kCGImageAlphaLast) | kCGBitmapByteOrder32Little,
         static_cast<CGBitmapInfo>(kCGImageAlphaPremultipliedLast) | kCGBitmapByteOrder32Little,
         static_cast<CGBitmapInfo>(kCGImageAlphaPremultipliedLast),
     };
-    CGContextRef ctx = nullptr;
-    for (u32 i = 0; i < 3 && !ctx; ++i) {
-        ctx = CGBitmapContextCreate(rgba, w, h, 8, static_cast<size_t>(w) * 4, cs, kInfos[i]);
+    const CGBitmapInfo* kInfos = tree_rgba ? kTree : kNorm;
+    const u32 ninfo            = tree_rgba ? 4u : 3u;
+    CGContextRef ctx           = nullptr;
+    u32 used                   = 0;
+    for (u32 i = 0; i < ninfo && !ctx; ++i) {
+        ctx  = CGBitmapContextCreate(rgba, w, h, 8, static_cast<size_t>(w) * 4, cs, kInfos[i]);
+        used = i;
     }
     CGColorSpaceRelease(cs);
     if (!ctx) {
@@ -483,6 +493,14 @@ bool imageio_decode_rgba(const u8* src, u32 slen, u8** out_rgba, u32* out_w, u32
             std::free(row);
         }
     }
+    if (tree_rgba && used == 3u) {
+        const u32 n = w * h;
+        for (u32 i = 0; i < n; ++i) {
+            const u8 t = rgba[i * 4 + 0];
+            rgba[i * 4 + 0] = rgba[i * 4 + 2];
+            rgba[i * 4 + 2] = t;
+        }
+    }
     *out_rgba = rgba;
     *out_w = w;
     *out_h = h;
@@ -492,7 +510,16 @@ bool imageio_decode_rgba(const u8* src, u32 slen, u8** out_rgba, u32* out_w, u32
 
 bool decode_image_rgba(const u8* src, u32 slen, u8** out_rgba, u32* out_w, u32* out_h) {
 #if defined(__APPLE__)
-    if (imageio_decode_rgba(src, slen, out_rgba, out_w, out_h)) {
+    if (imageio_decode_rgba(src, slen, out_rgba, out_w, out_h, 0)) {
+        return true;
+    }
+#endif
+    return png_decode_rgba(src, slen, out_rgba, out_w, out_h);
+}
+
+bool decode_image_rgba_tree(const u8* src, u32 slen, u8** out_rgba, u32* out_w, u32* out_h) {
+#if defined(__APPLE__)
+    if (imageio_decode_rgba(src, slen, out_rgba, out_w, out_h, 1)) {
         return true;
     }
 #endif
@@ -1067,55 +1094,88 @@ int looks_magenta(float mr, float mg, float mb) {
     return (mr > mg * 1.40f && mb > mg * 1.15f) ? 1 : 0;
 }
 
-void decode_tree_rgba_layout(u8* p, u32 tot) {
-    u32 vote_argb = 0;
-    u32 vote_rgba = 0;
-    u32 vote_bgra = 0;
-    for (u32 i = 0; i < tot; ++i) {
-        const u8 c0 = p[i * 4 + 0];
-        const u8 c1 = p[i * 4 + 1];
-        const u8 c2 = p[i * 4 + 2];
-        const u8 c3 = p[i * 4 + 3];
-        if (c2 > 55 && c2 > c1 && c2 > c3 && c2 + 8 > c0) {
-            ++vote_argb;
-        }
-        if (c1 > 55 && c1 >= c0 && c1 >= c2 && c3 > 40) {
-            if (c0 + 12 < c2) {
-                ++vote_bgra;
-            } else {
-                ++vote_rgba;
-            }
-        }
-    }
-    if (vote_argb > vote_rgba && vote_argb > vote_bgra && vote_argb > 24) {
-        argb_to_rgba(p, tot);
-        std::printf("[trees] Texture layout ARGB->RGBA (votes argb=%u rgba=%u bgra=%u)\n", vote_argb, vote_rgba,
-                    vote_bgra);
-        std::fflush(stdout);
-        return;
-    }
-    if (vote_bgra > vote_rgba && vote_bgra > 24) {
-        for (u32 i = 0; i < tot; ++i) {
-            const u8 t = p[i * 4 + 0];
-            p[i * 4 + 0] = p[i * 4 + 2];
-            p[i * 4 + 2] = t;
-        }
-        std::printf("[trees] Texture layout BGRA->RGBA (votes argb=%u rgba=%u bgra=%u)\n", vote_argb, vote_rgba,
-                    vote_bgra);
-        std::fflush(stdout);
-        return;
-    }
+void kind_pine(u8* p, u32 tot) {
     float mr = 0.f, mg = 0.f, mb = 0.f;
     mean_rgb(p, tot, &mr, &mg, &mb);
     if (looks_magenta(mr, mg, mb)) {
         argb_to_rgba(p, tot);
-        std::printf("[trees] Texture layout ARGB->RGBA (pink mean %.0f,%.0f,%.0f)\n", mr, mg, mb);
+        mean_rgb(p, tot, &mr, &mg, &mb);
+    }
+    if (mg < 70.f) {
+        for (u32 i = 0; i < tot; ++i) {
+            int r = p[i * 4 + 0];
+            int g = p[i * 4 + 1];
+            int b = p[i * 4 + 2];
+            int a = p[i * 4 + 3];
+            g = std::min(255, g * 4 + 48);
+            r = std::min(255, r * 2 + 12);
+            b = std::min(255, b + 10);
+            if (a < 128 && g > 70) {
+                a = 255;
+            }
+            p[i * 4 + 0] = static_cast<u8>(r);
+            p[i * 4 + 1] = static_cast<u8>(g);
+            p[i * 4 + 2] = static_cast<u8>(b);
+            p[i * 4 + 3] = static_cast<u8>(a);
+        }
+        std::printf("[trees] pine: lifted dark needles (mean %.0f,%.0f,%.0f)\n", mr, mg, mb);
         std::fflush(stdout);
     }
 }
 
-void repair_oak_tex(u8* p, u32 tot) {
-    u32 bark = 0;
+void kind_palm(u8* p, u32 tot) {
+    float mr = 0.f, mg = 0.f, mb = 0.f;
+    mean_rgb(p, tot, &mr, &mg, &mb);
+    if (looks_magenta(mr, mg, mb)) {
+        argb_to_rgba(p, tot);
+    }
+    u32 frond = 0;
+    u32 trunk = 0;
+    for (u32 i = 0; i < tot; ++i) {
+        const int r = p[i * 4 + 0];
+        const int g = p[i * 4 + 1];
+        const int b = p[i * 4 + 2];
+        const int a = p[i * 4 + 3];
+        if (a < 40) {
+            continue;
+        }
+        const int luma = r + g + b;
+        if (luma < 100) {
+            p[i * 4 + 0] = 0x8B;
+            p[i * 4 + 1] = 0x55;
+            p[i * 4 + 2] = 0x22;
+            p[i * 4 + 3] = 255;
+            ++trunk;
+            continue;
+        }
+        const int silver = (r > 160 && g > 160 && b > 160) ? 1 : 0;
+        const int cyan   = (b > g + 6) ? 1 : 0;
+        if (silver || cyan || g + 8 < ((r + b) / 2)) {
+            const int y = (r * 30 + g * 59 + b * 11) / 100;
+            p[i * 4 + 0] = static_cast<u8>(std::min(255, y * 45 / 100 + 18));
+            p[i * 4 + 1] = static_cast<u8>(std::min(255, y + 36));
+            p[i * 4 + 2] = static_cast<u8>(std::min(255, y * 28 / 100 + 8));
+            ++frond;
+        }
+    }
+    std::printf("[trees] palm: trunk %u brown, frond %u greened (mean %.0f,%.0f,%.0f)\n", trunk, frond, mr, mg,
+                mb);
+    std::fflush(stdout);
+}
+
+void kind_oak(u8* p, u32 tot) {
+    float mr = 0.f, mg = 0.f, mb = 0.f;
+    mean_rgb(p, tot, &mr, &mg, &mb);
+    if (looks_magenta(mr, mg, mb)) {
+        argb_to_rgba(p, tot);
+    }
+    u32 opaque = 0;
+    for (u32 i = 0; i < tot; ++i) {
+        if (p[i * 4 + 3] > 128) {
+            ++opaque;
+        }
+    }
+    u32 filled = 0;
     for (u32 i = 0; i < tot; ++i) {
         const u8 r = p[i * 4 + 0];
         const u8 g = p[i * 4 + 1];
@@ -1125,15 +1185,18 @@ void repair_oak_tex(u8* p, u32 tot) {
             continue;
         }
         const int leaf = (g > r + 12 && g > b + 12) ? 1 : 0;
-        if (!leaf && p[i * 4 + 3] < 250) {
+        if (opaque * 8u < tot) {
+            if (static_cast<u32>(r) + g + b > 18u) {
+                p[i * 4 + 3] = 255;
+                ++filled;
+            }
+        } else if (!leaf && p[i * 4 + 3] < 250) {
             p[i * 4 + 3] = 255;
-            ++bark;
+            ++filled;
         }
     }
-    if (bark) {
-        std::printf("[trees] oak: filled %u bark alpha\n", bark);
-        std::fflush(stdout);
-    }
+    std::printf("[trees] oak: restored %u texels (opaque %u/%u)\n", filled, opaque, tot);
+    std::fflush(stdout);
 }
 
 void repair_tree_tex(u8* p, u32 w, u32 h, const char* label) {
@@ -1141,9 +1204,17 @@ void repair_tree_tex(u8* p, u32 w, u32 h, const char* label) {
         return;
     }
     const u32 tot = w * h;
-    decode_tree_rgba_layout(p, tot);
+    if (label && std::strcmp(label, "pine") == 0) {
+        kind_pine(p, tot);
+        return;
+    }
+    if (label && std::strcmp(label, "palm") == 0) {
+        kind_palm(p, tot);
+        return;
+    }
     if (label && std::strcmp(label, "oak") == 0) {
-        repair_oak_tex(p, tot);
+        kind_oak(p, tot);
+        return;
     }
 }
 
@@ -1190,7 +1261,10 @@ unsigned decode_view_image(const JDoc* d, u32 img, const u8* bin, u32 bin_len, u
     }
     u8* rgba = nullptr;
     u32 w = 0, h = 0;
-    if (!decode_image_rgba(bin + off, bl, &rgba, &w, &h) || !rgba) {
+    const int is_tree = is_tree_label(tree_label);
+    const int ok_img  = is_tree ? decode_image_rgba_tree(bin + off, bl, &rgba, &w, &h)
+                                : decode_image_rgba(bin + off, bl, &rgba, &w, &h);
+    if (!ok_img || !rgba) {
         const u8* s = bin + off;
         std::printf("[glb] WARNING: Failed to decode image (%u bytes, sig %02x %02x %02x %02x)\n", bl,
                     slen_sig(s, bl, 0), slen_sig(s, bl, 1), slen_sig(s, bl, 2), slen_sig(s, bl, 3));
