@@ -29,6 +29,10 @@ namespace {
 #define LEONIDA_SOURCE_DIR "."
 #endif
 
+#ifndef ENABLE_TREES
+#define ENABLE_TREES 1
+#endif
+
 void mat_ident(float* m) {
     std::memset(m, 0, 16 * sizeof(float));
     m[0] = m[5] = m[10] = m[15] = 1.f;
@@ -385,6 +389,39 @@ float glb_fit_scale(const TreeGlb* t, float target_h) {
     return s;
 }
 
+float tree_fit_scale(const TreeGlb* t, float target_h) {
+    if (!t || t->nprims == 0) {
+        return 1.f;
+    }
+    const float hy = t->ymax - t->ymin;
+    const float hx = t->xmax - t->xmin;
+    const float hz = t->zmax - t->zmin;
+    float h = t->z_up ? hz : hy;
+    if (h < 0.001f) {
+        h = hx > hz ? hx : hz;
+    }
+    if (h < 0.001f) {
+        return 1.f;
+    }
+    float s = target_h / h;
+    if (s > 50.f) {
+        s = 50.f;
+    }
+    if (s < 0.0008f) {
+        s = 0.0008f;
+    }
+    return s;
+}
+
+float tree_height_m(const TreeGlb* t) {
+    if (!t) {
+        return 0.f;
+    }
+    const float hy = t->ymax - t->ymin;
+    const float hz = t->zmax - t->zmin;
+    return t->z_up ? hz : hy;
+}
+
 bool xz_too_close(float x, float z, const float* xz, u32 n, float min_d) {
     const float m2 = min_d * min_d;
     for (u32 i = 0; i < n; ++i) {
@@ -690,6 +727,7 @@ bool BuildingGlPass::init() {
             }
         }
     };
+#if ENABLE_TREES
     load_city_tree("tree.glb", &tree_glb[0]);
     prep_tree(&tree_glb[0]);
     load_city_tree("pine_tree_low-poly.glb", &tree_glb[1]);
@@ -698,7 +736,19 @@ bool BuildingGlPass::init() {
     prep_tree(&tree_glb[2]);
     std::printf("[trees] Loaded 3 tree models from GLB files\n");
     std::printf("[trees] Alpha discard enabled for leaf materials\n");
+    for (u32 k = 0; k < kTreeKindCount; ++k) {
+        const TreeGlb* t = &tree_glb[k];
+        const float h = tree_height_m(t);
+        const float fit = tree_fit_scale(t, k == 1 ? 9.f : 8.f);
+        std::printf("[trees] Model '%s' bounds: %.2f meters tall (aabb %.2f x %.2f x %.2f z_up=%d)\n", t->label,
+                    h, t->xmax - t->xmin, t->ymax - t->ymin, t->zmax - t->zmin, t->z_up);
+        if (t->nprims > 0) {
+            std::printf("[trees] Texture size: %ux%u, channels: 4\n", t->prims[0].tex_w, t->prims[0].tex_h);
+        }
+        std::printf("[trees] Scale factor applied: %.5f\n", fit);
+    }
     std::fflush(stdout);
+#endif
     if (load_city_tree("skyscraper-2.glb", &sky_glb)) {
         std::printf("[gl] Loaded custom skyscraper model: skyscraper-2.glb (%u verts)\n", sky_glb.nverts);
     } else {
@@ -945,6 +995,7 @@ void BuildingGlPass::buildMesh(World& world) {
     std::printf("[city] Placing %u street lamps (klassisk: %u, moderne: %u)\n", ln[0] + ln[1], ln[0], ln[1]);
     std::fflush(stdout);
 
+#if ENABLE_TREES
     static float tree_mats[kTreeKindCount][kTreeInstanceCap * 16];
     static float tree_xz[kTreeSpawnCap * 2];
     u32 tn[kTreeKindCount] = {0, 0, 0};
@@ -975,7 +1026,8 @@ void BuildingGlPass::buildMesh(World& world) {
         }
         const float yaw = std::fmod(x * 0.173f + z * 0.091f, 6.2831853f);
         const u32 sh = static_cast<u32>(x) * 1664525u + static_cast<u32>(z) * 1013904223u;
-        const float sc = 0.85f + static_cast<float>(sh % 1000u) * (0.30f / 999.f);
+        const float fit = tree_fit_scale(&tree_glb[kind], kind == 1 ? 9.f : 8.f);
+        const float sc = fit * (0.85f + static_cast<float>(sh % 1000u) * (0.30f / 999.f));
         const int zup   = tree_glb[kind].z_up;
         const float y0  = zup ? tree_glb[kind].zmin : tree_glb[kind].ymin;
         const float y   = kCityPlateauY + 0.05f - y0 * sc;
@@ -1013,6 +1065,7 @@ void BuildingGlPass::buildMesh(World& world) {
     (void)total_trees;
     (void)skip_lamp;
     (void)skip_tree;
+#endif
 }
 
 void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target, int width, int height,
