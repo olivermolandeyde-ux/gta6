@@ -1047,11 +1047,11 @@ int is_lamp_label(const char* s) {
 }
 
 unsigned klassisk_iron_tex() {
-    return solid_tex(42, 40, 36, 255);
+    return solid_tex(88, 62, 38, 255);
 }
 
 unsigned moderne_steel_tex() {
-    return solid_tex(30, 34, 40, 255);
+    return solid_tex(48, 62, 90, 255);
 }
 
 unsigned fail_red_tex() {
@@ -1217,17 +1217,14 @@ void kind_klassisk(u8* p, u32 tot) {
     mean_rgb(p, tot, &mr, &mg, &mb);
     if (looks_magenta(mr, mg, mb)) {
         argb_to_rgba(p, tot);
-        mean_rgb(p, tot, &mr, &mg, &mb);
     }
-    if ((mr + mg + mb) * (1.f / 3.f) > 140.f) {
-        for (u32 i = 0; i < tot; ++i) {
-            p[i * 4 + 0] = static_cast<u8>(std::min(255, static_cast<int>(p[i * 4 + 0]) * 22 / 100 + 38));
-            p[i * 4 + 1] = static_cast<u8>(std::min(255, static_cast<int>(p[i * 4 + 1]) * 22 / 100 + 36));
-            p[i * 4 + 2] = static_cast<u8>(std::min(255, static_cast<int>(p[i * 4 + 2]) * 22 / 100 + 32));
-        }
-        std::printf("[glb] klassisk: pulled washed-white metal to dark iron (mean %.0f,%.0f,%.0f)\n", mr, mg, mb);
-        std::fflush(stdout);
+    for (u32 i = 0; i < tot; ++i) {
+        p[i * 4 + 0] = static_cast<u8>(std::min(255, static_cast<int>(p[i * 4 + 0]) * 25 / 100 + 72));
+        p[i * 4 + 1] = static_cast<u8>(std::min(255, static_cast<int>(p[i * 4 + 1]) * 20 / 100 + 48));
+        p[i * 4 + 2] = static_cast<u8>(std::min(255, static_cast<int>(p[i * 4 + 2]) * 12 / 100 + 28));
     }
+    std::printf("[glb] klassisk: bronze-iron (was mean %.0f,%.0f,%.0f)\n", mr, mg, mb);
+    std::fflush(stdout);
 }
 
 void kind_moderne(u8* p, u32 tot) {
@@ -1235,17 +1232,14 @@ void kind_moderne(u8* p, u32 tot) {
     mean_rgb(p, tot, &mr, &mg, &mb);
     if (looks_magenta(mr, mg, mb)) {
         argb_to_rgba(p, tot);
-        mean_rgb(p, tot, &mr, &mg, &mb);
     }
-    if ((mr + mg + mb) * (1.f / 3.f) > 140.f) {
-        for (u32 i = 0; i < tot; ++i) {
-            p[i * 4 + 0] = static_cast<u8>(std::min(255, static_cast<int>(p[i * 4 + 0]) * 20 / 100 + 30));
-            p[i * 4 + 1] = static_cast<u8>(std::min(255, static_cast<int>(p[i * 4 + 1]) * 20 / 100 + 34));
-            p[i * 4 + 2] = static_cast<u8>(std::min(255, static_cast<int>(p[i * 4 + 2]) * 20 / 100 + 40));
-        }
-        std::printf("[glb] moderne: pulled washed-white metal to anthracite (mean %.0f,%.0f,%.0f)\n", mr, mg, mb);
-        std::fflush(stdout);
+    for (u32 i = 0; i < tot; ++i) {
+        p[i * 4 + 0] = static_cast<u8>(std::min(255, static_cast<int>(p[i * 4 + 0]) * 18 / 100 + 48));
+        p[i * 4 + 1] = static_cast<u8>(std::min(255, static_cast<int>(p[i * 4 + 1]) * 22 / 100 + 62));
+        p[i * 4 + 2] = static_cast<u8>(std::min(255, static_cast<int>(p[i * 4 + 2]) * 30 / 100 + 88));
     }
+    std::printf("[glb] moderne: cool steel (was mean %.0f,%.0f,%.0f)\n", mr, mg, mb);
+    std::fflush(stdout);
 }
 
 void repair_tree_tex(u8* p, u32 w, u32 h, const char* label) {
@@ -1626,24 +1620,29 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
                     }
                 }
                 if (!pr.tex) {
-                    const JNode* bcf = j_field(d, pbr_id, "baseColorFactor");
-                    if (bcf && bcf->kind == JK_ARR) {
-                        float f[4] = {1.f, 1.f, 1.f, 1.f};
-                        u32 ci = 0;
-                        for (u32 c = bcf->child; c != 0 && ci < 4; c = d->nodes[c].next, ++ci) {
-                            f[ci] = static_cast<float>(d->nodes[c].num);
-                        }
-                        const float lum = f[0] * 0.30f + f[1] * 0.59f + f[2] * 0.11f;
-                        if (lum < 0.18f) {
-                            f[0] = 0.62f;
-                            f[1] = 0.63f;
-                            f[2] = 0.66f;
-                        }
-                        pr.tex = solid_tex(static_cast<u8>(clampf(f[0], 0.f, 1.f) * 255.f),
-                                           static_cast<u8>(clampf(f[1], 0.f, 1.f) * 255.f),
-                                           static_cast<u8>(clampf(f[2], 0.f, 1.f) * 255.f),
-                                           static_cast<u8>(clampf(f[3], 0.f, 1.f) * 255.f));
+                    if (is_lamp_label(out->label)) {
+                        pr.tex   = lamp_or_fail_tex(out->label);
                         pr.tex_w = pr.tex_h = 1;
+                    } else {
+                        const JNode* bcf = j_field(d, pbr_id, "baseColorFactor");
+                        if (bcf && bcf->kind == JK_ARR) {
+                            float f[4] = {1.f, 1.f, 1.f, 1.f};
+                            u32 ci = 0;
+                            for (u32 c = bcf->child; c != 0 && ci < 4; c = d->nodes[c].next, ++ci) {
+                                f[ci] = static_cast<float>(d->nodes[c].num);
+                            }
+                            const float lum = f[0] * 0.30f + f[1] * 0.59f + f[2] * 0.11f;
+                            if (lum < 0.18f) {
+                                f[0] = 0.62f;
+                                f[1] = 0.63f;
+                                f[2] = 0.66f;
+                            }
+                            pr.tex = solid_tex(static_cast<u8>(clampf(f[0], 0.f, 1.f) * 255.f),
+                                               static_cast<u8>(clampf(f[1], 0.f, 1.f) * 255.f),
+                                               static_cast<u8>(clampf(f[2], 0.f, 1.f) * 255.f),
+                                               static_cast<u8>(clampf(f[3], 0.f, 1.f) * 255.f));
+                            pr.tex_w = pr.tex_h = 1;
+                        }
                     }
                 }
             }
