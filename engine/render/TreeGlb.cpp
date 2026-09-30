@@ -1046,24 +1046,17 @@ int is_lamp_label(const char* s) {
     return s && (std::strcmp(s, "klassisk") == 0 || std::strcmp(s, "moderne") == 0);
 }
 
-unsigned klassisk_iron_tex() {
-    return solid_tex(118, 72, 32, 255);
-}
-
-unsigned moderne_steel_tex() {
-    return solid_tex(36, 78, 148, 255);
-}
-
 unsigned fail_red_tex() {
     return solid_tex(255, 32, 32, 255);
 }
 
+unsigned lamp_metal_tex() {
+    return solid_tex(90, 92, 96, 255);
+}
+
 unsigned lamp_or_fail_tex(const char* label) {
-    if (label && std::strcmp(label, "klassisk") == 0) {
-        return klassisk_iron_tex();
-    }
-    if (label && std::strcmp(label, "moderne") == 0) {
-        return moderne_steel_tex();
+    if (is_lamp_label(label)) {
+        return lamp_metal_tex();
     }
     return fail_red_tex();
 }
@@ -1212,36 +1205,6 @@ void kind_oak(u8* p, u32 tot) {
     std::fflush(stdout);
 }
 
-void kind_klassisk(u8* p, u32 tot) {
-    float mr = 0.f, mg = 0.f, mb = 0.f;
-    mean_rgb(p, tot, &mr, &mg, &mb);
-    if (looks_magenta(mr, mg, mb)) {
-        argb_to_rgba(p, tot);
-    }
-    for (u32 i = 0; i < tot; ++i) {
-        p[i * 4 + 0] = static_cast<u8>(std::min(255, static_cast<int>(p[i * 4 + 0]) * 18 / 100 + 118));
-        p[i * 4 + 1] = static_cast<u8>(std::min(255, static_cast<int>(p[i * 4 + 1]) * 14 / 100 + 72));
-        p[i * 4 + 2] = static_cast<u8>(std::min(255, static_cast<int>(p[i * 4 + 2]) * 10 / 100 + 32));
-    }
-    std::printf("[glb] klassisk: bronze-iron (was mean %.0f,%.0f,%.0f)\n", mr, mg, mb);
-    std::fflush(stdout);
-}
-
-void kind_moderne(u8* p, u32 tot) {
-    float mr = 0.f, mg = 0.f, mb = 0.f;
-    mean_rgb(p, tot, &mr, &mg, &mb);
-    if (looks_magenta(mr, mg, mb)) {
-        argb_to_rgba(p, tot);
-    }
-    for (u32 i = 0; i < tot; ++i) {
-        p[i * 4 + 0] = static_cast<u8>(std::min(255, static_cast<int>(p[i * 4 + 0]) * 12 / 100 + 36));
-        p[i * 4 + 1] = static_cast<u8>(std::min(255, static_cast<int>(p[i * 4 + 1]) * 16 / 100 + 78));
-        p[i * 4 + 2] = static_cast<u8>(std::min(255, static_cast<int>(p[i * 4 + 2]) * 22 / 100 + 148));
-    }
-    std::printf("[glb] moderne: cool steel (was mean %.0f,%.0f,%.0f)\n", mr, mg, mb);
-    std::fflush(stdout);
-}
-
 void repair_tree_tex(u8* p, u32 w, u32 h, const char* label) {
     if (!p || !w || !h) {
         return;
@@ -1257,14 +1220,6 @@ void repair_tree_tex(u8* p, u32 w, u32 h, const char* label) {
     }
     if (label && std::strcmp(label, "oak") == 0) {
         kind_oak(p, tot);
-        return;
-    }
-    if (label && std::strcmp(label, "klassisk") == 0) {
-        kind_klassisk(p, tot);
-        return;
-    }
-    if (label && std::strcmp(label, "moderne") == 0) {
-        kind_moderne(p, tot);
         return;
     }
 }
@@ -1620,29 +1575,28 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
                     }
                 }
                 if (!pr.tex) {
-                    if (is_lamp_label(out->label)) {
-                        pr.tex   = lamp_or_fail_tex(out->label);
-                        pr.tex_w = pr.tex_h = 1;
-                    } else {
-                        const JNode* bcf = j_field(d, pbr_id, "baseColorFactor");
-                        if (bcf && bcf->kind == JK_ARR) {
-                            float f[4] = {1.f, 1.f, 1.f, 1.f};
-                            u32 ci = 0;
-                            for (u32 c = bcf->child; c != 0 && ci < 4; c = d->nodes[c].next, ++ci) {
-                                f[ci] = static_cast<float>(d->nodes[c].num);
-                            }
-                            const float lum = f[0] * 0.30f + f[1] * 0.59f + f[2] * 0.11f;
-                            if (lum < 0.18f) {
-                                f[0] = 0.62f;
-                                f[1] = 0.63f;
-                                f[2] = 0.66f;
-                            }
+                    const JNode* bcf = j_field(d, pbr_id, "baseColorFactor");
+                    if (bcf && bcf->kind == JK_ARR) {
+                        float f[4] = {1.f, 1.f, 1.f, 1.f};
+                        u32 ci = 0;
+                        for (u32 c = bcf->child; c != 0 && ci < 4; c = d->nodes[c].next, ++ci) {
+                            f[ci] = static_cast<float>(d->nodes[c].num);
+                        }
+                        const float lum = f[0] * 0.30f + f[1] * 0.59f + f[2] * 0.11f;
+                        if (!is_lamp_label(out->label) && lum < 0.18f) {
+                            f[0] = 0.62f;
+                            f[1] = 0.63f;
+                            f[2] = 0.66f;
+                        }
+                        if (is_lamp_label(out->label) && lum > 0.85f) {
+                            pr.tex = lamp_metal_tex();
+                        } else {
                             pr.tex = solid_tex(static_cast<u8>(clampf(f[0], 0.f, 1.f) * 255.f),
                                                static_cast<u8>(clampf(f[1], 0.f, 1.f) * 255.f),
                                                static_cast<u8>(clampf(f[2], 0.f, 1.f) * 255.f),
                                                static_cast<u8>(clampf(f[3], 0.f, 1.f) * 255.f));
-                            pr.tex_w = pr.tex_h = 1;
                         }
+                        pr.tex_w = pr.tex_h = 1;
                     }
                 }
             }
@@ -1675,12 +1629,9 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
             pr.tex = pr.alpha_mask ? leaf_green_tex() : bark_brown_tex();
             std::printf("[glb] %s material %u has no albedo — fallback %s\n", out->label, mat_i,
                         pr.alpha_mask ? "leaf green #228B22" : "bark brown #8B4513");
-        } else if (out->label[0] && std::strcmp(out->label, "klassisk") == 0) {
-            pr.tex = klassisk_iron_tex();
-            std::printf("[glb] klassisk material %u has no albedo — dark iron\n", mat_i);
-        } else if (out->label[0] && std::strcmp(out->label, "moderne") == 0) {
-            pr.tex = moderne_steel_tex();
-            std::printf("[glb] moderne material %u has no albedo — anthracite\n", mat_i);
+        } else if (is_lamp_label(out->label)) {
+            pr.tex = lamp_metal_tex();
+            std::printf("[glb] %s material %u has no albedo — lamp metal\n", out->label, mat_i);
         } else {
             std::printf("[glb] WARNING: Failed to load texture for material %u — using gray metal\n", mat_i);
             pr.tex = gray_metal_tex();
