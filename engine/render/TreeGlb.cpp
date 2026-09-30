@@ -1067,11 +1067,85 @@ int looks_magenta(float mr, float mg, float mb) {
     return (mr > mg * 1.40f && mb > mg * 1.15f) ? 1 : 0;
 }
 
-void repair_tree_tex(u8* p, u32 w, u32 h) {
+void repair_pine_tex(u8* p, u32 tot) {
+    (void)p;
+    (void)tot;
+}
+
+void repair_oak_tex(u8* p, u32 tot) {
+    u32 bark = 0;
+    u32 mag  = 0;
+    for (u32 i = 0; i < tot; ++i) {
+        const u8 r = p[i * 4 + 0];
+        const u8 g = p[i * 4 + 1];
+        const u8 b = p[i * 4 + 2];
+        if (is_hot_magenta(r, g, b)) {
+            p[i * 4 + 0] = 0;
+            p[i * 4 + 1] = 0;
+            p[i * 4 + 2] = 0;
+            p[i * 4 + 3] = 0;
+            ++mag;
+            continue;
+        }
+        const int leaf = (g > r + 12 && g > b + 12) ? 1 : 0;
+        if (!leaf && p[i * 4 + 3] < 250) {
+            p[i * 4 + 3] = 255;
+            ++bark;
+        }
+    }
+    if (bark || mag) {
+        std::printf("[trees] oak: filled %u bark alpha, keyed %u magenta\n", bark, mag);
+        std::fflush(stdout);
+    }
+}
+
+void repair_palm_tex(u8* p, u32 tot) {
+    u32 trunk = 0;
+    u32 mag   = 0;
+    for (u32 i = 0; i < tot; ++i) {
+        const u8 r = p[i * 4 + 0];
+        const u8 g = p[i * 4 + 1];
+        const u8 b = p[i * 4 + 2];
+        if (is_hot_magenta(r, g, b)) {
+            p[i * 4 + 0] = 0;
+            p[i * 4 + 1] = 0;
+            p[i * 4 + 2] = 0;
+            p[i * 4 + 3] = 0;
+            ++mag;
+            continue;
+        }
+        const u32 luma = static_cast<u32>(r) + g + b;
+        if (luma < 90u && p[i * 4 + 3] > 80) {
+            p[i * 4 + 0] = static_cast<u8>(std::min(255, static_cast<int>(r) + 110));
+            p[i * 4 + 1] = static_cast<u8>(std::min(255, static_cast<int>(g) + 58));
+            p[i * 4 + 2] = static_cast<u8>(std::min(255, static_cast<int>(b) + 28));
+            p[i * 4 + 3] = 255;
+            ++trunk;
+        }
+    }
+    if (trunk || mag) {
+        std::printf("[trees] palm: lifted %u dark trunk texels, keyed %u magenta\n", trunk, mag);
+        std::fflush(stdout);
+    }
+}
+
+void repair_tree_tex(u8* p, u32 w, u32 h, const char* label) {
     if (!p || !w || !h) {
         return;
     }
     const u32 tot = w * h;
+    if (label && std::strcmp(label, "pine") == 0) {
+        repair_pine_tex(p, tot);
+        return;
+    }
+    if (label && std::strcmp(label, "oak") == 0) {
+        repair_oak_tex(p, tot);
+        return;
+    }
+    if (label && std::strcmp(label, "palm") == 0) {
+        repair_palm_tex(p, tot);
+        return;
+    }
     u32 vote_argb = 0;
     u32 vote_rgba = 0;
     u32 vote_bgra = 0;
@@ -1195,7 +1269,7 @@ int read_f3_arr(const JDoc* d, const JNode* arr, float* o) {
 }
 
 unsigned decode_view_image(const JDoc* d, u32 img, const u8* bin, u32 bin_len, u32* out_w, u32* out_h,
-                          int* out_a, int magenta_key) {
+                          int* out_a, const char* tree_label) {
     *out_w = *out_h = 0;
     if (out_a) {
         *out_a = 0;
@@ -1233,8 +1307,8 @@ unsigned decode_view_image(const JDoc* d, u32 img, const u8* bin, u32 bin_len, u
         std::fflush(stdout);
         return 0;
     }
-    if (magenta_key) {
-        repair_tree_tex(rgba, w, h);
+    if (is_tree_label(tree_label)) {
+        repair_tree_tex(rgba, w, h, tree_label);
     }
     unsigned tex = upload_rgba(rgba, w, h);
     std::printf("[glb] Created OpenGL texture ID %u (%ux%u pixels, %u src bytes)\n", tex, w, h, bl);
@@ -1820,7 +1894,7 @@ bool load_tree_glb(const char* path, TreeGlb* out) {
             int ha = 0;
             if (images) {
                 u32 img = j_arr_at(&doc, images, src_i);
-                tex = decode_view_image(&doc, img, bin, bin_len, &w, &h, &ha, is_tree_label(out->label));
+                tex = decode_view_image(&doc, img, bin, bin_len, &w, &h, &ha, out->label);
             }
             if (!tex) {
                 std::printf("[glb] WARNING: Failed to load texture %u (image source %u)%s\n", ntex, src_i,
@@ -1842,7 +1916,7 @@ bool load_tree_glb(const char* path, TreeGlb* out) {
         for (u32 c = images->child; c != 0 && ntex < 64; c = doc.nodes[c].next) {
             u32 w = 0, h = 0;
             int ha          = 0;
-            unsigned tex = decode_view_image(&doc, c, bin, bin_len, &w, &h, &ha, is_tree_label(out->label));
+            unsigned tex = decode_view_image(&doc, c, bin, bin_len, &w, &h, &ha, out->label);
             if (!tex && !is_tree_label(out->label)) {
                 tex = fail_red_tex();
                 w = h = 1;
