@@ -1171,6 +1171,16 @@ void repair_tree_tex(u8* p, u32 w, u32 h) {
         std::printf("[trees] Chroma-keyed %u hot-magenta texels (of %u)\n", mag, tot);
         std::fflush(stdout);
     }
+    mean_rgb(p, tot, &mr, &mg, &mb);
+    if (opaque * 5u > tot * 4u && mg > mr * 1.12f && (mr + mg + mb) < 340.f) {
+        for (u32 i = 0; i < tot; ++i) {
+            const u8 t = p[i * 4 + 0];
+            p[i * 4 + 0] = p[i * 4 + 1];
+            p[i * 4 + 1] = t;
+        }
+        std::printf("[trees] Opaque dark-green bark -> brown (R/G swap, mean %.0f,%.0f,%.0f)\n", mr, mg, mb);
+        std::fflush(stdout);
+    }
 }
 
 int read_f3_arr(const JDoc* d, const JNode* arr, float* o) {
@@ -1907,17 +1917,16 @@ bool load_tree_glb(const char* path, TreeGlb* out) {
         const float y_plant = std::min(std::fabs(out->ymin), std::fabs(out->ymax)) / (hy + 1e-4f);
         const float z_plant = std::min(std::fabs(out->zmin), std::fabs(out->zmax)) / (hz + 1e-4f);
         const float x_plant = std::min(std::fabs(out->xmin), std::fabs(out->xmax)) / (hx + 1e-4f);
+        // Unique long axis → up. A wide Y-up canopy has hx≈hz, so it stays Y-up.
         out->z_up = 0;
-        if (is_tree_label(out->label) && std::strcmp(out->label, "oak") == 0) {
-            // tree.glb trunk is +X. Rx(-90) left it on its side.
+        if (hx > hy * 1.45f && hx > hz * 1.45f) {
             out->z_up = 2;
-        } else if (z_plant < y_plant * 0.5f && hz >= hy * 0.45f) {
+        } else if (hz > hy * 1.45f && hz > hx * 1.45f) {
             out->z_up = 1;
-        } else if (hz > hy * 1.5f && hz > hx * 1.15f) {
+        } else if (z_plant < y_plant * 0.45f && hz >= hy * 0.8f && hz >= hx * 0.8f) {
             out->z_up = 1;
-        } else if (is_tree_label(out->label) && x_plant < y_plant * 0.5f && hx > hy * 1.2f && hx > hz * 1.2f) {
-            out->z_up = 2;
         }
+        (void)x_plant;
     }
     std::printf("[glb] %s AABB x=[%.3f,%.3f] y=[%.3f,%.3f] z=[%.3f,%.3f] size=(%.3f,%.3f,%.3f) z_up=%d prims=%u verts=%u\n",
                 out->label, out->xmin, out->xmax, out->ymin, out->ymax, out->zmin, out->zmax,
