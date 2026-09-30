@@ -961,7 +961,7 @@ void BuildingGlPass::buildMesh(World& world) {
         if ((ln[0] + ln[1]) >= kLampSpawnCap) {
             return;
         }
-        u32 use = (static_cast<u32>(x) * 13u + static_cast<u32>(z) * 7u) & 1u;
+        u32 use = (ln[0] + ln[1]) & 1u;
         if (lamp_glb[use].nprims == 0) {
             use ^= 1u;
         }

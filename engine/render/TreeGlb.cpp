@@ -1047,11 +1047,11 @@ int is_lamp_label(const char* s) {
 }
 
 unsigned klassisk_iron_tex() {
-    return solid_tex(88, 62, 38, 255);
+    return solid_tex(118, 72, 32, 255);
 }
 
 unsigned moderne_steel_tex() {
-    return solid_tex(48, 62, 90, 255);
+    return solid_tex(36, 78, 148, 255);
 }
 
 unsigned fail_red_tex() {
@@ -1219,9 +1219,9 @@ void kind_klassisk(u8* p, u32 tot) {
         argb_to_rgba(p, tot);
     }
     for (u32 i = 0; i < tot; ++i) {
-        p[i * 4 + 0] = static_cast<u8>(std::min(255, static_cast<int>(p[i * 4 + 0]) * 25 / 100 + 72));
-        p[i * 4 + 1] = static_cast<u8>(std::min(255, static_cast<int>(p[i * 4 + 1]) * 20 / 100 + 48));
-        p[i * 4 + 2] = static_cast<u8>(std::min(255, static_cast<int>(p[i * 4 + 2]) * 12 / 100 + 28));
+        p[i * 4 + 0] = static_cast<u8>(std::min(255, static_cast<int>(p[i * 4 + 0]) * 18 / 100 + 118));
+        p[i * 4 + 1] = static_cast<u8>(std::min(255, static_cast<int>(p[i * 4 + 1]) * 14 / 100 + 72));
+        p[i * 4 + 2] = static_cast<u8>(std::min(255, static_cast<int>(p[i * 4 + 2]) * 10 / 100 + 32));
     }
     std::printf("[glb] klassisk: bronze-iron (was mean %.0f,%.0f,%.0f)\n", mr, mg, mb);
     std::fflush(stdout);
@@ -1234,9 +1234,9 @@ void kind_moderne(u8* p, u32 tot) {
         argb_to_rgba(p, tot);
     }
     for (u32 i = 0; i < tot; ++i) {
-        p[i * 4 + 0] = static_cast<u8>(std::min(255, static_cast<int>(p[i * 4 + 0]) * 18 / 100 + 48));
-        p[i * 4 + 1] = static_cast<u8>(std::min(255, static_cast<int>(p[i * 4 + 1]) * 22 / 100 + 62));
-        p[i * 4 + 2] = static_cast<u8>(std::min(255, static_cast<int>(p[i * 4 + 2]) * 30 / 100 + 88));
+        p[i * 4 + 0] = static_cast<u8>(std::min(255, static_cast<int>(p[i * 4 + 0]) * 12 / 100 + 36));
+        p[i * 4 + 1] = static_cast<u8>(std::min(255, static_cast<int>(p[i * 4 + 1]) * 16 / 100 + 78));
+        p[i * 4 + 2] = static_cast<u8>(std::min(255, static_cast<int>(p[i * 4 + 2]) * 22 / 100 + 148));
     }
     std::printf("[glb] moderne: cool steel (was mean %.0f,%.0f,%.0f)\n", mr, mg, mb);
     std::fflush(stdout);
