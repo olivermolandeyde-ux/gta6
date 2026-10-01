@@ -26,7 +26,7 @@ struct BuildingGlPass {
     TreeGlb  tree_glb[kTreeKindCount];
     TreeGlb  sky_glb; // custom downtown skyscraper-2.glb
     TreeGlb  lamp_glb[kLampKindCount]; // klassisk, moderne
-    TreeGlb  suv_glb;                  // suv_car.glb parked on asphalt
+    TreeGlb  suv_glb;                  // low_poly_suv.glb parked on asphalt
     unsigned glow_prog, glow_vao, glow_vbo, glow_ibo, glow_ivbo, glow_nidx;
     u32      glow_count;
     unsigned street_count;

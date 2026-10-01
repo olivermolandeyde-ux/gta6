@@ -812,22 +812,38 @@ bool BuildingGlPass::init() {
     load_city_tree("gatelys_klassisk.glb", &lamp_glb[0]);
     std::printf("[glb] Loading lamp model: gatelys_moderne.glb\n");
     load_city_tree("gatelys_moderne.glb", &lamp_glb[1]);
-    if (load_city_tree("suv_car.glb", &suv_glb)) {
-        u32 ntex = 0;
-        for (u32 p = 0; p < suv_glb.nprims; ++p) {
-            if (suv_glb.prims[p].tex_w > 1) {
-                ++ntex;
-            }
-        }
-        std::printf("[cars] Loaded SUV model: %u verts, %u textures\n", suv_glb.nverts, ntex);
+    if (load_city_tree("low_poly_suv.glb", &suv_glb)) {
+        std::printf("[cars] Loaded low_poly_suv.glb: %u verts (should be < 10,000)\n", suv_glb.nverts);
         const float hx = suv_glb.xmax - suv_glb.xmin;
         const float hy = suv_glb.ymax - suv_glb.ymin;
         const float hz = suv_glb.zmax - suv_glb.zmin;
         std::printf("[cars] SUV bounds: %.2fx%.2fx%.2f meters\n", hx, hy, hz);
-        std::printf("[cars] Scale factor applied: %.5f\n", suv_fit_scale(&suv_glb));
+        if (suv_glb.z_up == 1) {
+            std::printf("[cars] Applied Z-up to Y-up rotation\n");
+        } else if (suv_glb.z_up == 2) {
+            std::printf("[cars] Applied X-up to Y-up rotation\n");
+        } else {
+            std::printf("[cars] Orientation: Y-up (correct)\n");
+        }
+        const float sc = suv_fit_scale(&suv_glb);
+        float L = hx, W = hz, H = hy;
+        if (suv_glb.z_up == 1) {
+            L = hx > hy ? hx : hy;
+            W = hx > hy ? hy : hx;
+            H = hz;
+        } else if (suv_glb.z_up == 2) {
+            L = hy > hz ? hy : hz;
+            W = hy > hz ? hz : hy;
+            H = hx;
+        } else {
+            L = hx > hz ? hx : hz;
+            W = hx > hz ? hz : hx;
+            H = hy;
+        }
+        std::printf("[cars] Final scale: %.5f, dimensions: %.2fx%.2fx%.2f meters\n", sc, L * sc, W * sc, H * sc);
         std::fflush(stdout);
     } else {
-        std::printf("[cars] suv_car.glb not found — no parked SUVs\n");
+        std::printf("[cars] low_poly_suv.glb not found — no parked SUVs\n");
         std::fflush(stdout);
     }
     std::printf("[glb] Loaded street lamp models: klassisk (%u verts), moderne (%u verts)\n",
@@ -1148,21 +1164,23 @@ void BuildingGlPass::buildMesh(World& world) {
         const int   zup  = suv_glb.z_up;
         const float y0   = tree_up_min(&suv_glb);
         const float y    = kCityPlateauY + 0.05f - y0 * sc;
-        const float park = 7.2f; // on asphalt, ~2.8 m inside the 10 m curb
-        auto push_suv = [&](float x, float z, float yaw) {
+        const float park = 7.2f; // curb lane on 20 m asphalt, not the 11.5 m sidewalk
+        auto push_suv = [&](float x, float z, float along) {
             if (sn >= kSuvSpawnCap) {
                 return;
             }
             const float nx = std::round(x / kCityBlockPitch) * kCityBlockPitch;
             const float nz = std::round(z / kCityBlockPitch) * kCityBlockPitch;
-            const float dx = std::fabs(x - nx);
-            const float dz = std::fabs(z - nz);
-            if (dx < 22.f && dz < 22.f) {
+            const float dx = x - nx;
+            const float dz = z - nz;
+            if (dx * dx + dz * dz < 15.f * 15.f) {
                 return;
             }
-            if (xz_too_close(x, z, suv_xz, n_suv_xz, 5.0f)) {
+            if (xz_too_close(x, z, suv_xz, n_suv_xz, 8.0f)) {
                 return;
             }
+            const u32 flip = static_cast<u32>(x * 17.f + z * 31.f) & 1u;
+            const float yaw = along + (flip ? 3.14159265f : 0.f);
             tree_yaw_mat(&suv_mats[sn * 16], x, y, z, yaw, sc, zup);
             suv_xz[n_suv_xz * 2u]     = x;
             suv_xz[n_suv_xz * 2u + 1] = z;
@@ -1171,18 +1189,16 @@ void BuildingGlPass::buildMesh(World& world) {
         };
         for (u32 j = 0; j <= kCityBlocks && sn < kSuvSpawnCap; ++j) {
             const float z = static_cast<float>(j) * kCityBlockPitch;
-            for (float x = 80.f; x < kCityExtentM - 80.f && sn < kSuvSpawnCap; x += 96.f) {
-                const float side = (static_cast<u32>(x) % 192u < 96u) ? park : -park;
-                const float yaw  = (side > 0.f) ? 0.f : 3.14159265f;
-                push_suv(x, z + side, yaw);
+            for (float x = 80.f; x < kCityExtentM - 80.f && sn < kSuvSpawnCap; x += 48.f) {
+                const float side = (static_cast<u32>(x) % 96u < 48u) ? park : -park;
+                push_suv(x, z + side, 0.f);
             }
         }
         for (u32 i = 0; i <= kCityBlocks && sn < kSuvSpawnCap; ++i) {
             const float x = static_cast<float>(i) * kCityBlockPitch;
-            for (float z = 80.f; z < kCityExtentM - 80.f && sn < kSuvSpawnCap; z += 96.f) {
-                const float side = (static_cast<u32>(z) % 192u < 96u) ? park : -park;
-                const float yaw  = (side > 0.f) ? 1.5707963f : -1.5707963f;
-                push_suv(x + side, z, yaw);
+            for (float z = 80.f; z < kCityExtentM - 80.f && sn < kSuvSpawnCap; z += 48.f) {
+                const float side = (static_cast<u32>(z) % 96u < 48u) ? park : -park;
+                push_suv(x + side, z, 1.5707963f);
             }
         }
         tree_glb_set_instances(&suv_glb, suv_mats, sn);
