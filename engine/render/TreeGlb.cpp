@@ -1631,10 +1631,18 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
                             f[1] = 0.63f;
                             f[2] = 0.66f;
                         }
+                        float metallic = 1.f;
+                        {
+                            const JNode* mf = j_field(d, pbr_id, "metallicFactor");
+                            if (mf && mf->kind == JK_NUM) {
+                                metallic = static_cast<float>(mf->num);
+                            }
+                        }
                         const float chroma = std::fabs(f[0] - f[1]) + std::fabs(f[1] - f[2]);
-                        const int suv_lite_glass =
-                            is_suv_label(out->label) && chroma < 0.16f && lum > 0.72f;
-                        if (is_suv_label(out->label) && (suv_glass || lum < 0.18f || suv_lite_glass)) {
+                        // Glass: named / blend / non-metal light gray. Never tires (dark) or rims (metal).
+                        const int suv_win = is_suv_label(out->label) &&
+                                            (suv_glass || (metallic < 0.4f && lum > 0.40f && chroma < 0.25f));
+                        if (suv_win) {
                             pr.tex = solid_tex(8, 8, 10, 255);
                         } else if (is_lamp_label(out->label) && lum > 0.85f) {
                             pr.tex = lamp_metal_tex();
@@ -2042,9 +2050,10 @@ bool load_tree_glb(const char* path, TreeGlb* out) {
             out->z_up = 1;
         }
         (void)x_plant;
-        // Cars: long axis is length, not up. Blender GLB is Z-up — stand on wheels.
+        // Cars: long axis is length (often Z-forward), not up. glTF Y-up stands on wheels.
+        // z_up=1 mapped length→up so the SUV stood on its tail.
         if (std::strcmp(out->label, "suv") == 0) {
-            out->z_up = 1;
+            out->z_up = 0;
         }
     }
     std::printf("[glb] %s AABB x=[%.3f,%.3f] y=[%.3f,%.3f] z=[%.3f,%.3f] size=(%.3f,%.3f,%.3f) z_up=%d prims=%u verts=%u\n",
