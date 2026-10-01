@@ -1163,7 +1163,7 @@ void BuildingGlPass::buildMesh(World& world) {
         const float sc   = suv_fit_scale(&suv_glb);
         const int   zup  = suv_glb.z_up;
         const float y0   = tree_up_min(&suv_glb);
-        const float y    = kCityPlateauY + 0.05f - y0 * sc;
+        const float y    = kCityPlateauY + 0.28f - y0 * sc; // road top is plateau+0.25
         const float park = 7.2f; // curb lane on 20 m asphalt, not the 11.5 m sidewalk
         auto push_suv = [&](float x, float z, float along) {
             if (sn >= kSuvSpawnCap) {

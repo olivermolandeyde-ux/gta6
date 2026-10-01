@@ -1562,7 +1562,7 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
     pr.has_color0 = cacc ? 1 : 0;
     const JNode* matn = j_field(d, prim, "material");
     u32 mat_i = 0;
-    int suv_glass = 0;
+    int suv_part = 0; // 1 glass, 2 tire, 3 rim
     if (matn && matn->kind == JK_NUM) {
         mat_i = static_cast<u32>(matn->num);
         const JNode* materials = j_field(d, d->root, "materials");
@@ -1570,10 +1570,19 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
         if (mat) {
             const JNode* am = j_field(d, mat, "alphaMode");
             const JNode* mnm = j_field(d, mat, "name");
-            suv_glass =
-                is_suv_label(out->label) &&
-                (str_eq(am, "BLEND") || str_has(mnm, "glass") || str_has(mnm, "window") ||
-                 str_has(mnm, "windshield") || str_has(mnm, "windscreen") || str_has(mnm, "glaz"));
+            if (is_suv_label(out->label)) {
+                if (str_eq(am, "BLEND") || str_has(mnm, "glass") || str_has(mnm, "window") ||
+                    str_has(mnm, "windshield") || str_has(mnm, "windscreen") || str_has(mnm, "glaz")) {
+                    suv_part = 1;
+                } else if (str_has(mnm, "tire") || str_has(mnm, "tyre") || str_has(mnm, "rubber") ||
+                           str_has(mnm, "tread")) {
+                    suv_part = 2;
+                } else if (str_has(mnm, "rim") || str_has(mnm, "felg") || str_has(mnm, "chrome") ||
+                           str_has(mnm, "hub") || str_has(mnm, "alloy") || str_has(mnm, "spoke")) {
+                    suv_part = 3;
+                }
+            }
+            const int suv_glass = suv_part == 1;
             if (str_eq(am, "MASK") || str_eq(am, "BLEND")) {
                 pr.alpha_mask = 1;
             }
@@ -1631,20 +1640,29 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
                             f[1] = 0.63f;
                             f[2] = 0.66f;
                         }
-                        float metallic = 1.f;
+                        float metallic = 0.f;
+                        int   met_set  = 0;
                         {
                             const JNode* mf = j_field(d, pbr_id, "metallicFactor");
                             if (mf && mf->kind == JK_NUM) {
                                 metallic = static_cast<float>(mf->num);
+                                met_set  = 1;
                             }
                         }
                         const float chroma = std::fabs(f[0] - f[1]) + std::fabs(f[1] - f[2]);
-                        // Glass: named / blend / non-metal light gray. Never tires (dark) or rims (metal).
-                        const int suv_win = is_suv_label(out->label) &&
-                                            (suv_glass || (metallic < 0.4f && lum > 0.40f && chroma < 0.25f));
-                        if (suv_win) {
-                            pr.tex = solid_tex(8, 8, 10, 255);
-                        } else if (is_lamp_label(out->label) && lum > 0.85f) {
+                        if (is_suv_label(out->label) && suv_part == 0) {
+                            if (met_set && metallic > 0.55f && chroma < 0.22f) {
+                                suv_part = 3;
+                            } else if (met_set && metallic < 0.4f && lum < 0.25f && chroma < 0.20f) {
+                                suv_part = 2;
+                            } else if ((met_set && metallic < 0.4f && lum > 0.40f && chroma < 0.25f) ||
+                                       suv_glass) {
+                                suv_part = 1;
+                            } else if (!met_set && lum < 0.18f && chroma < 0.20f) {
+                                suv_part = 2;
+                            }
+                        }
+                        if (is_lamp_label(out->label) && lum > 0.85f) {
                             pr.tex = lamp_metal_tex();
                         } else {
                             pr.tex = solid_tex(static_cast<u8>(clampf(f[0], 0.f, 1.f) * 255.f),
@@ -1698,13 +1716,20 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
     if (!pr.tex_emit) {
         pr.tex_emit = black_tex();
     }
-    if (suv_glass) {
-        pr.tex         = solid_tex(8, 8, 10, 255);
-        pr.tex_w       = pr.tex_h = 1;
-        pr.alpha_mask  = 0;
-        pr.has_alpha   = 0;
-        pr.cutoff      = 0.5f;
-        std::printf("[glb] %s material %u: glass → black\n", out->label, mat_i);
+    if (is_suv_label(out->label) && suv_part) {
+        if (suv_part == 1) {
+            pr.tex = solid_tex(8, 8, 10, 255);
+        } else if (suv_part == 2) {
+            pr.tex = solid_tex(52, 52, 54, 255); // dark gray rubber
+        } else {
+            pr.tex = solid_tex(196, 198, 204, 255); // silver rim
+        }
+        pr.tex_w      = pr.tex_h = 1;
+        pr.alpha_mask = 0;
+        pr.has_alpha  = 0;
+        pr.cutoff     = 0.5f;
+        std::printf("[glb] %s material %u: %s\n", out->label, mat_i,
+                    suv_part == 1 ? "glass → black" : suv_part == 2 ? "tire → dark gray" : "rim → silver");
         std::fflush(stdout);
     }
     {
