@@ -730,6 +730,38 @@ bool str_eq(const JNode* n, const char* s) {
     return n->slen == l && std::memcmp(n->s, s, l) == 0;
 }
 
+bool str_has(const JNode* n, const char* s) {
+    if (!n || n->kind != JK_STR || !n->s || !s || !*s) {
+        return false;
+    }
+    const u32 nl = n->slen;
+    const u32 sl = static_cast<u32>(std::strlen(s));
+    if (sl == 0 || sl > nl) {
+        return false;
+    }
+    for (u32 i = 0; i + sl <= nl; ++i) {
+        int ok = 1;
+        for (u32 k = 0; k < sl; ++k) {
+            char a = n->s[i + k];
+            char b = s[k];
+            if (a >= 'A' && a <= 'Z') {
+                a = static_cast<char>(a + 32);
+            }
+            if (b >= 'A' && b <= 'Z') {
+                b = static_cast<char>(b + 32);
+            }
+            if (a != b) {
+                ok = 0;
+                break;
+            }
+        }
+        if (ok) {
+            return true;
+        }
+    }
+    return false;
+}
+
 u32 j_arr_at(const JDoc* d, const JNode* arr, u32 i) {
     if (!arr || arr->kind != JK_ARR) {
         return 0;
@@ -1530,6 +1562,7 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
     pr.has_color0 = cacc ? 1 : 0;
     const JNode* matn = j_field(d, prim, "material");
     u32 mat_i = 0;
+    int suv_glass = 0;
     if (matn && matn->kind == JK_NUM) {
         mat_i = static_cast<u32>(matn->num);
         const JNode* materials = j_field(d, d->root, "materials");
@@ -1537,6 +1570,10 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
         if (mat) {
             const JNode* am = j_field(d, mat, "alphaMode");
             const JNode* mnm = j_field(d, mat, "name");
+            suv_glass =
+                is_suv_label(out->label) &&
+                (str_eq(am, "BLEND") || str_has(mnm, "glass") || str_has(mnm, "window") ||
+                 str_has(mnm, "windshield") || str_has(mnm, "windscreen") || str_has(mnm, "glaz"));
             if (str_eq(am, "MASK") || str_eq(am, "BLEND")) {
                 pr.alpha_mask = 1;
             }
@@ -1589,12 +1626,17 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
                             f[ci] = static_cast<float>(d->nodes[c].num);
                         }
                         const float lum = f[0] * 0.30f + f[1] * 0.59f + f[2] * 0.11f;
-                        if (!is_lamp_label(out->label) && lum < 0.18f) {
+                        if (!is_lamp_label(out->label) && !is_suv_label(out->label) && lum < 0.18f) {
                             f[0] = 0.62f;
                             f[1] = 0.63f;
                             f[2] = 0.66f;
                         }
-                        if (is_lamp_label(out->label) && lum > 0.85f) {
+                        const float chroma = std::fabs(f[0] - f[1]) + std::fabs(f[1] - f[2]);
+                        const int suv_lite_glass =
+                            is_suv_label(out->label) && chroma < 0.16f && lum > 0.72f;
+                        if (is_suv_label(out->label) && (suv_glass || lum < 0.18f || suv_lite_glass)) {
+                            pr.tex = solid_tex(8, 8, 10, 255);
+                        } else if (is_lamp_label(out->label) && lum > 0.85f) {
                             pr.tex = lamp_metal_tex();
                         } else {
                             pr.tex = solid_tex(static_cast<u8>(clampf(f[0], 0.f, 1.f) * 255.f),
@@ -1647,6 +1689,15 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
     }
     if (!pr.tex_emit) {
         pr.tex_emit = black_tex();
+    }
+    if (suv_glass) {
+        pr.tex         = solid_tex(8, 8, 10, 255);
+        pr.tex_w       = pr.tex_h = 1;
+        pr.alpha_mask  = 0;
+        pr.has_alpha   = 0;
+        pr.cutoff      = 0.5f;
+        std::printf("[glb] %s material %u: glass → black\n", out->label, mat_i);
+        std::fflush(stdout);
     }
     {
         const char* solid = std::getenv("LEONIDA_TREE_SOLID");
@@ -1991,6 +2042,10 @@ bool load_tree_glb(const char* path, TreeGlb* out) {
             out->z_up = 1;
         }
         (void)x_plant;
+        // Cars: long axis is length, not up. Blender GLB is Z-up — stand on wheels.
+        if (std::strcmp(out->label, "suv") == 0) {
+            out->z_up = 1;
+        }
     }
     std::printf("[glb] %s AABB x=[%.3f,%.3f] y=[%.3f,%.3f] z=[%.3f,%.3f] size=(%.3f,%.3f,%.3f) z_up=%d prims=%u verts=%u\n",
                 out->label, out->xmin, out->xmax, out->ymin, out->ymax, out->zmin, out->zmax,
