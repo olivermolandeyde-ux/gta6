@@ -1283,7 +1283,7 @@ void BuildingGlPass::buildMesh(World& world) {
             }
         }
         tree_glb_set_instances(&corolla_glb, corolla_mats, sn);
-        std::printf("[cars] Yaw +90 deg so length follows the road\n");
+        std::printf("[cars] Applied +90° yaw to face along road\n");
         std::printf("[cars] Parked %u Corolla E80 along roads\n", sn);
         std::fflush(stdout);
     }
