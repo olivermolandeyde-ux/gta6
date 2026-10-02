@@ -1274,7 +1274,7 @@ void BuildingGlPass::buildMesh(World& world) {
                 push_suv(x, z + side, 0.f);
             }
         }
-        for (u32 i = 0; i 32 i = 0; i <= kCityBlocks && sn < kCorollaSpawnCap; ++i) {
+        for (u32 i = 0; i <= kCityBlocks && sn < kCorollaSpawnCap; ++i) {
             const float x = static_cast<float>(i) * kCityBlockPitch;
             for (float z = 80.f; z < kCityExtentM - 80.f && sn < kCorollaSpawnCap; z += 48.f) {
                 const float side = (static_cast<u32>(z) % 96u < 48u) ? park : -park;
