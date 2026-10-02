@@ -24,6 +24,12 @@ jobs:
       - name: Build Engine
         run: cmake --build build --parallel 4
 
+      - name: Verify Native City Target Built (SDL2 + OpenGL)
+        run: |
+          test -x build/leonida_city || { echo "leonida_city missing — SDL2/OpenGL were not found"; exit 1; }
+          test -x build/leonida_terrain || { echo "leonida_terrain missing"; exit 1; }
+          echo "native city + terrain viewers built"
+
       - name: Generate City Data
         run: python3 tools/citygen/master_generate.py
 
