@@ -2184,10 +2184,14 @@ bool load_tree_glb(const char* path, TreeGlb* out) {
             out->z_up = 1;
         }
         (void)x_plant;
-        // Cars: long axis is length (often Z-forward), not up. glTF Y-up stands on wheels.
-        // z_up=1 mapped length→up so the SUV/Corolla stood on its nose.
-        if (std::strcmp(out->label, "suv") == 0 || std::strcmp(out->label, "corolla") == 0) {
+        // Cars: long axis is length, not up.
+        // SUV (glTF Y-up, Z-forward): z_up=1 planted it on the tail — keep Y-up.
+        // Corolla (Blender Z-up, Y-forward): Y-up plants the nose in the road — Rx(-90°).
+        if (std::strcmp(out->label, "suv") == 0) {
             out->z_up = 0;
+        }
+        if (std::strcmp(out->label, "corolla") == 0) {
+            out->z_up = 1;
         }
     }
     suv_paint_hubs(out);
