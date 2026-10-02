@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Leonida Engine — True PBR</title>
+<style>
+  html, body { margin:0; height:100%; background:#10141c; color:#e8eef7; font-family: ui-sans-serif, system-ui, sans-serif; overflow:hidden; }
+  canvas { display:block; width:100%; height:100%; }
+  #hud {
+    position:fixed; left:16px; bottom:16px; padding:12px 14px;
+    background:rgba(8,10,16,.72); border:1px solid rgba(255,196,72,.35);
+    border-radius:10px; font-size:13px; line-height:1.45; pointer-events:none;
+  }
+  #hud b { color:#ffc448; }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div id="hud">
+  <b>LEONIDA · TRUE PBR</b><br/>
+  GGX / Smith / Schlick · ambient fill · orbiting sun<br/>
+  Red metal cube on 100 m concrete slab · WASD / QE
+</div>
+<script>
+const canvas = document.getElementById('gl');
+const gl = canvas.getContext('webgl2', { antialias:true, alpha:false });
+if (!gl) document.body.innerHTML = 'WebGL2 required';
+
+function resize() {
+  canvas.width = innerWidth * devicePixelRatio;
+  canvas.height = innerHeight * devicePixelRatio;
+  gl.viewport(0, 0, canvas.width, canvas.height);
+}
+addEventListener('resize', resize); resize();
+
+const vs = `#version 300 es
+layout(location=0) in vec3 aPos;
+layout(location=1) in vec3 aNrm;
+layout(location=2) in vec2 aUv;
+uniform mat4 uModel, uView, uProj;
+out vec3 vWorld; out vec3 vN; out vec2 vUv;
+void main() {
+  vec4 w = uModel * vec4(aPos, 1.0);
+  vWorld = w.xyz;
+  vN = normalize(mat3(uModel) * aNrm);
+  vUv = aUv;
+  gl_Position = uProj * uView * w;
+}`;
+
+const fs = `#version 300 es
+precision highp float;
+in vec3 vWorld; in vec3 vN; in vec2 vUv;
+uniform vec3 uCam, uLightDir, uAlbedo;
+uniform float uRough, uMetal, uI;
+out vec4 o;
+float D_GGX(float NdotH, float roughness) {
+  float a = roughness * roughness;
+  float a2 = a * a;
+  float denom = (NdotH * NdotH) * (a2 - 1.0) + 1.0;
+  return a2 / (3.14159265 * denom * denom);
+}
+float G_SchlickGGX(float NdotV, float roughness) {
+  float r = roughness + 1.0;
+  float k = (r * r) / 8.0;
+  return NdotV / (NdotV * (1.0 - k) + k);
+}
+float G_Smith(float NdotV, float NdotL, float roughness) {
+  return G_SchlickGGX(NdotV, roughness) * G_SchlickGGX(NdotL, roughness);
+}
+vec3 F_Schlick(float cosTheta, vec3 F0) {
+  return F0 + (1.0 - F0) * pow(1.0 - cosTheta, 5.0);
+}
+void main() {
+  vec3 N = normalize(vN);
+  vec3 V = normalize(uCam - vWorld);
+  vec3 L = normalize(-uLightDir);
+  vec3 H = normalize(V + L);
+  float NdotV = max(dot(N, V), 0.0);
+  float NdotL = max(dot(N, L), 0.0);
+  float NdotH = max(dot(N, H), 0.0);
+  float VdotH = max(dot(V, H), 0.0);
+  vec3 albedo = uAlbedo;
+  vec2 g = abs(fract(vUv) - vec2(0.5));
+  float grout = smoothstep(0.47, 0.50, max(g.x, g.y));
+  albedo *= mix(1.0, 0.78, grout * (1.0 - uMetal));
+  vec3 F0 = mix(vec3(0.04), albedo, uMetal);
+  vec3 F = F_Schlick(VdotH, F0);
+  float D = D_GGX(NdotH, uRough);
+  float Gval = G_Smith(NdotV, NdotL, uRough);
+  vec3 spec = (D * Gval * F) / max(4.0 * NdotV * NdotL, 0.001);
+  vec3 kD = (1.0 - F) * (1.0 - uMetal);
+  vec3 diff = kD * albedo / 3.14159265;
+  float shin = mix(16.0, 256.0, 1.0 - uRough);
+  vec3 highlight = F * pow(NdotH, shin) * NdotL;
+  vec3 rad = (diff + spec) * NdotL * uI;
+  rad += highlight * uI * (0.25 + 0.55 * uMetal);
+  vec3 ambient = vec3(0.05, 0.07, 0.1);
+  float hemi = 0.55 + 0.45 * max(N.y, 0.0);
+  rad += ambient * mix(albedo, F0, uMetal) * hemi;
+  rad = pow(max(rad, vec3(0.0)), vec3(1.0/2.2));
+  o = vec4(rad, 1.0);
+}`;
+
+function compile(t, src) {
+  const s = gl.createShader(t);
+  gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw gl.getShaderInfoLog(s);
+  return s;
+}
+const prog = gl.createProgram();
+gl.attachShader(prog, compile(gl.VERTEX_SHADER, vs));
+gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, fs));
+gl.linkProgram(prog);
+if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw gl.getProgramInfoLog(prog);
+
+function meshFrom(faces, scale) {
+  const verts = []; const idx = [];
+  faces.forEach((f, fi) => {
+    const b = fi * 4;
+    f.t.forEach((p, i) => {
+      verts.push(p[0]*scale, p[1]*scale, p[2]*scale, f.n[0], f.n[1], f.n[2],
+                 (i===1||i===2)?1:0, (i>1)?1:0);
+    });
+    idx.push(b, b+1, b+2, b, b+2, b+3);
+  });
+  const vao = gl.createVertexArray();
+  gl.bindVertexArray(vao);
+  const vbo = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(verts), gl.STATIC_DRAW);
+  const ibo = gl.createBuffer();
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(idx), gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 32, 0);
+  gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 32, 12);
+  gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 2, gl.FLOAT, false, 32, 24);
+  return { vao, count: idx.length };
+}
+
+const cube = meshFrom([
+  { n:[0,0,1],  t:[[-1,-1,1],[1,-1,1],[1,1,1],[-1,1,1]] },
+  { n:[0,0,-1], t:[[1,-1,-1],[-1,-1,-1],[-1,1,-1],[1,1,-1]] },
+  { n:[1,0,0],  t:[[1,-1,1],[1,-1,-1],[1,1,-1],[1,1,1]] },
+  { n:[-1,0,0], t:[[-1,-1,-1],[-1,-1,1],[-1,1,1],[-1,1,-1]] },
+  { n:[0,1,0],  t:[[-1,1,1],[1,1,1],[1,1,-1],[-1,1,-1]] },
+  { n:[0,-1,0], t:[[-1,-1,-1],[1,-1,-1],[1,-1,1],[-1,-1,1]] },
+], 0.5);
+
+const groundVerts = new Float32Array([
+  -50,0,-50,  0,1,0,  0,0,
+   50,0,-50,  0,1,0,  50,0,
+   50,0, 50,  0,1,0,  50,50,
+  -50,0, 50,  0,1,0,  0,50,
+]);
+const groundIdx = new Uint16Array([0,1,2, 0,2,3]);
+const groundVao = gl.createVertexArray();
+gl.bindVertexArray(groundVao);
+const gvbo = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, gvbo);
+gl.bufferData(gl.ARRAY_BUFFER, groundVerts, gl.STATIC_DRAW);
+const gibo = gl.createBuffer();
+gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, gibo);
+gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, groundIdx, gl.STATIC_DRAW);
+gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 32, 0);
+gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 32, 12);
+gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 2, gl.FLOAT, false, 32, 24);
+
+function mul(a,b){const o=new Float32Array(16);for(let c=0;c<4;c++)for(let r=0;r<4;r++)o[c*4+r]=a[0*4+r]*b[c*4+0]+a[1*4+r]*b[c*4+1]+a[2*4+r]*b[c*4+2]+a[3*4+r]*b[c*4+3];return o;}
+function ident(){const m=new Float32Array(16);m[0]=m[5]=m[10]=m[15]=1;return m;}
+function persp(fovy, asp, n, f){
+  const t=1/Math.tan(fovy/2), m=new Float32Array(16);
+  m[0]=t/asp; m[5]=t; m[10]=(f+n)/(n-f); m[11]=-1; m[14]=(2*f*n)/(n-f); return m;
+}
+function lookAt(e,c,u){
+  let zx=e[0]-c[0],zy=e[1]-c[1],zz=e[2]-c[2];
+  let zl=Math.hypot(zx,zy,zz); zx/=zl;zy/=zl;zz/=zl;
+  let xx=u[1]*zz-u[2]*zy, xy=u[2]*zx-u[0]*zz, xz=u[0]*zy-u[1]*zx;
+  let xl=Math.hypot(xx,xy,xz); xx/=xl;xy/=xl;xz/=xl;
+  let yx=zy*xz-zz*xy, yy=zz*xx-zx*xz, yz=zx*xy-zy*xx;
+  const m=ident();
+  m[0]=xx;m[4]=xy;m[8]=xz; m[1]=yx;m[5]=yy;m[9]=yz; m[2]=zx;m[6]=zy;m[10]=zz;
+  m[12]=-(xx*e[0]+xy*e[1]+xz*e[2]);
+  m[13]=-(yx*e[0]+yy*e[1]+yz*e[2]);
+  m[14]=-(zx*e[0]+zy*e[1]+zz*e[2]);
+  return m;
+}
+function rotY(a){const c=Math.cos(a),s=Math.sin(a),m=ident();m[0]=c;m[2]=-s;m[8]=s;m[10]=c;return m;}
+function translate(x,y,z){const m=ident();m[12]=x;m[13]=y;m[14]=z;return m;}
+
+const keys={};
+addEventListener('keydown', e => { keys[e.key.toLowerCase()]=true; });
+addEventListener('keyup', e => { keys[e.key.toLowerCase()]=false; });
+
+const cam=[0, 2, -5];
+gl.enable(gl.DEPTH_TEST);
+gl.clearColor(0.10, 0.13, 0.18, 1);
+
+function drawMesh(vao, count, model, albedo, rough, metal, cam, view, proj, lightDir) {
+  gl.bindVertexArray(vao);
+  gl.uniformMatrix4fv(gl.getUniformLocation(prog,'uModel'), false, model);
+  gl.uniformMatrix4fv(gl.getUniformLocation(prog,'uView'), false, view);
+  gl.uniformMatrix4fv(gl.getUniformLocation(prog,'uProj'), false, proj);
+  gl.uniform3fv(gl.getUniformLocation(prog,'uCam'), cam);
+  gl.uniform3fv(gl.getUniformLocation(prog,'uLightDir'), lightDir);
+  gl.uniform3fv(gl.getUniformLocation(prog,'uAlbedo'), albedo);
+  gl.uniform1f(gl.getUniformLocation(prog,'uRough'), rough);
+  gl.uniform1f(gl.getUniformLocation(prog,'uMetal'), metal);
+  gl.uniform1f(gl.getUniformLocation(prog,'uI'), 5.2);
+  gl.drawElements(gl.TRIANGLES, count, gl.UNSIGNED_SHORT, 0);
+}
+
+function loop(t) {
+  const dt = 1/60;
+  const sp = keys['shift'] ? 8 : 3.2;
+  if (keys['w']) cam[2] += sp*dt;
+  if (keys['s']) cam[2] -= sp*dt;
+  if (keys['a']) cam[0] -= sp*dt;
+  if (keys['d']) cam[0] += sp*dt;
+  if (keys['q']) cam[1] -= sp*dt;
+  if (keys['e']) cam[1] += sp*dt;
+
+  const a = (t * 0.001) * 0.40;
+  const toSunLen = Math.hypot(Math.sin(a), 0.62, Math.cos(a));
+  const lightDir = [-Math.sin(a)/toSunLen, -0.62/toSunLen, -Math.cos(a)/toSunLen];
+
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  gl.useProgram(prog);
+  const view = lookAt(cam, [0,0,0], [0,1,0]);
+  const proj = persp(Math.PI/3, canvas.width/canvas.height, 0.05, 250);
+  const cubeModel = mul(translate(0, 0.5, 0), rotY(t*0.0007));
+  drawMesh(groundVao, 6, ident(), [0.5,0.5,0.5], 0.9, 0.0, cam, view, proj, lightDir);
+  drawMesh(cube.vao, cube.count, cubeModel, [0.8,0.2,0.2], 0.4, 0.8, cam, view, proj, lightDir);
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+build/
+build_release/
+build-perf/
+release/
+*.o
+*.a
+.cache/
+tools/.venv/
+output/
+__pycache__/
+*.pyc
+*.tar.gz
+*.sha256
+# Local tree / lamp / skyscraper GLBs (drop them here on the Mac)
+assets/models/*.glb
