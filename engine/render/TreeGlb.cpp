@@ -1086,8 +1086,12 @@ int is_corolla_label(const char* s) {
     return s && (std::strstr(s, "corolla") != nullptr || std::strstr(s, "toyota") != nullptr);
 }
 
+int is_sports_label(const char* s) {
+    return s && (std::strstr(s, "sports") != nullptr);
+}
+
 int is_car_label(const char* s) {
-    return is_suv_label(s) || is_corolla_label(s);
+    return is_suv_label(s) || is_corolla_label(s) || is_sports_label(s);
 }
 
 unsigned fail_red_tex() {
@@ -1941,6 +1945,9 @@ const char* glb_short_name(const char* path) {
     }
     if (std::strstr(base, "corolla") || std::strstr(base, "toyota")) {
         return "corolla";
+    }
+    if (std::strstr(base, "sports")) {
+        return "sports";
     }
     return base;
 }

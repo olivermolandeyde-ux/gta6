@@ -27,6 +27,7 @@ struct BuildingGlPass {
     TreeGlb  sky_glb; // custom downtown skyscraper-2.glb
     TreeGlb  lamp_glb[kLampKindCount]; // klassisk, moderne
     TreeGlb  corolla_glb;              // low-poly_toyota_corolla_e80_sedan.glb parked on asphalt
+    TreeGlb  sports_glb;               // low_poly_sports_car__game_ready_vehicle.glb
     unsigned glow_prog, glow_vao, glow_vbo, glow_ibo, glow_ivbo, glow_nidx;
     u32      glow_count;
     unsigned street_count;

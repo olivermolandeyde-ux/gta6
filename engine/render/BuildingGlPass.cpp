@@ -721,6 +721,7 @@ bool BuildingGlPass::init() {
     std::memset(&sky_glb, 0, sizeof(sky_glb));
     std::memset(lamp_glb, 0, sizeof(lamp_glb));
     std::memset(&corolla_glb, 0, sizeof(corolla_glb));
+    std::memset(&sports_glb, 0, sizeof(sports_glb));
     glow_prog = glow_vao = glow_vbo = glow_ibo = glow_ivbo = glow_nidx = 0;
     glow_count = 0;
     cube_vao = cube_vbo = cube_ibo = 0;
@@ -924,6 +925,31 @@ bool BuildingGlPass::init() {
         std::fflush(stdout);
     } else {
         std::printf("[cars] low-poly_toyota_corolla_e80_sedan.glb not found — no parked cars\n");
+        std::fflush(stdout);
+    }
+    if (load_city_tree("low_poly_sports_car__game_ready_vehicle.glb", &sports_glb)) {
+        std::printf("[cars] Loaded sports car: %u verts\n", sports_glb.nverts);
+        const float hx = sports_glb.xmax - sports_glb.xmin;
+        const float hy = sports_glb.ymax - sports_glb.ymin;
+        const float hz = sports_glb.zmax - sports_glb.zmin;
+        std::printf("[cars] Sports car bounds: %.2fx%.2fx%.2f meters\n", hx, hy, hz);
+        {
+            float Rtmp[9];
+            corolla_basis(&sports_glb, Rtmp);
+        }
+        const float sc = corolla_fit_scale(&sports_glb);
+        float L = hx;
+        if (hy > L) {
+            L = hy;
+        }
+        if (hz > L) {
+            L = hz;
+        }
+        std::printf("[cars] Sports scale factor: %.5f, final size: %.2f x %.2f x %.2f meters\n", sc, L * sc,
+                    hx * sc, hy * sc);
+        std::fflush(stdout);
+    } else {
+        std::printf("[cars] low_poly_sports_car__game_ready_vehicle.glb not found — Corolla only\n");
         std::fflush(stdout);
     }
     std::printf("[glb] Loaded street lamp models: klassisk (%u verts), moderne (%u verts)\n",
@@ -1235,19 +1261,32 @@ void BuildingGlPass::buildMesh(World& world) {
     (void)skip_lamp;
     (void)skip_tree;
 #endif
-    if (corolla_glb.nprims > 0) {
+    if (corolla_glb.nprims > 0 || sports_glb.nprims > 0) {
         static float corolla_mats[kCorollaSpawnCap * 16];
-        static float corolla_xz[kCorollaSpawnCap * 2];
-        u32 sn       = 0;
-        u32 n_corolla_xz = 0;
-        float R[9];
-        corolla_basis(&corolla_glb, R);
-        const float sc   = corolla_fit_scale(&corolla_glb);
-        const float y0   = corolla_model_ymin(&corolla_glb, R);
-        const float y    = kCityPlateauY + 0.30f - y0 * sc; // road top + 0.05 m
+        static float sports_mats[kSportsSpawnCap * 16];
+        static float car_xz[(kCorollaSpawnCap + kSportsSpawnCap) * 2];
+        u32 n_corolla = 0;
+        u32 n_sports  = 0;
+        u32 n_xz      = 0;
+        float Rc[9];
+        float Rs[9];
+        if (corolla_glb.nprims > 0) {
+            corolla_basis(&corolla_glb, Rc);
+        }
+        if (sports_glb.nprims > 0) {
+            corolla_basis(&sports_glb, Rs);
+        }
+        const float sc_c = corolla_fit_scale(&corolla_glb);
+        const float sc_s = corolla_fit_scale(&sports_glb);
+        const float y0c  = (corolla_glb.nprims > 0) ? corolla_model_ymin(&corolla_glb, Rc) : 0.f;
+        const float y0s  = (sports_glb.nprims > 0) ? corolla_model_ymin(&sports_glb, Rs) : 0.f;
+        const float yc   = kCityPlateauY + 0.30f - y0c * sc_c; // road top + 0.05 m
+        const float ys   = kCityPlateauY + 0.30f - y0s * sc_s;
         const float park = 7.2f; // curb lane on 20 m asphalt, not the 11.5 m sidewalk
-        auto push_suv = [&](float x, float z, float along) {
-            if (sn >= kCorollaSpawnCap) {
+        const u32   corolla_cap = (sports_glb.nprims > 0) ? 20u : kCorollaSpawnCap;
+        const u32   total_cap   = corolla_cap + ((sports_glb.nprims > 0) ? kSportsSpawnCap : 0u);
+        auto push_car = [&](float x, float z, float along) {
+            if (n_corolla + n_sports >= total_cap) {
                 return;
             }
             const float nx = std::round(x / kCityBlockPitch) * kCityBlockPitch;
@@ -1257,35 +1296,59 @@ void BuildingGlPass::buildMesh(World& world) {
             if (dx * dx + dz * dz < 15.f * 15.f) {
                 return;
             }
-            if (xz_too_close(x, z, corolla_xz, n_corolla_xz, 8.0f)) {
+            if (xz_too_close(x, z, car_xz, n_xz, 8.0f)) {
                 return;
             }
             const u32 flip = static_cast<u32>(x * 17.f + z * 31.f) & 1u;
             // AABB longest axis is world +Z; roads need that axis along the street → +90° yaw.
             const float yaw = along + 1.5707963f + (flip ? 3.14159265f : 0.f);
-            corolla_yaw_mat(&corolla_mats[sn * 16], x, y, z, yaw, sc, R);
-            corolla_xz[n_corolla_xz * 2u]     = x;
-            corolla_xz[n_corolla_xz * 2u + 1] = z;
-            ++n_corolla_xz;
-            ++sn;
+            const int corolla_ok = (corolla_glb.nprims > 0 && n_corolla < corolla_cap) ? 1 : 0;
+            const int sports_ok  = (sports_glb.nprims > 0 && n_sports < kSportsSpawnCap) ? 1 : 0;
+            int use_sports = 0;
+            if (sports_ok && corolla_ok) {
+                const u32 h = static_cast<u32>(x * 13.f + z * 29.f);
+                if ((h % 3u) == 0u || n_corolla >= corolla_cap) {
+                    use_sports = 1;
+                }
+            } else if (sports_ok) {
+                use_sports = 1;
+            } else if (!corolla_ok) {
+                return;
+            }
+            if (use_sports) {
+                corolla_yaw_mat(&sports_mats[n_sports * 16], x, ys, z, yaw, sc_s, Rs);
+                ++n_sports;
+            } else {
+                corolla_yaw_mat(&corolla_mats[n_corolla * 16], x, yc, z, yaw, sc_c, Rc);
+                ++n_corolla;
+            }
+            car_xz[n_xz * 2u]     = x;
+            car_xz[n_xz * 2u + 1] = z;
+            ++n_xz;
         };
-        for (u32 j = 0; j <= kCityBlocks && sn < kCorollaSpawnCap; ++j) {
+        for (u32 j = 0; j <= kCityBlocks && n_corolla + n_sports < total_cap; ++j) {
             const float z = static_cast<float>(j) * kCityBlockPitch;
-            for (float x = 80.f; x < kCityExtentM - 80.f && sn < kCorollaSpawnCap; x += 48.f) {
+            for (float x = 80.f; x < kCityExtentM - 80.f && n_corolla + n_sports < total_cap; x += 48.f) {
                 const float side = (static_cast<u32>(x) % 96u < 48u) ? park : -park;
-                push_suv(x, z + side, 0.f);
+                push_car(x, z + side, 0.f);
             }
         }
-        for (u32 i = 0; i <= kCityBlocks && sn < kCorollaSpawnCap; ++i) {
+        for (u32 i = 0; i <= kCityBlocks && n_corolla + n_sports < total_cap; ++i) {
             const float x = static_cast<float>(i) * kCityBlockPitch;
-            for (float z = 80.f; z < kCityExtentM - 80.f && sn < kCorollaSpawnCap; z += 48.f) {
+            for (float z = 80.f; z < kCityExtentM - 80.f && n_corolla + n_sports < total_cap; z += 48.f) {
                 const float side = (static_cast<u32>(z) % 96u < 48u) ? park : -park;
-                push_suv(x + side, z, 1.5707963f);
+                push_car(x + side, z, 1.5707963f);
             }
         }
-        tree_glb_set_instances(&corolla_glb, corolla_mats, sn);
+        if (n_corolla > 0) {
+            tree_glb_set_instances(&corolla_glb, corolla_mats, n_corolla);
+        }
+        if (n_sports > 0) {
+            tree_glb_set_instances(&sports_glb, sports_mats, n_sports);
+        }
         std::printf("[cars] Applied +90° yaw to face along road\n");
-        std::printf("[cars] Parked %u Corolla E80 along roads\n", sn);
+        std::printf("[cars] Parked %u Corolla E80 along roads\n", n_corolla);
+        std::printf("[cars] Parked %u sports cars along roads\n", n_sports);
         std::fflush(stdout);
     }
 }
@@ -1369,6 +1432,9 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
             draw_tree_glbs(tree_glb, tree_shadow_prog);
             if (corolla_glb.instance_count > 0) {
                 draw_instanced_glb(&corolla_glb, tree_shadow_prog);
+            }
+            if (sports_glb.instance_count > 0) {
+                draw_instanced_glb(&sports_glb, tree_shadow_prog);
             }
             glUseProgram(shadow_prog);
         }
@@ -1525,6 +1591,7 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
         draw_instanced_glb(&sky_glb, tree_prog);
         glUniform1f(glGetUniformLocation(tree_prog, "uNightGlow"), 0.f);
         draw_instanced_glb(&corolla_glb, tree_prog);
+        draw_instanced_glb(&sports_glb, tree_prog);
         glUseProgram(building_prog);
     }
     if (glow_prog && glow_count > 0 && night > 0.01f) {
@@ -1668,6 +1735,7 @@ void BuildingGlPass::shutdown() {
         tree_glb_shutdown(&lamp_glb[k]);
     }
     tree_glb_shutdown(&corolla_glb);
+    tree_glb_shutdown(&sports_glb);
     if (glow_prog) {
         glDeleteProgram(glow_prog);
         glow_prog = 0;
