@@ -461,7 +461,7 @@ float corolla_fit_scale(const TreeGlb* t) {
     if (length < 0.001f) {
         return 1.f;
     }
-    float s = (4.2f * 2.2f) / length;
+    float s = (4.2f * 2.2f * 1.4f) / length; // 1.4× the accepted 2.2× length fit
     if (s > 50.f) {
         s = 50.f;
     }
@@ -920,6 +920,7 @@ bool BuildingGlPass::init() {
         }
         std::printf("[cars] Scale factor: %.5f, final size: %.2f x %.2f x %.2f meters\n", sc, L * sc, hx * sc,
                     hy * sc);
+        std::printf("[cars] Scale increased by 1.4x for better visibility\n");
         std::fflush(stdout);
     } else {
         std::printf("[cars] low-poly_toyota_corolla_e80_sedan.glb not found — no parked cars\n");
