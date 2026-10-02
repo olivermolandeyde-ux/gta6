@@ -1343,11 +1343,11 @@ void BuildingGlPass::update_car_instances(float clock_s) {
         }
         // The AABB basis maps each model's longest axis onto the ring heading, and on a
         // car that axis is its length, so the body needs a yaw offset to face along the
-        // direction of travel. The sports mesh stays a further 180° from the Corolla:
-        // its longest axis is the opposite end of the car, and both were yawed together
-        // when they were parked. car_body_flip is the live fine-tune for the last
-        // unknown — which end of the author's mesh is the bonnet — press F in the
-        // sandbox to flip both bodies 180° and keep whichever looks right.
+        // direction of travel. This default — 180° for the Corolla, and a further 180°
+        // for the sports mesh, whose longest axis is the opposite end of the car — is
+        // confirmed on the Mac: the fleet drives nose-first. car_body_flip stays as a
+        // debug aid; press F in the sandbox to flip both bodies if a new model is ever
+        // authored the other way round.
         const float mesh_yaw = yaw + kCarPi + car_body_flip + (m == 1u ? kCarPi : 0.f);
         corolla_yaw_mat(&car_mats[m][n[m] * 16u], x, car_y[m], z, mesh_yaw, car_scale[m],
                         car_basis[m]);

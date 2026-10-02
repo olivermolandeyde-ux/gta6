@@ -16,6 +16,9 @@
 - ✅ Disjointness comes from the lattice law: i even, j a multiple of 4, asserted
   in the sandbox (as is the lattice itself, the speed classes, the spacing and the flow)
 - ✅ Right-hand traffic re-asserted on all 64 straights after the change
+- ✅ Hardware check on the Mac: the fleet drives nose-first with the default body yaw
+  offset, so the boot-first bug is closed for good (F in the sandbox flips it if a
+  future model is authored the other way round)
 
 ## Unreleased — Traffic orientation and lane side
 
