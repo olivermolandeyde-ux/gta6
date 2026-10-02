@@ -2190,7 +2190,7 @@ bool load_tree_glb(const char* path, TreeGlb* out) {
         if (std::strcmp(out->label, "suv") == 0) {
             out->z_up = 0;
         }
-        if (std::strcmp(out->label, "corolla") == 0) {
+        if (std::strstr(out->label, "corolla") || std::strstr(out->label, "toyota")) {
             out->z_up = 1;
         }
     }

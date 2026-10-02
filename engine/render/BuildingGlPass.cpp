@@ -813,6 +813,7 @@ bool BuildingGlPass::init() {
     std::printf("[glb] Loading lamp model: gatelys_moderne.glb\n");
     load_city_tree("gatelys_moderne.glb", &lamp_glb[1]);
     if (load_city_tree("low-poly_toyota_corolla_e80_sedan.glb", &corolla_glb)) {
+        corolla_glb.z_up = 1; // Blender Z-up / Y-forward — Rx(-90°) or the nose is in the road
         std::printf("[cars] Loaded Toyota Corolla E80: %u verts (should be < 10,000)\n", corolla_glb.nverts);
         const float hx = corolla_glb.xmax - corolla_glb.xmin;
         const float hy = corolla_glb.ymax - corolla_glb.ymin;
@@ -1161,8 +1162,8 @@ void BuildingGlPass::buildMesh(World& world) {
         u32 sn       = 0;
         u32 n_corolla_xz = 0;
         const float sc   = corolla_fit_scale(&corolla_glb);
-        const int   zup  = corolla_glb.z_up;
-        const float y0   = tree_up_min(&corolla_glb);
+        const int   zup  = 1; // always Rx(-90°) — Y-up planted the nose in the asphalt
+        const float y0   = corolla_glb.zmin;
         const float y    = kCityPlateauY + 0.28f - y0 * sc; // road top is plateau+0.25
         const float park = 7.2f; // curb lane on 20 m asphalt, not the 11.5 m sidewalk
         auto push_suv = [&](float x, float z, float along) {
