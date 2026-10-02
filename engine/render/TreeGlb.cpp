@@ -1193,13 +1193,22 @@ void wheel_hunt_attach(TreeGlb* out) {
     }
     u32 attached = 0;
     u32 refused  = 0;
+
+    // Several parts of one primitive (all four brakes in a single mesh) may match wheels of
+    // its own, and TreePrim carries up to four centres, so collect them per primitive first.
+    struct PrimWheels {
+        u32   prim;
+        u32   count;
+        float center[4][3];
+        float radius[4];
+        int   axis;
+    };
+    PrimWheels agg[16];
+    u32        na = 0;
+
     for (u32 c = 0; c < g_wheel_attach_n; ++c) {
         const WheelAttach& at = g_wheel_attach[c];
         if (at.prim >= out->nprims) {
-            continue;
-        }
-        TreePrim* pr = &out->prims[at.prim];
-        if (pr->wheel_count > 0) {
             continue;
         }
         const int hit = car_wheel_attach_to(
@@ -1209,34 +1218,76 @@ void wheel_hunt_attach(TreeGlb* out) {
         if (hit < 0) {
             // Say how far off it is: "not concentric" alone does not tell whether the model
             // is built differently or the thresholds are too tight for it.
-            const float gap = car_wheel_nearest_gap(at.center, centers, nf);
+            const float gap   = car_wheel_nearest_gap(at.center, centers, nf);
+            float       across = at.extent[0];
+            for (int k = 1; k < 3; ++k) {
+                if (at.extent[k] > across) {
+                    across = at.extent[k];
+                }
+            }
             std::printf("[glb] %s prim %u: '%s' left static — nearest fitted wheel centre is %.2f m "
                         "away, part is %.2f m across%s\n",
                         out->label, at.prim, at.name, static_cast<double>(gap),
-                        static_cast<double>(at.extent[0] > at.extent[1] && at.extent[0] > at.extent[2]
-                                                ? at.extent[0]
-                                                : (at.extent[1] > at.extent[2] ? at.extent[1]
-                                                                               : at.extent[2])),
-                        at.hardware ? " (wheel hardware)" : "");
+                        static_cast<double>(across), at.hardware ? " (wheel hardware)" : "");
             ++refused;
             continue;
         }
-        pr->wheel_count        = 1;
-        pr->wheel_axis         = axes[hit];
-        pr->wheel_center[0][0] = centers[3u * hit + 0u];
-        pr->wheel_center[0][1] = centers[3u * hit + 1u];
-        pr->wheel_center[0][2] = centers[3u * hit + 2u];
-        pr->wheel_radius[0]    = radii[hit];
-        ++out->wheel_prim_count;
-        ++out->wheel_count;
+        PrimWheels* slot = nullptr;
+        for (u32 a = 0; a < na; ++a) {
+            if (agg[a].prim == at.prim) {
+                slot = &agg[a];
+                break;
+            }
+        }
+        if (!slot && na < 16u) {
+            slot       = &agg[na++];
+            slot->prim = at.prim;
+            slot->count = 0u;
+            slot->axis  = axes[hit];
+        }
+        if (!slot || slot->count >= 4u) {
+            continue;
+        }
+        if (slot->count > 0u && slot->axis != axes[hit]) {
+            std::printf("[glb] %s prim %u: '%s' matches wheels with different axle axes — left "
+                        "static\n",
+                        out->label, at.prim, at.name);
+            ++refused;
+            continue;
+        }
+        slot->center[slot->count][0] = centers[3u * hit + 0u];
+        slot->center[slot->count][1] = centers[3u * hit + 1u];
+        slot->center[slot->count][2] = centers[3u * hit + 2u];
+        slot->radius[slot->count]    = radii[hit];
+        ++slot->count;
         ++attached;
-        std::printf("[glb] %s prim %u: '%s' turns with the wheel at %.2f,%.2f,%.2f (radius "
-                    "%.3f) — same angle as the tyre%s\n",
-                    out->label, at.prim, at.name, static_cast<double>(centers[3u * hit + 0u]),
-                    static_cast<double>(centers[3u * hit + 1u]),
-                    static_cast<double>(centers[3u * hit + 2u]), static_cast<double>(radii[hit]),
-                    at.hardware ? ", wheel hardware" : "");
     }
+
+    for (u32 a = 0; a < na; ++a) {
+        TreePrim* pr = &out->prims[agg[a].prim];
+        if (pr->wheel_count > 0 || agg[a].count == 0u) {
+            continue;
+        }
+        pr->wheel_count = static_cast<int>(agg[a].count);
+        pr->wheel_axis  = agg[a].axis;
+        for (u32 w = 0; w < agg[a].count && w < 4u; ++w) {
+            pr->wheel_center[w][0] = agg[a].center[w][0];
+            pr->wheel_center[w][1] = agg[a].center[w][1];
+            pr->wheel_center[w][2] = agg[a].center[w][2];
+            pr->wheel_radius[w]    = agg[a].radius[w];
+        }
+        ++out->wheel_prim_count;
+        out->wheel_count += agg[a].count;
+        std::printf("[glb] %s prim %u: %u wheel part(s) turn with the wheels — same angle as the "
+                    "tyres\n",
+                    out->label, agg[a].prim, agg[a].count);
+    }
+    if (attached > 0u) {
+        std::printf("[glb] %s: %u wheel part(s) that the disc test refused now spin with the "
+                    "tyre%s\n",
+                    out->label, attached, refused > 0u ? " (see the refusal lines above)" : "");
+    }
+
     if (!is_car_label(out->label)) {
         g_wheel_attach_n = 0; // trees, lamps and buildings never carry wheels
         return;
@@ -2118,35 +2169,38 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
             // with bolt heads, a hub cap. Park it with its own bounds and match it to the
             // nearest fitted wheel once the whole car has been walked, so it turns too
             // instead of sitting still inside a spinning tyre.
-            if (g_wheel_attach_n < 16u) {
+            // Split the part into its wheels first: a primitive holding all four brakes
+            // would otherwise be parked as one box the size of the car, which is never
+            // concentric with a wheel and would leave every brake static.
+            const u32   stride  = static_cast<u32>(sizeof(TreeVert) / sizeof(float));
+            u32*        scratch = static_cast<u32*>(std::malloc(sizeof(u32) * pc));
+            CarWheelBlob blobs[4];
+            const u32    nb = scratch ? car_wheel_split(reinterpret_cast<const float*>(verts),
+                                                        stride, pc, scratch, blobs, 4u)
+                                      : 0u;
+            std::free(scratch);
+            char namebuf[96];
+            name_copy(namebuf, sizeof(namebuf),
+                      j_looks_like_wheel(node_name) ? node_name : mesh_name);
+            const char* logname = namebuf;
+            if (nb == 0u) {
+                std::printf("[glb] %s prim %u: '%s' is named like a wheel but could not be split "
+                            "into parts — left static\n",
+                            out->label, out->nprims, logname);
+            }
+            for (u32 b = 0; b < nb && g_wheel_attach_n < 16u; ++b) {
                 WheelAttach& at = g_wheel_attach[g_wheel_attach_n++];
                 at.prim         = out->nprims;
-                name_copy(at.name, sizeof(at.name),
-                          j_looks_like_wheel(node_name) ? node_name : mesh_name);
-                at.hardware = j_is_wheel_hardware(mesh_name) || j_is_wheel_hardware(node_name);
-                float mn[3]     = {1.0e30f, 1.0e30f, 1.0e30f};
-                float mx[3]     = {-1.0e30f, -1.0e30f, -1.0e30f};
-                const u32 stride = static_cast<u32>(sizeof(TreeVert) / sizeof(float));
-                for (u32 i = 0; i < pc; ++i) {
-                    const float* p = reinterpret_cast<const float*>(verts) +
-                                     static_cast<usize>(i) * stride;
-                    for (int k = 0; k < 3; ++k) {
-                        if (p[k] < mn[k]) {
-                            mn[k] = p[k];
-                        }
-                        if (p[k] > mx[k]) {
-                            mx[k] = p[k];
-                        }
-                    }
-                }
                 for (int k = 0; k < 3; ++k) {
-                    at.center[k] = 0.5f * (mn[k] + mx[k]);
-                    at.extent[k] = mx[k] - mn[k];
+                    at.center[k] = blobs[b].center[k];
+                    at.extent[k] = blobs[b].extent[k];
                 }
-                std::printf("[glb] %s prim %u: name says wheel, geometry is not a clean disc — "
-                            "matching it to the nearest fitted wheel\n",
-                            out->label, out->nprims);
+                std::snprintf(at.name, sizeof(at.name), "%s", logname);
+                at.hardware = j_is_wheel_hardware(mesh_name) || j_is_wheel_hardware(node_name);
             }
+            std::printf("[glb] %s prim %u: name says wheel, geometry is not a clean disc — "
+                        "%u part(s) will be matched to their wheels\n",
+                        out->label, out->nprims, nb);
         }
         std::fflush(stdout);
     }

@@ -361,6 +361,90 @@ inline const char* const* hardware_words(unsigned* count) {
     return false;
 }
 
+// One part of a wheel assembly, as a bounding box in model space: the centre and the size
+// along each axis. car_wheel_fit returns the same information for clean discs; this is for
+// the parts it refuses.
+struct CarWheelBlob {
+    float center[3];
+    float extent[3];
+};
+
+// Splits a vertex cloud into up to `out_cap` blobs, using the same rule as car_wheel_fit:
+// while the cloud is elongated, cut it at the mid-plane of its longest axis, and stop when
+// it is compact or the parts would be too small to be a wheel. A primitive holding one
+// brake disc gives one blob; a primitive holding all four wheels of a car gives four.
+//
+// This matters because a part that is named like a wheel but refused as a disc (a brake
+// disc with its caliper) has to be matched to a wheel: one bounding box around all four
+// brakes sits in the middle of the car and can never be concentric with anything, so the
+// parts would all stay static. Splitting first lets each brake find its own wheel.
+[[nodiscard]] inline u32 car_wheel_split(const float* pts, u32 stride, u32 n, u32* scratch,
+                                         CarWheelBlob* out, u32 out_cap) {
+    if (!pts || !scratch || !out || out_cap == 0u || n < 6u || stride < 3u) {
+        return 0u;
+    }
+    for (u32 i = 0; i < n; ++i) {
+        scratch[i] = i;
+    }
+    car_wheel_detail::Range stack[8];
+    car_wheel_detail::Range clusters[8];
+    u32                      sp = 0;
+    u32                      nc = 0;
+    stack[sp++] = car_wheel_detail::Range{0u, n};
+
+    while (sp > 0u) {
+        const car_wheel_detail::Range r = stack[--sp];
+        float mn[3], mx[3];
+        car_wheel_detail::range_extents(pts, stride, scratch, r.start, r.len, mn, mx);
+        const float e[3] = {mx[0] - mn[0], mx[1] - mn[1], mx[2] - mn[2]};
+        const int   big  = car_wheel_detail::argmax3(e);
+        const int   snd  = car_wheel_detail::argmax3_except(e, big);
+        const bool  elongated = e[snd] > 1.0e-6f && e[big] > 1.8f * e[snd];
+
+        if (!elongated || nc + sp + 1u >= out_cap) {
+            if (nc < out_cap) {
+                clusters[nc++] = r;
+            }
+            continue;
+        }
+        const float mid = 0.5f * (mn[big] + mx[big]);
+        u32         i   = r.start;
+        u32         j   = r.start + r.len;
+        while (i < j) {
+            const float* p = pts + static_cast<usize>(scratch[i]) * stride;
+            if (p[big] < mid) {
+                ++i;
+            } else {
+                --j;
+                const u32 t = scratch[i];
+                scratch[i] = scratch[j];
+                scratch[j] = t;
+            }
+        }
+        const u32 left  = i - r.start;
+        const u32 right = r.len - left;
+        if (left < 6u || right < 6u) {
+            if (nc < out_cap) {
+                clusters[nc++] = r; // too small to be a part of its own: keep it whole
+            }
+            continue;
+        }
+        stack[sp++] = car_wheel_detail::Range{r.start, left};
+        stack[sp++] = car_wheel_detail::Range{r.start + left, right};
+    }
+
+    for (u32 c = 0; c < nc; ++c) {
+        float mn[3], mx[3];
+        car_wheel_detail::range_extents(pts, stride, scratch, clusters[c].start, clusters[c].len, mn,
+                                        mx);
+        for (int k = 0; k < 3; ++k) {
+            out[c].center[k] = 0.5f * (mn[k] + mx[k]);
+            out[c].extent[k] = mx[k] - mn[k];
+        }
+    }
+    return nc;
+}
+
 // Distance from a point to the nearest fitted wheel centre, or -1 when there is none.
 // Used by the loader's report, so a part that is left static says how far off it is
 // instead of only that it was refused.

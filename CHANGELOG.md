@@ -34,6 +34,13 @@
   trim, "hjulbue") is disqualified however it is spelled, and a keyword glued to the end of
   another word only counts after "wheel" or "hjul" — a bare substring test for "rim" would
   otherwise happily match "tRIM"
+- ✅ The Corolla's brakes stayed still because all four live in **one** primitive: the loader
+  parked the whole cloud as a single box the size of the car, and a box that big can never be
+  concentric with a wheel, so every brake was refused every frame. A wheel-named part is now
+  split into its wheels first (the same mid-plane rule the disc test uses), and each part is
+  matched to its own wheel — so a primitive holding all four brakes gets four centres, which
+  `TreePrim` and the shader already support. One brake per primitive and rims with bolt
+  heads work the same way
 - ✅ One decisive report line per car model, so a wheel part that is *not* rotating can never
   be silent again: `[glb] Corolla E80 wheel report: 8 primitive(s) spin — 4 by name, 4 by
   shape, 4 attached to a wheel; 16 wheel(s), nothing wheel-like left static`. A part that is
@@ -41,10 +48,10 @@
   part is 0.62 m across (wheel hardware)`
 - ✅ The shadow pass spins the wheels too (identical uniforms, so the spokes in the shadow
   turn with the wheel), and both inline fallback shaders carry the same code as the files
-- ✅ Sandbox: 27 new headless checks (fit finds 4 wheels in a merged primitive, refuses a
+- ✅ Sandbox: 34 new headless checks (fit finds 4 wheels in a merged primitive, refuses a
   box, the patch rolls backwards through the whole basis+yaw chain for both bodies, and
   without slipping, plus the floor test, the attach rule and the real asset node names
-  from the Corolla) — 66/66
+  from the Corolla) — 73/73
 - ✅ Startup reports what it found: `[glb] … WHEEL mesh …` per wheel primitive and
   `[cars] … N wheel part(s) in M primitive(s) spin about Z, tyre radius 0.29 m world, roll -1`
 

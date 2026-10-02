@@ -590,6 +590,104 @@ int main(int argc, char** argv) {
             expect(car_wheel_attach_to(floor_c, floor_e, centers, radii, 4) == -1,
                    "a whole underside is refused");
 
+            // The Corolla case: all four brakes in ONE primitive. As a single bounding box it
+            // would sit in the middle of the car, never concentric with a wheel, and every
+            // brake would stay static. Splitting it first gives each brake its own blob.
+            {
+                // Four brake discs, each with a caliper sticking out (so car_wheel_fit
+                // refuses them), spread over the four wheel positions.
+                float pts[4 * 40 * 3];
+                u32   n = 0;
+                const float wheel_c[4][2] = {{1.3f, -0.75f}, {1.3f, 0.75f}, {-1.3f, -0.75f}, {-1.3f, 0.75f}};
+                for (int w = 0; w < 4; ++w) {
+                    for (int k = 0; k < 32; ++k) { // disc
+                        const float a = static_cast<float>(k) * 6.2831853f / 32.f;
+                        pts[n * 3 + 0] = wheel_c[w][0] + 0.30f * std::cos(a);
+                        pts[n * 3 + 1] = 0.35f + 0.30f * std::sin(a);
+                        pts[n * 3 + 2] = wheel_c[w][1];
+                        ++n;
+                    }
+                    for (int k = 0; k < 8; ++k) { // caliper, offset upwards: not a disc
+                        pts[n * 3 + 0] = wheel_c[w][0] + 0.18f + 0.02f * static_cast<float>(k);
+                        pts[n * 3 + 1] = 0.62f;
+                        pts[n * 3 + 2] = wheel_c[w][1];
+                        ++n;
+                    }
+                }
+                u32          scratch[4 * 40];
+                CarWheelBlob blobs[4];
+                const u32    nb = car_wheel_split(pts, 3u, n, scratch, blobs, 4u);
+                expect(nb == 4, "all four brakes in one primitive split into four parts");
+                float worst = 0.f;
+                for (int w = 0; w < 4 && nb == 4; ++w) {
+                    float best = 1.0e9f;
+                    for (u32 b = 0; b < nb; ++b) {
+                        const float dx = blobs[b].center[0] - wheel_c[w][0];
+                        const float dz = blobs[b].center[2] - wheel_c[w][1];
+                        const float d  = std::sqrt(dx * dx + dz * dz);
+                        if (d < best) {
+                            best = d;
+                        }
+                    }
+                    if (best > worst) {
+                        worst = best;
+                    }
+                }
+                expectf(worst < 0.06f, "each split brake sits at its own wheel (worst offset %.3f m)",
+                        static_cast<double>(worst));
+
+                // And each blob is then matched to the wheel it belongs to, with the wide
+                // limits a brake gets. The fitted wheel centres sit at axle height, as they do
+                // in the model: a tyre disc centres on the axle, not on the road.
+                const float axle_c[4 * 3] = {1.30f, 0.35f, -0.75f, 1.30f, 0.35f, 0.75f,
+                                             -1.30f, 0.35f, -0.75f, -1.30f, 0.35f, 0.75f};
+                const float axle_r[4]     = {0.31f, 0.31f, 0.31f, 0.31f};
+                int         matched       = 0;
+                int         distinct      = 0;
+                for (u32 b = 0; b < nb; ++b) {
+                    const int hit = car_wheel_attach_to(blobs[b].center, blobs[b].extent, axle_c,
+                                                        axle_r, 4, kAttachOffsetHardware,
+                                                        kAttachExtentHardware);
+                    if (hit >= 0) {
+                        ++matched;
+                        distinct |= 1 << hit;
+                    }
+                }
+                expect(matched == 4, "every split brake blob finds a wheel to turn with");
+                expect(distinct == 0xF,
+                       "the four brakes are matched to four different wheels, not all to one");
+                // Without the split, the same cloud as one box is always refused.
+                float mn[3] = {1e9f, 1e9f, 1e9f}, mx[3] = {-1e9f, -1e9f, -1e9f};
+                for (u32 i = 0; i < n; ++i) {
+                    for (int k = 0; k < 3; ++k) {
+                        mn[k] = std::min(mn[k], pts[i * 3 + k]);
+                        mx[k] = std::max(mx[k], pts[i * 3 + k]);
+                    }
+                }
+                float whole_c[3], whole_e[3];
+                for (int k = 0; k < 3; ++k) {
+                    whole_c[k] = 0.5f * (mn[k] + mx[k]);
+                    whole_e[k] = mx[k] - mn[k];
+                }
+                expect(car_wheel_attach_to(whole_c, whole_e, centers, radii, 4, kAttachOffsetHardware,
+                                           kAttachExtentHardware) == -1,
+                       "the same four brakes as ONE box are refused — which is why they used to "
+                       "stay static");
+
+                CarWheelBlob one[4];
+                u32          s2[64];
+                expect(car_wheel_split(pts, 3u, 40u, s2, one, 4u) == 1,
+                       "a single brake on its own stays one part");
+                float box[8 * 3];
+                for (int i = 0; i < 8; ++i) {
+                    box[i * 3 + 0] = (i & 1) ? 0.5f : -0.5f;
+                    box[i * 3 + 1] = (i & 2) ? 0.5f : -0.5f;
+                    box[i * 3 + 2] = (i & 4) ? 0.5f : -0.5f;
+                }
+                u32 sb[8];
+                expect(car_wheel_split(box, 3u, 8u, sb, one, 4u) == 1, "a box stays one part too");
+            }
+
             // The refusal report says how far off a part is, so a static rim can be
             // explained from the log alone.
             expect(car_wheel_nearest_gap(centers, centers, 4) == 0.f,
