@@ -27,11 +27,19 @@
   matched to the wheel they are concentric with and spin with it: same centre, same axis,
   same per-vehicle angle as the tyre. A part that is metres wide (a fender, a sill, a whole
   underside) or that is not concentric with a wheel is still refused, so nothing else moves
+- ✅ The keyword list lacked **"brake"**, which is the word the Corolla's brake nodes use:
+  `wheelbrake.Ft.L_metal_rough_plus_0`. Brakes, rims and rotors now count as wheel hardware
+  and get looser limits when they are matched to a wheel, because a caliper makes such a
+  part wider than the disc. A name that says bodywork (a wheel arch, a wheel well, a wheel
+  trim, "hjulbue") is disqualified however it is spelled, and a keyword glued to the end of
+  another word only counts after "wheel" or "hjul" — a bare substring test for "rim" would
+  otherwise happily match "tRIM"
 - ✅ The shadow pass spins the wheels too (identical uniforms, so the spokes in the shadow
   turn with the wheel), and both inline fallback shaders carry the same code as the files
-- ✅ Sandbox: 17 new headless checks (fit finds 4 wheels in a merged primitive, refuses a
+- ✅ Sandbox: 24 new headless checks (fit finds 4 wheels in a merged primitive, refuses a
   box, the patch rolls backwards through the whole basis+yaw chain for both bodies, and
-  without slipping, plus the floor test and the attach rule) — 46/46
+  without slipping, plus the floor test, the attach rule and the real asset node names
+  from the Corolla) — 63/63
 - ✅ Startup reports what it found: `[glb] … WHEEL mesh …` per wheel primitive and
   `[cars] … N wheel part(s) in M primitive(s) spin about Z, tyre radius 0.29 m world, roll -1`
 

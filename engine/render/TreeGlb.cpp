@@ -1096,13 +1096,38 @@ int is_car_label(const char* s) {
     return is_suv_label(s) || is_corolla_label(s) || is_sports_label(s);
 }
 
+// Copy a JSON string node into a plain buffer, for logging and for plain-C keyword tests.
+void name_copy(char* dst, u32 cap, const JNode* n) {
+    if (!dst || cap == 0u) {
+        return;
+    }
+    dst[0] = 0;
+    if (!n || n->kind != JK_STR || !n->s) {
+        return;
+    }
+    u32 i = 0;
+    while (i + 1u < cap && i < n->slen) {
+        dst[i] = n->s[i];
+        ++i;
+    }
+    dst[i] = 0;
+}
+
+
+// The keyword lists live in CarWheelFit.h as plain string tests, so the sandbox can run
+// real asset node names through exactly this code.
+bool j_is_wheel_hardware(const JNode* n) {
+    char buf[96];
+    name_copy(buf, sizeof(buf), n);
+    return car_wheel_name_is_hardware(buf);
+}
+
 // Wheels are found by name, then confirmed by geometry (car_wheel_fit). "brake" is left
 // out on purpose: a brake disc rotates, but a caliper does not.
 int j_looks_like_wheel(const JNode* n) {
-    return str_has(n, "wheel") || str_has(n, "hjul") || str_has(n, "tire") ||
-           str_has(n, "tyre") || str_has(n, "rubber") || str_has(n, "tread") ||
-           str_has(n, "rim") || str_has(n, "felg") || str_has(n, "alloy") ||
-           str_has(n, "hubcap") || str_has(n, "dek");
+    char buf[96];
+    name_copy(buf, sizeof(buf), n);
+    return car_wheel_name_looks_like_wheel(buf) ? 1 : 0;
 }
 
 // Geometry-only wheel hunt, used when a car's mesh, node and material names never say
@@ -1127,9 +1152,11 @@ struct WheelAttach {
     u32   prim;
     float center[3];
     float extent[3];
+    char  name[64];   // the mesh or node name, for the log
+    bool  hardware;   // brake/rim/rotor/hub: unambiguously wheel hardware
 };
 
-WheelAttach g_wheel_attach[8];
+WheelAttach g_wheel_attach[16];
 u32         g_wheel_attach_n = 0;
 
 // Attach the non-disc wheel parts (brake discs with calipers, rims with bolts, hub caps)
@@ -1168,10 +1195,14 @@ void wheel_hunt_attach(TreeGlb* out) {
         if (pr->wheel_count > 0) {
             continue;
         }
-        const int hit = car_wheel_attach_to(at.center, at.extent, centers, radii, nf);
+        const int hit = car_wheel_attach_to(
+            at.center, at.extent, centers, radii, nf,
+            at.hardware ? kAttachOffsetHardware : kAttachOffsetGeneric,
+            at.hardware ? kAttachExtentHardware : kAttachExtentGeneric);
         if (hit < 0) {
-            std::printf("[glb] %s prim %u: no fitted wheel is concentric with it — left static\n",
-                        out->label, at.prim);
+            std::printf("[glb] %s prim %u: '%s' is not concentric with any fitted wheel (or is "
+                        "far larger than one) — left static\n",
+                        out->label, at.prim, at.name);
             continue;
         }
         pr->wheel_count        = 1;
@@ -1183,11 +1214,12 @@ void wheel_hunt_attach(TreeGlb* out) {
         ++out->wheel_prim_count;
         ++out->wheel_count;
         ++attached;
-        std::printf("[glb] %s prim %u: turning with the wheel at %.2f,%.2f,%.2f (radius %.3f) — "
-                    "same angle as the tyre\n",
-                    out->label, at.prim, static_cast<double>(centers[3u * hit + 0u]),
+        std::printf("[glb] %s prim %u: '%s' turns with the wheel at %.2f,%.2f,%.2f (radius "
+                    "%.3f) — same angle as the tyre%s\n",
+                    out->label, at.prim, at.name, static_cast<double>(centers[3u * hit + 0u]),
                     static_cast<double>(centers[3u * hit + 1u]),
-                    static_cast<double>(centers[3u * hit + 2u]), static_cast<double>(radii[hit]));
+                    static_cast<double>(centers[3u * hit + 2u]), static_cast<double>(radii[hit]),
+                    at.hardware ? ", wheel hardware" : "");
     }
     if (attached > 0u) {
         std::printf("[glb] %s: %u wheel part(s) that the disc test refused now spin with the tyre\n",
@@ -2050,9 +2082,12 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
             // with bolt heads, a hub cap. Park it with its own bounds and match it to the
             // nearest fitted wheel once the whole car has been walked, so it turns too
             // instead of sitting still inside a spinning tyre.
-            if (g_wheel_attach_n < 8u) {
+            if (g_wheel_attach_n < 16u) {
                 WheelAttach& at = g_wheel_attach[g_wheel_attach_n++];
                 at.prim         = out->nprims;
+                name_copy(at.name, sizeof(at.name),
+                          j_looks_like_wheel(node_name) ? node_name : mesh_name);
+                at.hardware = j_is_wheel_hardware(mesh_name) || j_is_wheel_hardware(node_name);
                 float mn[3]     = {1.0e30f, 1.0e30f, 1.0e30f};
                 float mx[3]     = {-1.0e30f, -1.0e30f, -1.0e30f};
                 const u32 stride = static_cast<u32>(sizeof(TreeVert) / sizeof(float));

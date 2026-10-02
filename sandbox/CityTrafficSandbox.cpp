@@ -517,6 +517,36 @@ int main(int argc, char** argv) {
         expect(car_wheel_on_ground(0.36f, 0.35f, 0.01f, car_h),
                "a wheel one centimetre off the road is still accepted (meshes are never exact)");
 
+        // The real asset names from the Corolla GLB. The tire rotated while the brake parts
+        // did not, because "brake" was not in the keyword list at all and the geometry test
+        // refuses a disc that has a caliper bolted to it.
+        const char* const kBrakeNodes[4] = {"wheelbrake.Ft.L_metal_rough_plus_0",
+                                            "wheelbrake.Ft.R_metal_rough_plus_0",
+                                            "wheelbrake.Bk.L_metal_rough_plus_0",
+                                            "wheelbrake.Bk.R_metal_rough_plus_0"};
+        bool brakes_named = true;
+        bool brakes_hardware = true;
+        for (const char* n : kBrakeNodes) {
+            brakes_named = brakes_named && car_wheel_name_looks_like_wheel(n);
+            brakes_hardware = brakes_hardware && car_wheel_name_is_hardware(n);
+        }
+        expect(brakes_named, "the asset's brake nodes are recognised as wheel parts");
+        expect(brakes_hardware,
+               "the asset's brake nodes count as wheel hardware, so a caliper may make the "
+               "part wider than the disc");
+        expect(car_wheel_name_looks_like_wheel("wheel.Bk.R_tire_0"),
+               "the tire node that already rotated is still recognised");
+        const char* const kBodyParts[6] = {"body_0", "door.Ft.L_0", "glass_windscreen_0",
+                                            "bumper.R_0", "spoiler_0", "headlight.L_0"};
+        for (const char* n : kBodyParts) {
+            expectf(!car_wheel_name_looks_like_wheel(n), "'%s' is not a wheel part", n);
+        }
+        const char* const kNotHardware[2] = {"wheel_0", "tire.Ft.L_0"};
+        for (const char* n : kNotHardware) {
+            expectf(car_wheel_name_looks_like_wheel(n) && !car_wheel_name_is_hardware(n),
+                    "'%s' is a wheel part but not hardware, so it gets the strict limits", n);
+        }
+
         // A brake disc with its caliper, a rim with bolt heads and a hub cap are all part of
         // the wheel, but the disc test refuses them (that is what keeps bumpers still). The
         // attach rule matches them to the wheel they are concentric with, so they turn too.
@@ -531,19 +561,22 @@ int main(int argc, char** argv) {
             // is exactly what car_wheel_fit refuses. Its centre may sit a little off.
             const float brake_c[3] = {1.30f, 0.02f, -0.72f};
             const float brake_e[3] = {0.62f, 0.62f, 0.24f};
-            expect(car_wheel_attach_to(brake_c, brake_e, centers, radii, 4) == 0,
+            expect(car_wheel_attach_to(brake_c, brake_e, centers, radii, 4, kAttachOffsetHardware,
+                                       kAttachExtentHardware) == 0,
                    "a brake disc with a caliper attaches to the wheel it is concentric with");
 
             // A rim with bolt heads, same story.
             const float rim_c[3] = {-1.28f, 0.01f, 0.76f};
             const float rim_e[3] = {0.60f, 0.60f, 0.22f};
-            expect(car_wheel_attach_to(rim_c, rim_e, centers, radii, 4) == 3,
+            expect(car_wheel_attach_to(rim_c, rim_e, centers, radii, 4, kAttachOffsetHardware,
+                                       kAttachExtentHardware) == 3,
                    "a rim with bolt heads attaches to its own wheel, not a neighbour");
 
             // A hub cap: small and exactly concentric.
             const float cap_c[3] = {1.30f, 0.00f, 0.75f};
             const float cap_e[3] = {0.30f, 0.30f, 0.10f};
-            expect(car_wheel_attach_to(cap_c, cap_e, centers, radii, 4) == 1,
+            expect(car_wheel_attach_to(cap_c, cap_e, centers, radii, 4, kAttachOffsetHardware,
+                                       kAttachExtentHardware) == 1,
                    "a hub cap attaches to its own wheel");
 
             // But a fender, a sill or a whole underside is metres wide: never attached,
@@ -556,6 +589,21 @@ int main(int argc, char** argv) {
             const float floor_e[3] = {4.60f, 0.20f, 1.80f};
             expect(car_wheel_attach_to(floor_c, floor_e, centers, radii, 4) == -1,
                    "a whole underside is refused");
+
+            // A wheel arch / arch trim is named "wheel..." and may sit close to the wheel, but
+            // it is bodywork: it must never be attached, which is why a part named just
+            // "wheel" has to be dead concentric and no larger than a disc.
+            const float arch_c[3] = {1.30f, 0.34f, -0.75f};
+            const float arch_e[3] = {0.80f, 0.60f, 0.30f};
+            expect(car_wheel_attach_to(arch_c, arch_e, centers, radii, 4) == -1,
+                   "a wheel arch trim over the wheel is refused by the generic limits");
+            const char* const kBodyworkNames[5] = {"wheel_trim.Bk.L_0", "wheelarch.Ft.L_0",
+                                                "wheel_well.R_0", "hjulbue.Ft.L_0",
+                                                "wheel_arch_trim.Bk.R_0"};
+        for (const char* n : kBodyworkNames) {
+            expectf(!car_wheel_name_looks_like_wheel(n),
+                    "'%s' is bodywork: spelled with \"wheel\", but not a wheel part", n);
+        }
 
             // Something small, but nowhere near a wheel: a headlight, a mirror, a badge.
             const float lamp_c[3] = {2.20f, 0.65f, -1.00f};

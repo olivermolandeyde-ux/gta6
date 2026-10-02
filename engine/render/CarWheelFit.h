@@ -3,6 +3,7 @@
 #include "core/Types.h"
 
 #include <cmath>
+#include <cstring>
 
 namespace engine {
 
@@ -218,6 +219,148 @@ inline int argmin3(const float e[3]) {
     return std::fabs(bottom - floor_up) <= tol;
 }
 
+// Name tests for wheel detection, as plain C strings, so the sandbox can run real asset
+// node names through exactly this code without a GLB or a JSON DOM. Both are
+// case-insensitive substring tests, like the rest of the loader's naming rules, with one
+// extra guard: a keyword that is glued to the end of another word only counts after
+// "wheel" or "hjul". Without it "wheel_trim" would be read as a rim — a substring test for
+// "rim" happily matches "tRIM" — and a wheel arch trim would start spinning.
+namespace car_wheel_detail {
+
+inline bool has_icase_exact(const char* at, const char* word) {
+    for (unsigned k = 0; word[k]; ++k) {
+        char a = at[k];
+        char b = word[k];
+        if (a >= 'A' && a <= 'Z') {
+            a = static_cast<char>(a + 32);
+        }
+        if (b >= 'A' && b <= 'Z') {
+            b = static_cast<char>(b + 32);
+        }
+        if (a != b) {
+            return false;
+        }
+    }
+    return true;
+}
+
+inline bool has_icase(const char* hay, const char* needle) {
+    const unsigned nl = static_cast<unsigned>(std::strlen(hay));
+    const unsigned sl = static_cast<unsigned>(std::strlen(needle));
+    if (sl == 0u || sl > nl) {
+        return false;
+    }
+    for (unsigned i = 0; i + sl <= nl; ++i) {
+        bool ok = true;
+        for (unsigned k = 0; k < sl; ++k) {
+            char a = hay[i + k];
+            char b = needle[k];
+            if (a >= 'A' && a <= 'Z') {
+                a = static_cast<char>(a + 32);
+            }
+            if (b >= 'A' && b <= 'Z') {
+                b = static_cast<char>(b + 32);
+            }
+            if (a != b) {
+                ok = false;
+                break;
+            }
+        }
+        if (!ok) {
+            continue;
+        }
+        if (i == 0u || !((hay[i - 1u] >= 'a' && hay[i - 1u] <= 'z') ||
+                         (hay[i - 1u] >= 'A' && hay[i - 1u] <= 'Z'))) {
+            return true; // start of the name, or after a separator: a word of its own
+        }
+        // Glued to a letter: only a compound such as "wheelbrake" or "wheeltire" counts.
+        const unsigned pre = i;
+        if (pre >= 5u && has_icase_exact(hay + pre - 5u, "wheel")) {
+            return true;
+        }
+        if (pre >= 4u && has_icase_exact(hay + pre - 4u, "hjul")) {
+            return true;
+        }
+    }
+    return false;
+}
+
+
+inline const char* const* wheel_words(unsigned* count) {
+    static const char* const kW[] = {"wheel", "hjul",  "tire",  "tyre",    "rubber",  "tread",
+                                     "rim",   "felg",  "alloy", "hubcap",  "dek",     "brake",
+                                     "bremse", "rotor", "caliper", "kaliper"};
+    *count = static_cast<unsigned>(sizeof(kW) / sizeof(kW[0]));
+    return kW;
+}
+
+inline const char* const* bodywork_words(unsigned* count) {
+    static const char* const kW[] = {"arch", "bue",   "well",   "trim",  "liner", "mud",
+                                     "flap", "skirt", "fender", "skjerm", "sill", "rocker"};
+    *count = static_cast<unsigned>(sizeof(kW) / sizeof(kW[0]));
+    return kW;
+}
+
+inline const char* const* hardware_words(unsigned* count) {
+    static const char* const kW[] = {"brake", "bremse", "rim",   "felg", "alloy", "disc",
+                                     "disk",  "rotor",  "spoke", "eike", "hub",   "caliper",
+                                     "kaliper", "bolt"};
+    *count = static_cast<unsigned>(sizeof(kW) / sizeof(kW[0]));
+    return kW;
+}
+
+} // namespace car_wheel_detail
+
+// Does the name say the part is part of a wheel? Deliberately not "brake" alone: a brake
+// disc rotates but a caliper does not, so the geometry test always has the final word.
+// A wheel arch, a wheel well and a wheel trim are spelled with "wheel" but they are
+// bodywork bolted to the shell, and they must never spin. A name that names bodywork is
+// disqualified whatever else it says.
+[[nodiscard]] inline bool car_wheel_name_is_bodywork(const char* name) {
+    if (!name || !*name) {
+        return false;
+    }
+    unsigned              count = 0u;
+    const char* const* const words = car_wheel_detail::bodywork_words(&count);
+    for (unsigned i = 0; i < count; ++i) {
+        if (car_wheel_detail::has_icase(name, words[i])) {
+            return true;
+        }
+    }
+    return false;
+}
+
+[[nodiscard]] inline bool car_wheel_name_looks_like_wheel(const char* name) {
+    if (!name || !*name || car_wheel_name_is_bodywork(name)) {
+        return false;
+    }
+    unsigned              count = 0u;
+    const char* const* const words = car_wheel_detail::wheel_words(&count);
+    for (unsigned i = 0; i < count; ++i) {
+        if (car_wheel_detail::has_icase(name, words[i])) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Names that can only be wheel hardware — a brake, a disc, a rotor, a rim, spokes, the hub.
+// A part with such a name may be a little larger and still be safe to spin with the tyre,
+// because a caliper makes a brake assembly wider than the disc it grips.
+[[nodiscard]] inline bool car_wheel_name_is_hardware(const char* name) {
+    if (!name || !*name || car_wheel_name_is_bodywork(name)) {
+        return false;
+    }
+    unsigned              count = 0u;
+    const char* const* const words = car_wheel_detail::hardware_words(&count);
+    for (unsigned i = 0; i < count; ++i) {
+        if (car_wheel_detail::has_icase(name, words[i])) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // Which fitted wheel does a primitive belong to, when the strict disc test refused it?
 //
 // A brake disc with its caliper, a rim with bolt heads, a hub cap and an upright are all
@@ -229,8 +372,18 @@ inline int argmin3(const float e[3]) {
 //
 // Returns the index of the fitted wheel to spin it about, or -1 to leave it static.
 // `centers` holds three floats per fitted wheel, `radii` one.
+inline constexpr float kAttachOffsetHardware = 1.00f; // of the wheel radius
+inline constexpr float kAttachExtentHardware = 5.00f;
+inline constexpr float kAttachOffsetGeneric  = 0.25f; // a part named just "wheel" must be
+inline constexpr float kAttachExtentGeneric  = 1.60f; // dead concentric and no larger than a disc
+
+// `max_offset_frac` and `max_extent_frac` are fractions of the wheel radius: how far the
+// part's centre may sit from the wheel centre, and how large the part may be. Wheel
+// hardware (a brake with its caliper) gets the looser pair, anything else the tight one.
 [[nodiscard]] inline int car_wheel_attach_to(const float prim_center[3], const float prim_extent[3],
-                                             const float* centers, const float* radii, u32 n) {
+                                             const float* centers, const float* radii, u32 n,
+                                             float max_offset_frac = kAttachOffsetGeneric,
+                                             float max_extent_frac = kAttachExtentGeneric) {
     if (!prim_center || !prim_extent || !centers || !radii || n == 0u) {
         return -1;
     }
@@ -245,7 +398,7 @@ inline int argmin3(const float e[3]) {
         const float dz = prim_center[2] - centers[3u * i + 2u];
         const float d  = std::sqrt(dx * dx + dy * dy + dz * dz);
         // Concentric, or a caliper's worth of offset — never a body panel down the street.
-        if (d <= radii[i] && (best < 0 || d < best_d)) {
+        if (d <= max_offset_frac * radii[i] && (best < 0 || d < best_d)) {
             best   = static_cast<int>(i);
             best_d = d;
         }
@@ -253,15 +406,15 @@ inline int argmin3(const float e[3]) {
     if (best < 0) {
         return -1;
     }
-    // And small enough to be one wheel's worth of parts. A whole underside, a fender or a
-    // sill spans metres and would be dragged around by the rotation.
+    // And small enough to be one wheel's worth of parts. A whole underside, a fender, a
+    // wheel arch or a sill spans metres and would be dragged around by the rotation.
     float ext = prim_extent[0];
     for (int k = 1; k < 3; ++k) {
         if (prim_extent[k] > ext) {
             ext = prim_extent[k];
         }
     }
-    if (ext > 3.5f * radii[best]) {
+    if (ext > max_extent_frac * radii[best]) {
         return -1;
     }
     return best;
