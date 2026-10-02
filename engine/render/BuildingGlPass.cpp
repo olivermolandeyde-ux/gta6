@@ -449,11 +449,13 @@ float corolla_fit_scale(const TreeGlb* t) {
     const float hx = t->xmax - t->xmin;
     const float hy = t->ymax - t->ymin;
     const float hz = t->zmax - t->zmin;
-    float length = hx > hz ? hx : hz;
-    if (t->z_up == 1) {
-        length = hx > hy ? hx : hy;
-    } else if (t->z_up == 2) {
-        length = hy > hz ? hy : hz;
+    // Longest AABB axis is length, regardless of which way the mesh is authored.
+    float length = hx;
+    if (hy > length) {
+        length = hy;
+    }
+    if (hz > length) {
+        length = hz;
     }
     if (length < 0.001f) {
         return 1.f;
@@ -813,7 +815,7 @@ bool BuildingGlPass::init() {
     std::printf("[glb] Loading lamp model: gatelys_moderne.glb\n");
     load_city_tree("gatelys_moderne.glb", &lamp_glb[1]);
     if (load_city_tree("low-poly_toyota_corolla_e80_sedan.glb", &corolla_glb)) {
-        corolla_glb.z_up = 1; // Blender Z-up / Y-forward — Rx(-90°) or the nose is in the road
+        corolla_glb.z_up = 2; // X-up: Rx(-90°) laid it on its side; Rz(90°) stands on wheels
         std::printf("[cars] Loaded Toyota Corolla E80: %u verts (should be < 10,000)\n", corolla_glb.nverts);
         const float hx = corolla_glb.xmax - corolla_glb.xmin;
         const float hy = corolla_glb.ymax - corolla_glb.ymin;
@@ -1162,8 +1164,8 @@ void BuildingGlPass::buildMesh(World& world) {
         u32 sn       = 0;
         u32 n_corolla_xz = 0;
         const float sc   = corolla_fit_scale(&corolla_glb);
-        const int   zup  = 1; // always Rx(-90°) — Y-up planted the nose in the asphalt
-        const float y0   = corolla_glb.zmin;
+        const int   zup  = 2; // X-up → Y-up (Rz 90°)
+        const float y0   = tree_up_min(&corolla_glb);
         const float y    = kCityPlateauY + 0.28f - y0 * sc; // road top is plateau+0.25
         const float park = 7.2f; // curb lane on 20 m asphalt, not the 11.5 m sidewalk
         auto push_suv = [&](float x, float z, float along) {
