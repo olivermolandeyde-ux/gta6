@@ -1323,8 +1323,12 @@ void BuildingGlPass::update_car_instances(float clock_s) {
         if (n[m] >= kCarAgentCap) {
             continue;
         }
-        // The sports mesh forward axis is opposite the Corolla after the AABB basis.
-        const float mesh_yaw = (m == 1u) ? yaw + kCarPi : yaw;
+        // Both bodies are authored so the AABB longest axis (which the basis maps to
+        // world +Z) points at the boot, i.e. opposite the direction of travel. The
+        // ring heading is the driving direction, so every body needs 180° on top of
+        // it. The sports mesh stays a further 180° from the Corolla: its longest
+        // axis is the opposite end of the car, and both were yawed together before.
+        const float mesh_yaw = yaw + kCarPi + (m == 1u ? kCarPi : 0.f);
         corolla_yaw_mat(&car_mats[m][n[m] * 16u], x, car_y[m], z, mesh_yaw, car_scale[m],
                         car_basis[m]);
         ++n[m];
