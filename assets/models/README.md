@@ -12,6 +12,6 @@ Lamps / downtown:
 - `gatelys_klassisk.glb` / `gatelys_moderne.glb`
 
 Cars:
-- `low_poly_suv.glb`
+- `low-poly_toyota_corolla_e80_sedan.glb`
 
 Paths tried: project `assets/models/`, cwd, `../assets/models`, next to `leonida_city`, `build/assets/models/`.

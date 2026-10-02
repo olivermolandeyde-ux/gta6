@@ -10,7 +10,8 @@ inline constexpr u32 kTreeInstanceCap = 300;
 inline constexpr u32 kTreeSpawnCap    = 280;
 inline constexpr u32 kLampKindCount   = 2;
 inline constexpr u32 kLampSpawnCap    = 280;
-inline constexpr u32 kSuvSpawnCap     = 30;
+inline constexpr u32 kSuvSpawnCap      = 30;
+inline constexpr u32 kCorollaSpawnCap = 30;
 
 // One glTF primitive uploaded to GL. Not a generic Model / Mesh.
 struct TreePrim {

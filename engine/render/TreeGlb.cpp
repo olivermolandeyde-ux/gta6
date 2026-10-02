@@ -1082,6 +1082,14 @@ int is_suv_label(const char* s) {
     return s && (std::strstr(s, "suv") != nullptr);
 }
 
+int is_corolla_label(const char* s) {
+    return s && (std::strstr(s, "corolla") != nullptr || std::strstr(s, "toyota") != nullptr);
+}
+
+int is_car_label(const char* s) {
+    return is_suv_label(s) || is_corolla_label(s);
+}
+
 unsigned fail_red_tex() {
     return solid_tex(255, 32, 32, 255);
 }
@@ -1304,7 +1312,7 @@ unsigned decode_view_image(const JDoc* d, u32 img, const u8* bin, u32 bin_len, u
     u8* rgba = nullptr;
     u32 w = 0, h = 0;
     const int is_tree = is_tree_label(tree_label);
-    const int is_rgba = is_tree || is_lamp_label(tree_label) || is_suv_label(tree_label);
+    const int is_rgba = is_tree || is_lamp_label(tree_label) || is_car_label(tree_label);
     const int ok_img  = is_rgba ? decode_image_rgba_tree(bin + off, bl, &rgba, &w, &h)
                                 : decode_image_rgba(bin + off, bl, &rgba, &w, &h);
     if (!ok_img || !rgba) {
@@ -1513,7 +1521,7 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
         }
         float cr = 1.f, cg = 1.f, cbv = 1.f, ca = 1.f;
         if (cb && i < cc && !is_tree_label(out->label) && !is_lamp_label(out->label) &&
-            !is_suv_label(out->label)) {
+            !is_car_label(out->label)) {
             const u8* cp = cb + i * cs;
             const u32 cel = (ccomp == 5126 || ccomp == 5125) ? 4u : (ccomp == 5123 || ccomp == 5122) ? 2u : 1u;
             const int cnorm = (ccomp != 5126);
@@ -1663,7 +1671,7 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
                             f[ci] = static_cast<float>(d->nodes[c].num);
                         }
                         const float lum = f[0] * 0.30f + f[1] * 0.59f + f[2] * 0.11f;
-                        if (!is_lamp_label(out->label) && !is_suv_label(out->label) && lum < 0.18f) {
+                        if (!is_lamp_label(out->label) && !is_car_label(out->label) && lum < 0.18f) {
                             f[0] = 0.62f;
                             f[1] = 0.63f;
                             f[2] = 0.66f;
@@ -1930,6 +1938,9 @@ const char* glb_short_name(const char* path) {
     }
     if (std::strstr(base, "suv")) {
         return "suv";
+    }
+    if (std::strstr(base, "corolla") || std::strstr(base, "toyota")) {
+        return "corolla";
     }
     return base;
 }

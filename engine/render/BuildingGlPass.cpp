@@ -442,7 +442,7 @@ float tree_height_m(const TreeGlb* t) {
     return tree_up_extent(t);
 }
 
-float suv_fit_scale(const TreeGlb* t) {
+float corolla_fit_scale(const TreeGlb* t) {
     if (!t || t->nprims == 0) {
         return 1.f;
     }
@@ -458,7 +458,7 @@ float suv_fit_scale(const TreeGlb* t) {
     if (length < 0.001f) {
         return 1.f;
     }
-    float s = 5.0f / length;
+    float s = 4.2f / length;
     if (s > 50.f) {
         s = 50.f;
     }
@@ -632,7 +632,7 @@ bool BuildingGlPass::init() {
     std::memset(tree_glb, 0, sizeof(tree_glb));
     std::memset(&sky_glb, 0, sizeof(sky_glb));
     std::memset(lamp_glb, 0, sizeof(lamp_glb));
-    std::memset(&suv_glb, 0, sizeof(suv_glb));
+    std::memset(&corolla_glb, 0, sizeof(corolla_glb));
     glow_prog = glow_vao = glow_vbo = glow_ibo = glow_ivbo = glow_nidx = 0;
     glow_count = 0;
     cube_vao = cube_vbo = cube_ibo = 0;
@@ -812,26 +812,26 @@ bool BuildingGlPass::init() {
     load_city_tree("gatelys_klassisk.glb", &lamp_glb[0]);
     std::printf("[glb] Loading lamp model: gatelys_moderne.glb\n");
     load_city_tree("gatelys_moderne.glb", &lamp_glb[1]);
-    if (load_city_tree("low_poly_suv.glb", &suv_glb)) {
-        std::printf("[cars] Loaded low_poly_suv.glb: %u verts (should be < 10,000)\n", suv_glb.nverts);
-        const float hx = suv_glb.xmax - suv_glb.xmin;
-        const float hy = suv_glb.ymax - suv_glb.ymin;
-        const float hz = suv_glb.zmax - suv_glb.zmin;
-        std::printf("[cars] SUV bounds: %.2fx%.2fx%.2f meters\n", hx, hy, hz);
-        if (suv_glb.z_up == 1) {
+    if (load_city_tree("low-poly_toyota_corolla_e80_sedan.glb", &corolla_glb)) {
+        std::printf("[cars] Loaded Toyota Corolla E80: %u verts (should be < 10,000)\n", corolla_glb.nverts);
+        const float hx = corolla_glb.xmax - corolla_glb.xmin;
+        const float hy = corolla_glb.ymax - corolla_glb.ymin;
+        const float hz = corolla_glb.zmax - corolla_glb.zmin;
+        std::printf("[cars] Car bounds: %.2fx%.2fx%.2f meters\n", hx, hy, hz);
+        if (corolla_glb.z_up == 1) {
             std::printf("[cars] Applied Z-up to Y-up rotation\n");
-        } else if (suv_glb.z_up == 2) {
+        } else if (corolla_glb.z_up == 2) {
             std::printf("[cars] Applied X-up to Y-up rotation\n");
         } else {
             std::printf("[cars] Orientation: Y-up (correct)\n");
         }
-        const float sc = suv_fit_scale(&suv_glb);
+        const float sc = corolla_fit_scale(&corolla_glb);
         float L = hx, W = hz, H = hy;
-        if (suv_glb.z_up == 1) {
+        if (corolla_glb.z_up == 1) {
             L = hx > hy ? hx : hy;
             W = hx > hy ? hy : hx;
             H = hz;
-        } else if (suv_glb.z_up == 2) {
+        } else if (corolla_glb.z_up == 2) {
             L = hy > hz ? hy : hz;
             W = hy > hz ? hz : hy;
             H = hx;
@@ -843,7 +843,7 @@ bool BuildingGlPass::init() {
         std::printf("[cars] Final scale: %.5f, dimensions: %.2fx%.2fx%.2f meters\n", sc, L * sc, W * sc, H * sc);
         std::fflush(stdout);
     } else {
-        std::printf("[cars] low_poly_suv.glb not found — no parked SUVs\n");
+        std::printf("[cars] low-poly_toyota_corolla_e80_sedan.glb not found — no parked cars\n");
         std::fflush(stdout);
     }
     std::printf("[glb] Loaded street lamp models: klassisk (%u verts), moderne (%u verts)\n",
@@ -1155,18 +1155,18 @@ void BuildingGlPass::buildMesh(World& world) {
     (void)skip_lamp;
     (void)skip_tree;
 #endif
-    if (suv_glb.nprims > 0) {
-        static float suv_mats[kSuvSpawnCap * 16];
-        static float suv_xz[kSuvSpawnCap * 2];
+    if (corolla_glb.nprims > 0) {
+        static float corolla_mats[kCorollaSpawnCap * 16];
+        static float corolla_xz[kCorollaSpawnCap * 2];
         u32 sn       = 0;
-        u32 n_suv_xz = 0;
-        const float sc   = suv_fit_scale(&suv_glb);
-        const int   zup  = suv_glb.z_up;
-        const float y0   = tree_up_min(&suv_glb);
+        u32 n_corolla_xz = 0;
+        const float sc   = corolla_fit_scale(&corolla_glb);
+        const int   zup  = corolla_glb.z_up;
+        const float y0   = tree_up_min(&corolla_glb);
         const float y    = kCityPlateauY + 0.28f - y0 * sc; // road top is plateau+0.25
         const float park = 7.2f; // curb lane on 20 m asphalt, not the 11.5 m sidewalk
         auto push_suv = [&](float x, float z, float along) {
-            if (sn >= kSuvSpawnCap) {
+            if (sn >= kCorollaSpawnCap) {
                 return;
             }
             const float nx = std::round(x / kCityBlockPitch) * kCityBlockPitch;
@@ -1176,33 +1176,33 @@ void BuildingGlPass::buildMesh(World& world) {
             if (dx * dx + dz * dz < 15.f * 15.f) {
                 return;
             }
-            if (xz_too_close(x, z, suv_xz, n_suv_xz, 8.0f)) {
+            if (xz_too_close(x, z, corolla_xz, n_corolla_xz, 8.0f)) {
                 return;
             }
             const u32 flip = static_cast<u32>(x * 17.f + z * 31.f) & 1u;
             const float yaw = along + (flip ? 3.14159265f : 0.f);
-            tree_yaw_mat(&suv_mats[sn * 16], x, y, z, yaw, sc, zup);
-            suv_xz[n_suv_xz * 2u]     = x;
-            suv_xz[n_suv_xz * 2u + 1] = z;
-            ++n_suv_xz;
+            tree_yaw_mat(&corolla_mats[sn * 16], x, y, z, yaw, sc, zup);
+            corolla_xz[n_corolla_xz * 2u]     = x;
+            corolla_xz[n_corolla_xz * 2u + 1] = z;
+            ++n_corolla_xz;
             ++sn;
         };
-        for (u32 j = 0; j <= kCityBlocks && sn < kSuvSpawnCap; ++j) {
+        for (u32 j = 0; j <= kCityBlocks && sn < kCorollaSpawnCap; ++j) {
             const float z = static_cast<float>(j) * kCityBlockPitch;
-            for (float x = 80.f; x < kCityExtentM - 80.f && sn < kSuvSpawnCap; x += 48.f) {
+            for (float x = 80.f; x < kCityExtentM - 80.f && sn < kCorollaSpawnCap; x += 48.f) {
                 const float side = (static_cast<u32>(x) % 96u < 48u) ? park : -park;
                 push_suv(x, z + side, 0.f);
             }
         }
-        for (u32 i = 0; i <= kCityBlocks && sn < kSuvSpawnCap; ++i) {
+        for (u32 i = 0; i <= kCityBlocks && sn < kCorollaSpawnCap; ++i) {
             const float x = static_cast<float>(i) * kCityBlockPitch;
-            for (float z = 80.f; z < kCityExtentM - 80.f && sn < kSuvSpawnCap; z += 48.f) {
+            for (float z = 80.f; z < kCityExtentM - 80.f && sn < kCorollaSpawnCap; z += 48.f) {
                 const float side = (static_cast<u32>(z) % 96u < 48u) ? park : -park;
                 push_suv(x + side, z, 1.5707963f);
             }
         }
-        tree_glb_set_instances(&suv_glb, suv_mats, sn);
-        std::printf("[cars] Parked %u SUVs along roads\n", sn);
+        tree_glb_set_instances(&corolla_glb, corolla_mats, sn);
+        std::printf("[cars] Parked %u Corolla E80 along roads\n", sn);
         std::fflush(stdout);
     }
 }
@@ -1284,8 +1284,8 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
                 draw_instanced_glb(&sky_glb, tree_shadow_prog);
             }
             draw_tree_glbs(tree_glb, tree_shadow_prog);
-            if (suv_glb.instance_count > 0) {
-                draw_instanced_glb(&suv_glb, tree_shadow_prog);
+            if (corolla_glb.instance_count > 0) {
+                draw_instanced_glb(&corolla_glb, tree_shadow_prog);
             }
             glUseProgram(shadow_prog);
         }
@@ -1441,7 +1441,7 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
         draw_tree_glbs(tree_glb, tree_prog);
         draw_instanced_glb(&sky_glb, tree_prog);
         glUniform1f(glGetUniformLocation(tree_prog, "uNightGlow"), 0.f);
-        draw_instanced_glb(&suv_glb, tree_prog);
+        draw_instanced_glb(&corolla_glb, tree_prog);
         glUseProgram(building_prog);
     }
     if (glow_prog && glow_count > 0 && night > 0.01f) {
@@ -1584,7 +1584,7 @@ void BuildingGlPass::shutdown() {
     for (u32 k = 0; k < kLampKindCount; ++k) {
         tree_glb_shutdown(&lamp_glb[k]);
     }
-    tree_glb_shutdown(&suv_glb);
+    tree_glb_shutdown(&corolla_glb);
     if (glow_prog) {
         glDeleteProgram(glow_prog);
         glow_prog = 0;
