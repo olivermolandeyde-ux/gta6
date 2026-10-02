@@ -1744,28 +1744,37 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
     if (!pr.tex_emit) {
         pr.tex_emit = black_tex();
     }
-    if (is_suv_label(out->label) && suv_part != 2 && paxmax > paxmin) {
-        float ex = paxmax - paxmin, ey = paymax - paymin, ez = pazmax - pazmin;
-        float a0 = ex, a1 = ey, a2 = ez;
-        if (a0 > a1) {
-            const float t = a0;
-            a0            = a1;
-            a1            = t;
+    if (is_suv_label(out->label) && paxmax > paxmin) {
+        const float ex = paxmax - paxmin, ey = paymax - paymin, ez = pazmax - pazmin;
+        pr.max_ext = ex;
+        if (ey > pr.max_ext) {
+            pr.max_ext = ey;
         }
-        if (a1 > a2) {
-            const float t = a1;
-            a1            = a2;
-            a2            = t;
+        if (ez > pr.max_ext) {
+            pr.max_ext = ez;
         }
-        if (a0 > a1) {
-            const float t = a0;
-            a0            = a1;
-            a1            = t;
+        if (suv_part != 2) {
+            float a0 = ex, a1 = ey, a2 = ez;
+            if (a0 > a1) {
+                const float t = a0;
+                a0            = a1;
+                a1            = t;
+            }
+            if (a1 > a2) {
+                const float t = a1;
+                a1            = a2;
+                a2            = t;
+            }
+            if (a0 > a1) {
+                const float t = a0;
+                a0            = a1;
+                a1            = t;
+            }
+            if (a2 > 1e-5f && a1 > 0.70f * a2 && a0 < 0.65f * a2) {
+                suv_part = 3;
+            }
         }
-        // 5-spoke hub is a thin disc; side windows are longer rectangles (a1/a2 ~ 0.6).
-        if (a2 > 1e-5f && a1 > 0.82f * a2 && a0 < 0.45f * a2) {
-            suv_part = 3;
-        }
+        pr.suv_part = suv_part;
     }
     if (is_suv_label(out->label) && suv_part) {
         if (suv_part == 1) {
@@ -1849,6 +1858,44 @@ void walk_node(TreeGlb* out, const JDoc* d, u32 node, const float* parent, const
             }
         }
     }
+}
+
+void suv_paint_hubs(TreeGlb* g) {
+    if (!g || !is_suv_label(g->label) || g->nprims == 0) {
+        return;
+    }
+    float L = g->xmax - g->xmin;
+    const float Ly = g->ymax - g->ymin;
+    const float Lz = g->zmax - g->zmin;
+    if (Ly > L) {
+        L = Ly;
+    }
+    if (Lz > L) {
+        L = Lz;
+    }
+    if (L < 1e-4f) {
+        return;
+    }
+    const unsigned silver = solid_tex(196, 198, 204, 255);
+    u32 n = 0;
+    for (u32 i = 0; i < g->nprims; ++i) {
+        TreePrim& p = g->prims[i];
+        if (p.suv_part == 2) {
+            continue; // rubber
+        }
+        // Spokes are small bars, not discs — anything much smaller than the body
+        // (and not a window) is a hub piece.
+        if (p.max_ext > 1e-5f && p.max_ext < 0.20f * L) {
+            p.tex        = silver;
+            p.tex_w      = p.tex_h = 1;
+            p.alpha_mask = 0;
+            p.suv_part   = 3;
+            ++n;
+            std::printf("[glb] suv prim %u hub by size ext=%.3f car=%.3f → silver\n", i, p.max_ext, L);
+        }
+    }
+    std::printf("[glb] suv silvered %u hub prims (car length %.3f)\n", n, L);
+    std::fflush(stdout);
 }
 
 } // namespace
@@ -2132,6 +2179,7 @@ bool load_tree_glb(const char* path, TreeGlb* out) {
             out->z_up = 0;
         }
     }
+    suv_paint_hubs(out);
     std::printf("[glb] %s AABB x=[%.3f,%.3f] y=[%.3f,%.3f] z=[%.3f,%.3f] size=(%.3f,%.3f,%.3f) z_up=%d prims=%u verts=%u\n",
                 out->label, out->xmin, out->xmax, out->ymin, out->ymax, out->zmin, out->zmax,
                 out->xmax - out->xmin, out->ymax - out->ymin, out->zmax - out->zmin, out->z_up, out->nprims,

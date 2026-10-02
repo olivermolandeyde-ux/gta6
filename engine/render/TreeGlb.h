@@ -27,6 +27,8 @@ struct TreePrim {
     int      has_alpha;
     int      gl_mode; // glTF 0 points, 1 lines, 4 triangles, …
     int      has_color0;
+    float    max_ext;  // longest AABB axis of this prim
+    int      suv_part; // 0 none, 1 glass, 2 tire, 3 rim
 };
 
 struct TreeGlb {
