@@ -1316,7 +1316,8 @@ void BuildingGlPass::buildMesh(World& world) {
                 return;
             }
             if (use_sports) {
-                corolla_yaw_mat(&sports_mats[n_sports * 16], x, ys, z, yaw, sc_s, Rs);
+                // Sports mesh forward is opposite the Corolla after AABB — +180° yaw.
+                corolla_yaw_mat(&sports_mats[n_sports * 16], x, ys, z, yaw + 3.14159265f, sc_s, Rs);
                 ++n_sports;
             } else {
                 corolla_yaw_mat(&corolla_mats[n_corolla * 16], x, yc, z, yaw, sc_c, Rc);
@@ -1347,6 +1348,7 @@ void BuildingGlPass::buildMesh(World& world) {
             tree_glb_set_instances(&sports_glb, sports_mats, n_sports);
         }
         std::printf("[cars] Applied +90° yaw to face along road\n");
+        std::printf("[cars] Sports cars rotated 180° to match traffic flow\n");
         std::printf("[cars] Parked %u Corolla E80 along roads\n", n_corolla);
         std::printf("[cars] Parked %u sports cars along roads\n", n_sports);
         std::fflush(stdout);
