@@ -37,6 +37,10 @@ struct BuildingGlPass {
     float      car_scale[2];
     float      car_y[2];        // model origin height, so wheels sit on the road
     float      car_body_flip;   // extra yaw on both bodies; the sandbox F key toggles it
+    int        car_fwd_axis[2];                   // model-space length axis, from the AABB basis
+    int        car_up_axis[2];                    // model-space height axis, from the AABB basis
+    float      car_wheel_radius[2];               // world metres, [0] Corolla, [1] sports
+    float      car_wheel_angles[2][kCarAgentCap]; // radians per vehicle, uploaded every frame
     float      car_mats[2][kCarAgentCap * 16];
     unsigned glow_prog, glow_vao, glow_vbo, glow_ibo, glow_ivbo, glow_nidx;
     u32      glow_count;

@@ -11,6 +11,7 @@
 //   between loops  - the loops are pairwise disjoint, with tens of metres to spare.
 
 #include "render/CarTraffic.h"
+#include "render/CarWheelFit.h"
 #include "world/CityGenerator.h"
 
 #include <cmath>
@@ -364,6 +365,163 @@ int main(int argc, char** argv) {
     expectf(wrong_side == 0u,
             "right-hand traffic: %u of %u straights keep the centre line on the driver's left",
             straights - wrong_side, straights);
+
+    // ---- car wheel maths: the part that cannot be eyeballed on screen ----------------
+    {
+        // A synthetic Y-up car: X = length, Y = height, Z = width (so Z is the axle axis).
+        const float r      = 0.35f; // tyre radius
+        const float halfw  = 0.10f; // half tyre width
+        const float track  = 1.5f;
+        const float base   = 2.6f;
+        const float truth[4][3] = {{-base * 0.5f, r, -track * 0.5f},
+                                   {-base * 0.5f, r, track * 0.5f},
+                                   {base * 0.5f, r, -track * 0.5f},
+                                   {base * 0.5f, r, track * 0.5f}};
+        float pts[4 * 64 * 3];
+        u32   n = 0;
+        for (int w = 0; w < 4; ++w) {
+            for (int side = 0; side < 2; ++side) {
+                const float zw = truth[w][2] + (side ? halfw : -halfw);
+                for (int k = 0; k < 16; ++k) {
+                    const float a  = static_cast<float>(k) * 6.2831853f / 16.f;
+                    pts[n * 3 + 0] = truth[w][0] + r * std::cos(a);
+                    pts[n * 3 + 1] = truth[w][1] + r * std::sin(a);
+                    pts[n * 3 + 2] = zw;
+                    ++n;
+                }
+            }
+        }
+        u32         scratch[4 * 64];
+        CarWheelSet set{};
+        const bool  ok4 = car_wheel_fit(pts, 3u, n, scratch, &set);
+        expect(ok4 && set.count == 4, "wheel fit finds all four wheels in one merged primitive");
+        expect(set.axle_axis == 2, "wheel fit calls the thin axis the axle");
+        float worst_center = 0.f;
+        float worst_radius = 0.f;
+        if (ok4 && set.count == 4) {
+            for (int w = 0; w < 4; ++w) {
+                float best = 1.0e9f;
+                for (int c = 0; c < 4; ++c) {
+                    const float dx = set.center[c][0] - truth[w][0];
+                    const float dy = std::fabs(set.center[c][1] - truth[w][1]);
+                    const float dz = set.center[c][2] - truth[w][2];
+                    const float dd = std::sqrt(dx * dx + dy * dy + dz * dz);
+                    if (dd < best) {
+                        best = dd;
+                    }
+                }
+                if (best > worst_center) {
+                    worst_center = best;
+                }
+                for (int c = 0; c < 4; ++c) {
+                    const float dr = std::fabs(set.radius[c] - r);
+                    if (dr > worst_radius) {
+                        worst_radius = dr;
+                    }
+                }
+            }
+        }
+        expectf(ok4 && worst_center < 0.02f && worst_radius < 0.02f,
+                "wheel centres land within %.3f m and radii within %.3f m of the modelled wheels",
+                static_cast<double>(worst_center), static_cast<double>(worst_radius));
+
+        // Roll direction: while the car drives forward, the tyre's contact patch has to
+        // move backwards along the car's nose — that is rolling without slipping. This
+        // has to hold for both bodies and their mirrored yaw offsets, through the whole
+        // AABB-basis-then-yaw chain the renderer actually uses.
+        const float e[3] = {4.6f, 1.5f, 2.0f}; // X length, Y height, Z width of a car mesh
+        int         fwd  = 0;
+        if (e[1] > e[fwd]) {
+            fwd = 1;
+        }
+        if (e[2] > e[fwd]) {
+            fwd = 2;
+        }
+        int up = (fwd == 0) ? 1 : 0;
+        for (int i = 0; i < 3; ++i) {
+            if (i != fwd && e[i] < e[up]) {
+                up = i;
+            }
+        }
+        float fu[3] = {0.f, 0.f, 0.f};
+        float uu[3] = {0.f, 0.f, 0.f};
+        float ru[3];
+        fu[fwd] = 1.f;
+        uu[up]  = 1.f;
+        ru[0]   = fu[1] * uu[2] - fu[2] * uu[1];
+        ru[1]   = fu[2] * uu[0] - fu[0] * uu[2];
+        ru[2]   = fu[0] * uu[1] - fu[1] * uu[0];
+        const float R[9] = {ru[0], uu[0], fu[0], ru[1], uu[1], fu[1], ru[2], uu[2], fu[2]};
+        const int   axle = 2; // thin axis, as fitted above
+
+        // model -> ring frame (rows of R), then the heading yaw, exactly as the pass does.
+        auto to_world = [&](const float p[3], float yaw_off, float out[3]) {
+            const float bx = R[0] * p[0] + R[3] * p[1] + R[6] * p[2];
+            const float by = R[1] * p[0] + R[4] * p[1] + R[7] * p[2];
+            const float bz = R[2] * p[0] + R[5] * p[1] + R[8] * p[2];
+            const float c = std::cos(yaw_off), sn = std::sin(yaw_off);
+            out[0] = c * bx + sn * bz;
+            out[1] = by;
+            out[2] = -sn * bx + c * bz;
+        };
+
+        const float body_offsets[2]    = {kCarPi, 2.f * kCarPi}; // Corolla, sports
+        const float dpsi               = 0.02f;                  // radians of wheel spin
+        bool        roll_ok            = true;
+        float       worst_forward      = -1.0e9f;
+        float       worst_slip         = 0.f;
+        for (int b = 0; b < 2; ++b) {
+            const float dir = car_wheel_roll_dir(fwd, up, axle);
+            // A material point on the tread at the bottom of the tyre: the contact patch.
+            // The shader spins about the wheel centre, so rotate the offset, not the point.
+            const float ctr[3] = {1.3f, r, -0.75f};  // front-left wheel centre, model space
+            const float off[3] = {0.f, -r, 0.f};     // centre -> contact patch
+            const float a  = dpsi * dir;
+            const float ca = std::cos(a), sa = std::sin(a);
+            const float p0[3] = {ctr[0] + off[0], ctr[1] + off[1], ctr[2] + off[2]};
+            const float p1[3] = {ctr[0] + off[0] * ca - off[1] * sa,
+                                 ctr[1] + off[0] * sa + off[1] * ca, ctr[2] + off[2]};
+            float w0[3], w1[3], nose[3];
+            to_world(p0, body_offsets[b], w0);
+            to_world(p1, body_offsets[b], w1);
+            to_world(fu, body_offsets[b], nose); // the car's nose, in the world
+            const float dx = w1[0] - w0[0], dy = w1[1] - w0[1], dz = w1[2] - w0[2];
+            const float forward_m = dx * nose[0] + dy * nose[1] + dz * nose[2];
+            worst_forward = forward_m > worst_forward ? forward_m : worst_forward;
+            roll_ok       = roll_ok && forward_m < -1.0e-6f;
+            // Rolling without slipping: the patch travels the arc length r * dpsi.
+            const float travel = std::sqrt(dx * dx + dy * dy + dz * dz);
+            const float slip   = std::fabs(travel - r * dpsi) / (r * dpsi);
+            if (slip > worst_slip) {
+                worst_slip = slip;
+            }
+        }
+        expectf(roll_ok, "wheel roll direction: the contact patch moves backwards along the nose "
+                        "through the whole basis+yaw chain (worst forward drift %.5f m)",
+                static_cast<double>(worst_forward));
+        expectf(worst_slip < 0.01f,
+                "wheels roll without slipping: the patch travels the arc length r*angle (worst "
+                "error %.4f%%)",
+                static_cast<double>(worst_slip * 100.f));
+
+        // The shape-only fallback (used when a car's names never say "wheel") accepts a
+        // fitted disc only if it stands on the model floor: a wheel does, a headlight, a
+        // mirror and a spare tyre in the boot do not, so they can never be spun.
+        const float car_h = 1.50f; // model height, metres
+        expect(car_wheel_on_ground(0.35f, 0.35f, 0.f, car_h), "a tyre standing on the road passes "
+                                                              "the floor test");
+        expect(!car_wheel_on_ground(0.65f, 0.22f, 0.f, car_h),
+               "a headlight 0.43 m above the road is refused");
+        expect(!car_wheel_on_ground(0.75f, 0.35f, 0.f, car_h),
+               "a spare tyre resting in the boot is refused");
+        expect(car_wheel_on_ground(0.36f, 0.35f, 0.01f, car_h),
+               "a wheel one centimetre off the road is still accepted (meshes are never exact)");
+
+        // Both axle conventions must be handled: a model authored with its length on Z and
+        // width on X is the mirror image, and its wheel sign has to mirror with it.
+        expect(car_wheel_roll_dir(2, 1, 0) == car_wheel_roll_dir(fwd, up, axle) * -1.f,
+               "the spin sign follows the model's axis order, so a mirrored mesh rolls forward too");
+    }
 
     const float minutes = seconds / 60.f;
     std::printf("[ok] flow past the camera loop (z = %.0f m): %.1f vehicles/min northbound beside "

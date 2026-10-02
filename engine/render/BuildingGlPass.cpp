@@ -2,6 +2,7 @@
 
 #include "ecs/World.h"
 #include "objects/StreetLight.h"
+#include "render/CarWheelFit.h"
 #include "render/CityProcTex.h"
 #include "render/CitySolidMesh.h"
 #include "render/RenderPipeline.h"
@@ -497,7 +498,7 @@ void log_glb_textures(const char* name, const TreeGlb* t) {
 }
 
 // Build model→world 3x3: longest AABB axis = forward (Z), shortest = up (Y), rest = right (X).
-void corolla_basis(const TreeGlb* t, float R[9]) {
+void corolla_basis(const TreeGlb* t, float R[9], int* fwd_axis_out, int* up_axis_out) {
     const float e[3] = {t->xmax - t->xmin, t->ymax - t->ymin, t->zmax - t->zmin};
     int fwd = 0;
     if (e[1] > e[fwd]) {
@@ -521,6 +522,12 @@ void corolla_basis(const TreeGlb* t, float R[9]) {
     static const char* kAxis = "XYZ";
     std::printf("[cars] basis length=%c height=%c (stand on wheels)\n", kAxis[fwd], kAxis[up]);
     std::fflush(stdout);
+    if (fwd_axis_out) {
+        *fwd_axis_out = fwd;
+    }
+    if (up_axis_out) {
+        *up_axis_out = up;
+    }
     // columns = images of model X,Y,Z  (world X=right, Y=up, Z=forward)
     R[0] = ru[0];
     R[1] = uu[0];
@@ -631,6 +638,16 @@ void draw_instanced_glb(TreeGlb* g, unsigned prog) {
         glUniform1i(glGetUniformLocation(prog, "uAlphaMask"), pr.alpha_mask);
         glUniform1f(glGetUniformLocation(prog, "uAlphaCut"), pr.cutoff);
         glUniform1i(glGetUniformLocation(prog, "uUseTexture"), 1);
+        // Wheel spin uniforms: harmless on trees and lamps, which read uWheelCount == 0.
+        glUniform1i(glGetUniformLocation(prog, "uWheelCount"), pr.wheel_count);
+        if (pr.wheel_count > 0) {
+            glUniform3fv(glGetUniformLocation(prog, "uWheelCenter"), pr.wheel_count,
+                         &pr.wheel_center[0][0]);
+            const float axis[3] = {pr.wheel_axis == 0 ? 1.f : 0.f, pr.wheel_axis == 1 ? 1.f : 0.f,
+                                   pr.wheel_axis == 2 ? 1.f : 0.f};
+            glUniform3fv(glGetUniformLocation(prog, "uWheelAxis"), 1, axis);
+            glUniform1f(glGetUniformLocation(prog, "uWheelRoll"), pr.wheel_roll);
+        }
         if (pr.alpha_mask) {
             glEnable(GL_BLEND);
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -729,6 +746,8 @@ bool BuildingGlPass::init() {
     std::memset(car_scale, 0, sizeof(car_scale));
     std::memset(car_y, 0, sizeof(car_y));
     car_body_flip = 0.f;
+    car_wheel_radius[0] = car_wheel_radius[1] = 0.f;
+    std::memset(car_wheel_angles, 0, sizeof(car_wheel_angles));
     glow_prog = glow_vao = glow_vbo = glow_ibo = glow_ivbo = glow_nidx = 0;
     glow_count = 0;
     cube_vao = cube_vbo = cube_ibo = 0;
@@ -846,14 +865,21 @@ bool BuildingGlPass::init() {
     constexpr const char* kTreeFbVs =
         "#version 330 core\n"
         "layout(location=0) in vec3 aPos; layout(location=1) in vec3 aNormal; layout(location=2) in vec2 aUV;\n"
-        "layout(location=7) in vec4 aColor;\n"
-        "layout(location=3) in vec4 iM0; layout(location=4) in vec4 iM1;\n"
-        "layout(location=5) in vec4 iM2; layout(location=6) in vec4 iM3;\n"
+        "layout(location=3) in vec4 iM0; layout(location=4) in vec4 iM1; layout(location=5) in vec4 iM2;"
+        " layout(location=6) in vec4 iM3; layout(location=8) in float iWheelAngle;\n"
         "uniform mat4 view,projection,uLightVP;\n"
+        "uniform int uWheelCount; uniform vec3 uWheelCenter[4]; uniform vec3 uWheelAxis;"
+        " uniform float uWheelRoll;\n"
         "out vec3 FragPos; out vec3 Normal; out vec2 UV; out vec4 LightPos; out vec4 VertColor;\n"
-        "void main(){ mat4 model=mat4(iM0,iM1,iM2,iM3); vec4 wp=model*vec4(aPos,1.0);\n"
-        " FragPos=wp.xyz; Normal=mat3(model)*aNormal; UV=aUV; VertColor=vec4(1.0);\n"
-        " LightPos=uLightVP*wp; gl_Position=projection*view*wp; }\n";
+        "void main(){ mat4 model=mat4(iM0,iM1,iM2,iM3); vec3 p=aPos; vec3 n=aNormal;\n"
+        " if(uWheelCount>0){ vec3 c=uWheelCenter[0]; float best=distance(aPos,uWheelCenter[0]);\n"
+        "  for(int i=1;i<4;++i){ if(i>=uWheelCount) break; float d=distance(aPos,uWheelCenter[i]);"
+        " if(d<best){ best=d; c=uWheelCenter[i]; } }\n"
+        "  float a=iWheelAngle*uWheelRoll; float cs=cos(a); float sn=sin(a); vec3 v=p-c;\n"
+        "  p=c+v*cs+cross(uWheelAxis,v)*sn+uWheelAxis*(dot(uWheelAxis,v)*(1.0-cs));\n"
+        "  n=n*cs+cross(uWheelAxis,n)*sn+uWheelAxis*(dot(uWheelAxis,n)*(1.0-cs)); }\n"
+        " vec4 wp=model*vec4(p,1.0); FragPos=wp.xyz; Normal=normalize(mat3(model)*n); UV=aUV;"
+        " VertColor=vec4(1.0); LightPos=uLightVP*wp; gl_Position=projection*view*wp; }\n";
     constexpr const char* kTreeFbFs =
         "#version 330 core\n"
         "in vec3 FragPos; in vec3 Normal; in vec2 UV; in vec4 LightPos; in vec4 VertColor;\n"
@@ -861,9 +887,19 @@ bool BuildingGlPass::init() {
         "void main(){ vec4 albedo=texture(uAlbedo, UV); if(albedo.a<0.5) discard; FragColor=vec4(albedo.rgb,1.0); }\n";
     tree_prog = make_program("shaders/tree.vert", "shaders/tree.frag", kTreeFbVs, kTreeFbFs, "tree");
     constexpr const char* kTshFbVs =
-        "#version 330 core\nlayout(location=0) in vec3 aPos; layout(location=3) in vec4 iM0;\n"
-        "layout(location=4) in vec4 iM1; layout(location=5) in vec4 iM2; layout(location=6) in vec4 iM3;\n"
-        "uniform mat4 uLightVP; void main(){ mat4 model=mat4(iM0,iM1,iM2,iM3); gl_Position=uLightVP*model*vec4(aPos,1.0); }\n";
+        "#version 330 core\nlayout(location=0) in vec3 aPos; layout(location=2) in vec2 aUV;"
+        " layout(location=3) in vec4 iM0;\n"
+        "layout(location=4) in vec4 iM1; layout(location=5) in vec4 iM2; layout(location=6) in vec4 iM3;"
+        " layout(location=8) in float iWheelAngle;\n"
+        "uniform mat4 uLightVP; uniform int uWheelCount; uniform vec3 uWheelCenter[4];"
+        " uniform vec3 uWheelAxis; uniform float uWheelRoll;\n"
+        "out vec2 UV; void main(){ mat4 model=mat4(iM0,iM1,iM2,iM3); vec3 p=aPos;\n"
+        " if(uWheelCount>0){ vec3 c=uWheelCenter[0]; float best=distance(aPos,uWheelCenter[0]);\n"
+        "  for(int i=1;i<4;++i){ if(i>=uWheelCount) break; float d=distance(aPos,uWheelCenter[i]);"
+        " if(d<best){ best=d; c=uWheelCenter[i]; } }\n"
+        "  float a=iWheelAngle*uWheelRoll; float cs=cos(a); float sn=sin(a); vec3 v=p-c;\n"
+        "  p=c+v*cs+cross(uWheelAxis,v)*sn+uWheelAxis*(dot(uWheelAxis,v)*(1.0-cs)); }\n"
+        " UV=aUV; gl_Position=uLightVP*model*vec4(p,1.0); }\n";
     constexpr const char* kTshFbFs =
         "#version 330 core\nin vec2 UV; uniform sampler2D uAlbedo;\n"
         "void main(){ if(texture(uAlbedo,UV).a<0.5) discard; }\n";
@@ -916,7 +952,7 @@ bool BuildingGlPass::init() {
         std::printf("[cars] Car bounds: %.2fx%.2fx%.2f meters\n", hx, hy, hz);
         {
             float Rtmp[9];
-            corolla_basis(&corolla_glb, Rtmp);
+            corolla_basis(&corolla_glb, Rtmp, nullptr, nullptr);
         }
         const float sc = corolla_fit_scale(&corolla_glb);
         float L = hx;
@@ -942,7 +978,7 @@ bool BuildingGlPass::init() {
         std::printf("[cars] Sports car bounds: %.2fx%.2fx%.2f meters\n", hx, hy, hz);
         {
             float Rtmp[9];
-            corolla_basis(&sports_glb, Rtmp);
+            corolla_basis(&sports_glb, Rtmp, nullptr, nullptr);
         }
         const float sc = corolla_fit_scale(&sports_glb);
         float L = hx;
@@ -1272,16 +1308,44 @@ void BuildingGlPass::buildMesh(World& world) {
         // The models keep their accepted scale/orientation; the traffic plan only hands
         // out a lane position and a heading, which are turned into matrices every frame.
         if (corolla_glb.nprims > 0) {
-            corolla_basis(&corolla_glb, car_basis[0]);
+            corolla_basis(&corolla_glb, car_basis[0], &car_fwd_axis[0], &car_up_axis[0]);
             car_scale[0] = corolla_fit_scale(&corolla_glb);
             car_y[0] =
                 kCityPlateauY + 0.30f - corolla_model_ymin(&corolla_glb, car_basis[0]) * car_scale[0];
         }
         if (sports_glb.nprims > 0) {
-            corolla_basis(&sports_glb, car_basis[1]);
+            corolla_basis(&sports_glb, car_basis[1], &car_fwd_axis[1], &car_up_axis[1]);
             car_scale[1] = corolla_fit_scale(&sports_glb);
             car_y[1] =
                 kCityPlateauY + 0.30f - corolla_model_ymin(&sports_glb, car_basis[1]) * car_scale[1];
+        }
+        // Wheels: the loader found the wheel meshes, so give each the axle it spins about
+        // and work out the spin rate in world metres.
+        for (u32 m = 0; m < 2u; ++m) {
+            TreeGlb*    g       = (m == 0u) ? &corolla_glb : &sports_glb;
+            if (g->nprims == 0 || car_scale[m] <= 0.f) {
+                continue;
+            }
+            car_wheel_radius[m] = g->wheel_radius * car_scale[m];
+            for (u32 p = 0; p < g->nprims; ++p) {
+                TreePrim& pr = g->prims[p];
+                if (pr.wheel_count > 0) {
+                    pr.wheel_roll = car_wheel_roll_dir(car_fwd_axis[m], car_up_axis[m],
+                                                       pr.wheel_axis);
+                }
+            }
+            if (g->wheel_prim_count == 0u) {
+                std::printf("[cars] %s: no wheel meshes found — the body drives but the wheels stay "
+                            "static. See the [glb] primitive lines above; if the wheel materials have "
+                            "other names, those names are what j_looks_like_wheel needs.\n",
+                            m == 0u ? "Corolla E80" : "sports car");
+            } else {
+                std::printf("[cars] %s: %u wheel(s) in %u primitive(s) spin about %c, tyre radius "
+                            "%.3f m world\n",
+                            m == 0u ? "Corolla E80" : "sports car", g->wheel_count, g->wheel_prim_count,
+                            "XYZ"[g->prims[0].wheel_axis & 3], static_cast<double>(car_wheel_radius[m]));
+            }
+            std::fflush(stdout);
         }
         car_traffic_build(&car_traffic, kCityBlockPitch, corolla_glb.nprims > 0 ? 1u : 0u,
                           sports_glb.nprims > 0 ? 1u : 0u);
@@ -1341,6 +1405,15 @@ void BuildingGlPass::update_car_instances(float clock_s) {
         if (n[m] >= kCarAgentCap) {
             continue;
         }
+        // Wheel spin: arc length / tyre radius, wrapped so a long session keeps precision.
+        // One angle serves every wheel primitive of the car, because they are one axle.
+        const float wrad = car_wheel_radius[m];
+        if (wrad > 1.0e-4f) {
+            const float ang = car_agent_s(&car_traffic, i) / wrad;
+            car_wheel_angles[m][n[m]] = std::fmod(ang, 2.f * kCarPi);
+        } else {
+            car_wheel_angles[m][n[m]] = 0.f;
+        }
         // The AABB basis maps each model's longest axis onto the ring heading, and on a
         // car that axis is its length, so the body needs a yaw offset to face along the
         // direction of travel. This default — 180° for the Corolla, and a further 180°
@@ -1357,9 +1430,11 @@ void BuildingGlPass::update_car_instances(float clock_s) {
     car_traffic.mesh_count[1] = n[1];
     if (corolla_glb.nprims > 0 && n[0] > 0) {
         tree_glb_set_instances(&corolla_glb, car_mats[0], n[0]);
+        tree_glb_set_wheel_angles(&corolla_glb, car_wheel_angles[0], n[0]);
     }
     if (sports_glb.nprims > 0 && n[1] > 0) {
         tree_glb_set_instances(&sports_glb, car_mats[1], n[1]);
+        tree_glb_set_wheel_angles(&sports_glb, car_wheel_angles[1], n[1]);
     }
 }
 

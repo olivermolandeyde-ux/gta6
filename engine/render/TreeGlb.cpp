@@ -1,5 +1,7 @@
 #include "render/TreeGlb.h"
 
+#include "render/CarWheelFit.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -1094,6 +1096,109 @@ int is_car_label(const char* s) {
     return is_suv_label(s) || is_corolla_label(s) || is_sports_label(s);
 }
 
+// Wheels are found by name, then confirmed by geometry (car_wheel_fit). "brake" is left
+// out on purpose: a brake disc rotates, but a caliper does not.
+int j_looks_like_wheel(const JNode* n) {
+    return str_has(n, "wheel") || str_has(n, "hjul") || str_has(n, "tire") ||
+           str_has(n, "tyre") || str_has(n, "rubber") || str_has(n, "tread") ||
+           str_has(n, "rim") || str_has(n, "felg") || str_has(n, "alloy") ||
+           str_has(n, "hubcap") || str_has(n, "dek");
+}
+
+// Geometry-only wheel hunt, used when a car's mesh, node and material names never say
+// "wheel". A fitted disc is accepted here only if it is thin about the car's *width* axis
+// and its lowest point stands on the model floor. Headlights, mirrors, exhaust tips and a
+// spare tyre in the boot fail one of those, so the fallback cannot spin the wrong part.
+// The decision is deferred to the end of the walk, when the whole car's size and floor are
+// known; until then the fitted candidates wait here.
+struct WheelCandidate {
+    u32         prim;
+    CarWheelSet set;
+};
+
+WheelCandidate g_wheel_cand[8];
+u32            g_wheel_cand_n = 0;
+
+void wheel_hunt_finish(TreeGlb* out) {
+    if (g_wheel_cand_n == 0u || !out) {
+        return;
+    }
+    const float e[3] = {out->xmax - out->xmin, out->ymax - out->ymin, out->zmax - out->zmin};
+    // The same roles corolla_basis uses at draw time: longest = length, shortest = height.
+    int fwd = 0;
+    if (e[1] > e[fwd]) {
+        fwd = 1;
+    }
+    if (e[2] > e[fwd]) {
+        fwd = 2;
+    }
+    int up = (fwd == 0) ? 1 : 0;
+    for (int i = 0; i < 3; ++i) {
+        if (i != fwd && e[i] < e[up]) {
+            up = i;
+        }
+    }
+    const int   right    = 3 - fwd - up;
+    const float floor_up = (up == 0) ? out->xmin : (up == 1) ? out->ymin : out->zmin;
+    u32         taken = 0;
+    u32         refused_axis = 0;
+    u32         refused_floor = 0;
+    for (u32 c = 0; c < g_wheel_cand_n; ++c) {
+        const WheelCandidate& cand = g_wheel_cand[c];
+        if (cand.prim >= out->nprims) {
+            continue;
+        }
+        TreePrim* pr = &out->prims[cand.prim];
+        if (pr->wheel_count > 0) {
+            continue;
+        }
+        if (cand.set.axle_axis != right) {
+            ++refused_axis;
+            continue;
+        }
+        bool on_floor = true;
+        for (int w = 0; w < cand.set.count; ++w) {
+            if (!car_wheel_on_ground(cand.set.center[w][up], cand.set.radius[w], floor_up, e[up])) {
+                on_floor = false;
+            }
+        }
+        if (!on_floor) {
+            ++refused_floor;
+            continue;
+        }
+        pr->wheel_count = cand.set.count;
+        pr->wheel_axis  = cand.set.axle_axis;
+        for (int w = 0; w < cand.set.count; ++w) {
+            pr->wheel_center[w][0] = cand.set.center[w][0];
+            pr->wheel_center[w][1] = cand.set.center[w][1];
+            pr->wheel_center[w][2] = cand.set.center[w][2];
+            pr->wheel_radius[w]    = cand.set.radius[w];
+            if (cand.set.radius[w] > out->wheel_radius) {
+                out->wheel_radius = cand.set.radius[w];
+            }
+        }
+        ++out->wheel_prim_count;
+        out->wheel_count += static_cast<u32>(cand.set.count);
+        ++taken;
+        std::printf("[glb] %s prim %u: WHEEL mesh found by shape — %d wheel(s), axle axis %c, "
+                    "radius %.3f, centre %.2f,%.2f,%.2f (the names never say \"wheel\")\n",
+                    out->label, cand.prim, cand.set.count,
+                    "XYZ"[cand.set.axle_axis < 3 ? cand.set.axle_axis : 0],
+                    static_cast<double>(cand.set.radius[0]),
+                    static_cast<double>(cand.set.center[0][0]),
+                    static_cast<double>(cand.set.center[0][1]),
+                    static_cast<double>(cand.set.center[0][2]));
+    }
+    if (taken == 0u) {
+        std::printf("[glb] %s: nothing matched by name and all %u shape candidate(s) were refused "
+                    "(%u with the wrong axle axis, %u not standing on the ground) — the wheels stay "
+                    "static\n",
+                    out->label, g_wheel_cand_n, refused_axis, refused_floor);
+    }
+    g_wheel_cand_n = 0;
+    std::fflush(stdout);
+}
+
 unsigned fail_red_tex() {
     return solid_tex(255, 32, 32, 255);
 }
@@ -1596,6 +1701,7 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
     const JNode* matn = j_field(d, prim, "material");
     u32 mat_i = 0;
     int suv_part = 0; // 1 glass, 2 tire, 3 rim
+    int wheel_named = j_looks_like_wheel(mesh_name) || j_looks_like_wheel(node_name);
     if (matn && matn->kind == JK_NUM) {
         mat_i = static_cast<u32>(matn->num);
         const JNode* materials = j_field(d, d->root, "materials");
@@ -1603,6 +1709,9 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
         if (mat) {
             const JNode* am = j_field(d, mat, "alphaMode");
             const JNode* mnm = j_field(d, mat, "name");
+            if (j_looks_like_wheel(mnm)) {
+                wheel_named = 1;
+            }
             if (is_suv_label(out->label)) {
                 if (str_eq(am, "BLEND") || str_has(mnm, "glass") || str_has(mnm, "window") ||
                     str_has(mnm, "windshield") || str_has(mnm, "windscreen") || str_has(mnm, "glaz")) {
@@ -1815,6 +1924,49 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
                         leaf ? "228B22" : "8B4513");
         }
     }
+    if (is_car_label(out->label)) {
+        // Fit the geometry whether or not the names look like wheels. If they do, the
+        // answer is used right here; if they do not, the candidate is kept and judged at
+        // the end of the walk, when the whole car's size and floor are known.
+        u32*        scratch = static_cast<u32*>(std::malloc(sizeof(u32) * pc));
+        CarWheelSet ws{};
+        const bool  fitted =
+            scratch && car_wheel_fit(reinterpret_cast<const float*>(verts),
+                                     sizeof(TreeVert) / sizeof(float), pc, scratch, &ws);
+        std::free(scratch);
+        if (fitted && wheel_named) {
+            pr.wheel_count = ws.count;
+            pr.wheel_axis  = ws.axle_axis;
+            for (int w = 0; w < ws.count; ++w) {
+                pr.wheel_center[w][0] = ws.center[w][0];
+                pr.wheel_center[w][1] = ws.center[w][1];
+                pr.wheel_center[w][2] = ws.center[w][2];
+                pr.wheel_radius[w]    = ws.radius[w];
+                if (ws.radius[w] > out->wheel_radius) {
+                    out->wheel_radius = ws.radius[w];
+                }
+            }
+            ++out->wheel_prim_count;
+            out->wheel_count += static_cast<u32>(ws.count);
+            std::printf("[glb] %s prim %u: WHEEL mesh — %d wheel(s), axle axis %c, radius %.3f m, "
+                        "centres %.2f,%.2f,%.2f%s\n",
+                        out->label, out->nprims, ws.count, "XYZ"[ws.axle_axis < 3 ? ws.axle_axis : 0],
+                        static_cast<double>(ws.radius[0]), static_cast<double>(ws.center[0][0]),
+                        static_cast<double>(ws.center[0][1]), static_cast<double>(ws.center[0][2]),
+                        ws.count > 1 ? " …" : "");
+        } else if (fitted) {
+            if (g_wheel_cand_n < 8u) {
+                WheelCandidate& cand = g_wheel_cand[g_wheel_cand_n++];
+                cand.prim            = out->nprims;
+                cand.set             = ws;
+            }
+        } else if (wheel_named) {
+            std::printf("[glb] %s prim %u: name suggests a wheel but the geometry does not fit "
+                        "one — left static\n",
+                        out->label, out->nprims);
+        }
+        std::fflush(stdout);
+    }
     std::printf("[glb] %s prim %u draw mode=%d nidx=%u nvert=%u tex=%ux%u mask=%d cutoff=%.2f COLOR_0=%s\n",
                 out->label, out->nprims, pr.gl_mode, nidx, pc, pr.tex_w, pr.tex_h, pr.alpha_mask, pr.cutoff,
                 pr.has_color0 ? "YES-ignored" : "NO");
@@ -1976,6 +2128,7 @@ bool load_tree_glb(const char* path, TreeGlb* out) {
         }
         out->label[i] = 0;
     }
+    g_wheel_cand_n = 0; // one model at a time, and the hunt must not leak into the next
     std::printf("[glb] Loading tree model: %s\n", path);
     std::fflush(stdout);
     FILE* f = std::fopen(path, "rb");
@@ -2143,9 +2296,19 @@ bool load_tree_glb(const char* path, TreeGlb* out) {
         }
     }
 
+    // Decide the shape-only wheel candidates now: the walk is done, so the car's floor and
+    // its length/height axes are known, and this is still before attrib 8 is attached.
+    wheel_hunt_finish(out);
+
     glGenBuffers(1, &out->instance_vbo);
     glBindBuffer(GL_ARRAY_BUFFER, out->instance_vbo);
     glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(kTreeInstanceCap * 16 * sizeof(float)), nullptr,
+                 GL_DYNAMIC_DRAW);
+    // One extra float per instance for the wheel spin angle. It is only attached to the
+    // primitives that actually carry wheels, so no other draw ever reads it.
+    glGenBuffers(1, &out->instance_wheel_vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, out->instance_wheel_vbo);
+    glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(kTreeInstanceCap * sizeof(float)), nullptr,
                  GL_DYNAMIC_DRAW);
     for (u32 i = 0; i < out->nprims; ++i) {
         glBindVertexArray(out->prims[i].vao);
@@ -2156,6 +2319,12 @@ bool load_tree_glb(const char* path, TreeGlb* out) {
             glVertexAttribPointer(3 + k, 4, GL_FLOAT, GL_FALSE, static_cast<GLsizei>(stride),
                                   reinterpret_cast<void*>(k * 4 * sizeof(float)));
             glVertexAttribDivisor(3 + k, 1);
+        }
+        if (out->prims[i].wheel_count > 0) {
+            glBindBuffer(GL_ARRAY_BUFFER, out->instance_wheel_vbo);
+            glEnableVertexAttribArray(8);
+            glVertexAttribPointer(8, 1, GL_FLOAT, GL_FALSE, sizeof(float), nullptr);
+            glVertexAttribDivisor(8, 1);
         }
     }
     glBindVertexArray(0);
@@ -2314,10 +2483,25 @@ void tree_glb_shutdown(TreeGlb* t) {
             glDeleteTextures(1, &t->prims[i].tex_emit);
         }
     }
+    if (t->instance_wheel_vbo) {
+        glDeleteBuffers(1, &t->instance_wheel_vbo);
+        t->instance_wheel_vbo = 0;
+    }
     if (t->instance_vbo) {
         glDeleteBuffers(1, &t->instance_vbo);
     }
     std::memset(t, 0, sizeof(*t));
+}
+
+void tree_glb_set_wheel_angles(TreeGlb* t, const float* angles, u32 count) {
+    if (!t || !t->instance_wheel_vbo || !angles) {
+        return;
+    }
+    if (count > kTreeInstanceCap) {
+        count = kTreeInstanceCap;
+    }
+    glBindBuffer(GL_ARRAY_BUFFER, t->instance_wheel_vbo);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(count * sizeof(float)), angles);
 }
 
 void tree_glb_set_instances(TreeGlb* t, const float* mats16, u32 count) {

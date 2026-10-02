@@ -1,5 +1,34 @@
 # Leonida Engine Changelog
 
+## Unreleased — Wheels that spin
+
+### Rendering (`engine/render/CarWheelFit.h`, `TreeGlb.*`, `shaders/tree.vert`)
+- ✅ The car wheels now rotate while driving: `wheel_angle = distance_travelled / wheel_radius`,
+  uploaded as one float per vehicle and applied in the vertex shader, so the extra cost is a
+  float per instance and a handful of uniforms per car primitive — the instanced draws, the
+  two draw calls and the 60 FPS budget are untouched
+- ✅ The wheel radius is measured from the mesh, not assumed: the loader finds the wheel
+  meshes (name/material keywords), fits every cluster of vertices as a disc, and multiplies
+  the fitted radius by the same scale the body uses, so it is a real world radius (the
+  Corolla's tyres come out near the expected 0.3 m)
+- ✅ A primitive is only spun if its geometry actually fits a wheel (thin axle axis, round
+  plane), so bumpers, mirrors and spoilers can never be caught by a name; primitives without
+  wheels pay nothing at all (`uWheelCount == 0`)
+- ✅ Spin direction rolls the tyre, it does not skid it: the contact patch moves backwards
+  along the car's nose, and the sign is derived from the model's own axes, so mirrored
+  meshes and both body yaw offsets come out right
+- ✅ If a car's mesh and material names never say "wheel", the loader falls back to shape:
+  a fitted disc is accepted only when it is thin about the car's width axis *and* its lowest
+  point stands on the model floor, so headlights, mirrors, exhaust tips and a spare tyre in
+  the boot are refused and the fallback cannot spin the wrong part
+- ✅ The shadow pass spins the wheels too (identical uniforms, so the spokes in the shadow
+  turn with the wheel), and both inline fallback shaders carry the same code as the files
+- ✅ Sandbox: 10 new headless checks (fit finds 4 wheels in a merged primitive, refuses a
+  box, the patch rolls backwards through the whole basis+yaw chain for both bodies, and
+  without slipping, plus the floor test) — 39/39
+- ✅ Startup reports what it found: `[glb] … WHEEL mesh …` per wheel primitive and
+  `[cars] … N wheel(s) in M primitive(s) spin about Z, tyre radius 0.29 m world`
+
 ## Unreleased — Citywide traffic with no collisions
 
 ### Traffic (`engine/render/CarTraffic.*`)

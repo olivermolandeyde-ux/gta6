@@ -43,7 +43,7 @@ cmake --build build --target leonida_terrain
 # Native city (100 buildings, street grid, night windows, driving traffic)
 cmake --build build --target leonida_city
 ./build/leonida_city
-# Headless check for the moving traffic circuits (no GPU needed)
+# Headless check for the moving traffic circuits and the wheel maths (no GPU needed)
 cmake --build build --target leonida_city_traffic_sandbox
 ./build/leonida_city_traffic_sandbox
 cmake --build build --target generate_city
