@@ -1330,7 +1330,8 @@ unsigned decode_view_image(const JDoc* d, u32 img, const u8* bin, u32 bin_len, u
 }
 
 bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const u8* bin, u32 bin_len,
-               unsigned* tex_cache, const u32* tex_w, const u32* tex_h, const int* tex_a, u32 ntex) {
+               unsigned* tex_cache, const u32* tex_w, const u32* tex_h, const int* tex_a, u32 ntex,
+               const JNode* mesh_name, const JNode* node_name) {
     if (out->nprims >= kTreePrimCap) {
         std::printf("[glb] WARNING: primitive cap %u hit — extra leaf meshes dropped\n", kTreePrimCap);
         std::fflush(stdout);
@@ -1578,8 +1579,15 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
                            str_has(mnm, "tread")) {
                     suv_part = 2;
                 } else if (str_has(mnm, "rim") || str_has(mnm, "felg") || str_has(mnm, "chrome") ||
-                           str_has(mnm, "hub") || str_has(mnm, "alloy") || str_has(mnm, "spoke")) {
+                           str_has(mnm, "hub") || str_has(mnm, "alloy") || str_has(mnm, "spoke") ||
+                           str_has(mnm, "wheel") || str_has(mnm, "hjul") || str_has(mnm, "disc") ||
+                           str_has(mnm, "brake") || str_has(mnm, "rotor")) {
                     suv_part = 3;
+                } else if (str_has(mesh_name, "wheel") || str_has(mesh_name, "hjul") ||
+                           str_has(mesh_name, "rim") || str_has(mesh_name, "felg") ||
+                           str_has(node_name, "wheel") || str_has(node_name, "hjul") ||
+                           str_has(node_name, "rim") || str_has(node_name, "felg")) {
+                    suv_part = 3; // hub / rim on the wheel mesh
                 }
             }
             const int suv_glass = suv_part == 1;
@@ -1759,8 +1767,8 @@ void walk_node(TreeGlb* out, const JDoc* d, u32 node, const float* parent, const
     float local[16], world[16];
     node_local(d, node, local);
     mat_mul(world, parent, local);
+    const JNode* nn = j_field(d, node, "name");
     {
-        const JNode* nn = j_field(d, node, "name");
         const JNode* mesh_n0 = j_field(d, node, "mesh");
         std::printf("[glb] %s node '%.*s' mesh=%s T=(%.3f,%.3f,%.3f)\n", out->label,
                     nn && nn->kind == JK_STR ? static_cast<int>(nn->slen) : 1, nn && nn->kind == JK_STR ? nn->s : "-",
@@ -1785,7 +1793,7 @@ void walk_node(TreeGlb* out, const JDoc* d, u32 node, const float* parent, const
         std::fflush(stdout);
         if (prims && prims->kind == JK_ARR) {
             for (u32 c = prims->child; c != 0; c = d->nodes[c].next) {
-                emit_prim(out, d, c, world, bin, bin_len, tex_cache, tex_w, tex_h, tex_a, ntex);
+                emit_prim(out, d, c, world, bin, bin_len, tex_cache, tex_w, tex_h, tex_a, ntex, mname, nn);
             }
         }
     }
