@@ -10,7 +10,7 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Dependencies
         run: |
@@ -47,25 +47,35 @@ jobs:
         with:
           name: test-results
           path: test_results.json
+          if-no-files-found: ignore
 
   performance-profiling:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Perf Tools
-        run: sudo apt-get install -y linux-perf
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y linux-tools-common linux-tools-generic || true
+          sudo sysctl -w kernel.perf_event_paranoid=-1 || true
+          perf --version || echo "perf unavailable on this runner — falling back to a plain run"
 
       - name: Build with Debug Symbols
         run: cmake -S . -B build-perf -DCMAKE_BUILD_TYPE=RelWithDebInfo
 
       - name: Run Performance Profile
         run: |
-          perf record -g ./build-perf/leonida_full_sandbox --benchmark --frames 10000
-          perf report --stdio > perf_report.txt
+          if perf record -g -o perf.data ./build-perf/leonida_full_sandbox --benchmark --frames 10000; then
+            perf report --stdio --input perf.data > perf_report.txt
+          else
+            echo "perf sampling unavailable — recorded the sandbox output instead" | tee perf_report.txt
+            ./build-perf/leonida_full_sandbox --benchmark --frames 10000 | tee -a perf_report.txt
+          fi
 
       - name: Upload Performance Report
         uses: actions/upload-artifact@v4
         with:
           name: perf-report
           path: perf_report.txt
+          if-no-files-found: ignore
