@@ -1260,7 +1260,8 @@ void BuildingGlPass::buildMesh(World& world) {
                 return;
             }
             const u32 flip = static_cast<u32>(x * 17.f + z * 31.f) & 1u;
-            const float yaw = along + (flip ? 3.14159265f : 0.f);
+            // AABB longest axis is world +Z; roads need that axis along the street → +90° yaw.
+            const float yaw = along + 1.5707963f + (flip ? 3.14159265f : 0.f);
             corolla_yaw_mat(&corolla_mats[sn * 16], x, y, z, yaw, sc, R);
             corolla_xz[n_corolla_xz * 2u]     = x;
             corolla_xz[n_corolla_xz * 2u + 1] = z;
@@ -1282,6 +1283,7 @@ void BuildingGlPass::buildMesh(World& world) {
             }
         }
         tree_glb_set_instances(&corolla_glb, corolla_mats, sn);
+        std::printf("[cars] Yaw +90 deg so length follows the road\n");
         std::printf("[cars] Parked %u Corolla E80 along roads\n", sn);
         std::fflush(stdout);
     }
