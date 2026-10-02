@@ -517,6 +517,57 @@ int main(int argc, char** argv) {
         expect(car_wheel_on_ground(0.36f, 0.35f, 0.01f, car_h),
                "a wheel one centimetre off the road is still accepted (meshes are never exact)");
 
+        // A brake disc with its caliper, a rim with bolt heads and a hub cap are all part of
+        // the wheel, but the disc test refuses them (that is what keeps bumpers still). The
+        // attach rule matches them to the wheel they are concentric with, so they turn too.
+        {
+            float       centers[4 * 3] = {1.3f, 0.f, -0.75f,   // front left
+                                          1.3f, 0.f, 0.75f,    // front right
+                                          -1.3f, 0.f, -0.75f,  // rear left
+                                          -1.3f, 0.f, 0.75f};  // rear right
+            const float radii[4]       = {0.32f, 0.32f, 0.32f, 0.32f};
+
+            // A brake disc + caliper: compact, concentric, but the caliper sticks out, which
+            // is exactly what car_wheel_fit refuses. Its centre may sit a little off.
+            const float brake_c[3] = {1.30f, 0.02f, -0.72f};
+            const float brake_e[3] = {0.62f, 0.62f, 0.24f};
+            expect(car_wheel_attach_to(brake_c, brake_e, centers, radii, 4) == 0,
+                   "a brake disc with a caliper attaches to the wheel it is concentric with");
+
+            // A rim with bolt heads, same story.
+            const float rim_c[3] = {-1.28f, 0.01f, 0.76f};
+            const float rim_e[3] = {0.60f, 0.60f, 0.22f};
+            expect(car_wheel_attach_to(rim_c, rim_e, centers, radii, 4) == 3,
+                   "a rim with bolt heads attaches to its own wheel, not a neighbour");
+
+            // A hub cap: small and exactly concentric.
+            const float cap_c[3] = {1.30f, 0.00f, 0.75f};
+            const float cap_e[3] = {0.30f, 0.30f, 0.10f};
+            expect(car_wheel_attach_to(cap_c, cap_e, centers, radii, 4) == 1,
+                   "a hub cap attaches to its own wheel");
+
+            // But a fender, a sill or a whole underside is metres wide: never attached,
+            // however close its centre happens to be.
+            const float fender_c[3] = {1.30f, 0.30f, -0.75f};
+            const float fender_e[3] = {1.60f, 0.70f, 1.90f};
+            expect(car_wheel_attach_to(fender_c, fender_e, centers, radii, 4) == -1,
+                   "a fender is refused even though it sits over a wheel");
+            const float floor_c[3] = {0.00f, -0.20f, 0.00f};
+            const float floor_e[3] = {4.60f, 0.20f, 1.80f};
+            expect(car_wheel_attach_to(floor_c, floor_e, centers, radii, 4) == -1,
+                   "a whole underside is refused");
+
+            // Something small, but nowhere near a wheel: a headlight, a mirror, a badge.
+            const float lamp_c[3] = {2.20f, 0.65f, -1.00f};
+            const float lamp_e[3] = {0.30f, 0.20f, 0.30f};
+            expect(car_wheel_attach_to(lamp_c, lamp_e, centers, radii, 4) == -1,
+                   "a compact part that is not concentric with a wheel stays static");
+
+            // No wheel found at all: nothing can be attached, and nothing crashes.
+            expect(car_wheel_attach_to(brake_c, brake_e, centers, radii, 0u) == -1,
+                   "with no fitted wheel there is nothing to attach to");
+        }
+
         // Both axle conventions must be handled: a model authored with its length on Z and
         // width on X is the mirror image, and its wheel sign has to mirror with it.
         expect(car_wheel_roll_dir(2, 1, 0) == car_wheel_roll_dir(fwd, up, axle) * -1.f,

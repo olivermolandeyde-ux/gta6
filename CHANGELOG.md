@@ -21,13 +21,19 @@
   a fitted disc is accepted only when it is thin about the car's width axis *and* its lowest
   point stands on the model floor, so headlights, mirrors, exhaust tips and a spare tyre in
   the boot are refused and the fallback cannot spin the wrong part
+- ✅ Wheel parts whose geometry is not a clean disc — a brake disc with its caliper, a rim
+  with bolt heads, a hub cap — used to be refused and left static, so a spinning tyre had a
+  frozen rim inside it. The name still says they belong to the wheel, so they are now
+  matched to the wheel they are concentric with and spin with it: same centre, same axis,
+  same per-vehicle angle as the tyre. A part that is metres wide (a fender, a sill, a whole
+  underside) or that is not concentric with a wheel is still refused, so nothing else moves
 - ✅ The shadow pass spins the wheels too (identical uniforms, so the spokes in the shadow
   turn with the wheel), and both inline fallback shaders carry the same code as the files
-- ✅ Sandbox: 10 new headless checks (fit finds 4 wheels in a merged primitive, refuses a
+- ✅ Sandbox: 17 new headless checks (fit finds 4 wheels in a merged primitive, refuses a
   box, the patch rolls backwards through the whole basis+yaw chain for both bodies, and
-  without slipping, plus the floor test) — 39/39
+  without slipping, plus the floor test and the attach rule) — 46/46
 - ✅ Startup reports what it found: `[glb] … WHEEL mesh …` per wheel primitive and
-  `[cars] … N wheel(s) in M primitive(s) spin about Z, tyre radius 0.29 m world`
+  `[cars] … N wheel part(s) in M primitive(s) spin about Z, tyre radius 0.29 m world, roll -1`
 
 ## Unreleased — Citywide traffic with no collisions
 

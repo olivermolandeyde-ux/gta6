@@ -1119,84 +1119,169 @@ struct WheelCandidate {
 WheelCandidate g_wheel_cand[8];
 u32            g_wheel_cand_n = 0;
 
-void wheel_hunt_finish(TreeGlb* out) {
-    if (g_wheel_cand_n == 0u || !out) {
+// Parts of a wheel assembly whose geometry is not a clean disc, so car_wheel_fit refused
+// them: a brake disc with its caliper, a rim with bolt heads, a hub cap. The name still
+// says they belong to the wheel, and they must turn with it rather than sit still inside a
+// spinning tyre, so they are matched to the nearest fitted wheel at the end of the walk.
+struct WheelAttach {
+    u32   prim;
+    float center[3];
+    float extent[3];
+};
+
+WheelAttach g_wheel_attach[8];
+u32         g_wheel_attach_n = 0;
+
+// Attach the non-disc wheel parts (brake discs with calipers, rims with bolts, hub caps)
+// to the wheels that did pass the disc test. The shader then spins them with the tyre:
+// they read the same per-vehicle angle, at the same radius, about the same centre.
+void wheel_hunt_attach(TreeGlb* out) {
+    if (!out || g_wheel_attach_n == 0u) {
         return;
     }
-    const float e[3] = {out->xmax - out->xmin, out->ymax - out->ymin, out->zmax - out->zmin};
-    // The same roles corolla_basis uses at draw time: longest = length, shortest = height.
-    int fwd = 0;
-    if (e[1] > e[fwd]) {
-        fwd = 1;
-    }
-    if (e[2] > e[fwd]) {
-        fwd = 2;
-    }
-    int up = (fwd == 0) ? 1 : 0;
-    for (int i = 0; i < 3; ++i) {
-        if (i != fwd && e[i] < e[up]) {
-            up = i;
+    // Every wheel a disc test has already accepted, whether it was found by name or by shape.
+    float centers[32 * 3];
+    float radii[32];
+    int   axes[32];
+    u32   nf = 0;
+    for (u32 p = 0; p < out->nprims; ++p) {
+        const TreePrim& pr = out->prims[p];
+        for (int w = 0; w < pr.wheel_count && w < 4; ++w) {
+            if (nf >= 32u) {
+                break;
+            }
+            centers[3u * nf + 0u] = pr.wheel_center[w][0];
+            centers[3u * nf + 1u] = pr.wheel_center[w][1];
+            centers[3u * nf + 2u] = pr.wheel_center[w][2];
+            radii[nf]             = pr.wheel_radius[w];
+            axes[nf]              = pr.wheel_axis;
+            ++nf;
         }
     }
-    const int   right    = 3 - fwd - up;
-    const float floor_up = (up == 0) ? out->xmin : (up == 1) ? out->ymin : out->zmin;
-    u32         taken = 0;
-    u32         refused_axis = 0;
-    u32         refused_floor = 0;
-    for (u32 c = 0; c < g_wheel_cand_n; ++c) {
-        const WheelCandidate& cand = g_wheel_cand[c];
-        if (cand.prim >= out->nprims) {
+    u32 attached = 0;
+    for (u32 c = 0; c < g_wheel_attach_n; ++c) {
+        const WheelAttach& at = g_wheel_attach[c];
+        if (at.prim >= out->nprims) {
             continue;
         }
-        TreePrim* pr = &out->prims[cand.prim];
+        TreePrim* pr = &out->prims[at.prim];
         if (pr->wheel_count > 0) {
             continue;
         }
-        if (cand.set.axle_axis != right) {
-            ++refused_axis;
+        const int hit = car_wheel_attach_to(at.center, at.extent, centers, radii, nf);
+        if (hit < 0) {
+            std::printf("[glb] %s prim %u: no fitted wheel is concentric with it — left static\n",
+                        out->label, at.prim);
             continue;
         }
-        bool on_floor = true;
-        for (int w = 0; w < cand.set.count; ++w) {
-            if (!car_wheel_on_ground(cand.set.center[w][up], cand.set.radius[w], floor_up, e[up])) {
-                on_floor = false;
-            }
-        }
-        if (!on_floor) {
-            ++refused_floor;
-            continue;
-        }
-        pr->wheel_count = cand.set.count;
-        pr->wheel_axis  = cand.set.axle_axis;
-        for (int w = 0; w < cand.set.count; ++w) {
-            pr->wheel_center[w][0] = cand.set.center[w][0];
-            pr->wheel_center[w][1] = cand.set.center[w][1];
-            pr->wheel_center[w][2] = cand.set.center[w][2];
-            pr->wheel_radius[w]    = cand.set.radius[w];
-            if (cand.set.radius[w] > out->wheel_radius) {
-                out->wheel_radius = cand.set.radius[w];
-            }
-        }
+        pr->wheel_count        = 1;
+        pr->wheel_axis         = axes[hit];
+        pr->wheel_center[0][0] = centers[3u * hit + 0u];
+        pr->wheel_center[0][1] = centers[3u * hit + 1u];
+        pr->wheel_center[0][2] = centers[3u * hit + 2u];
+        pr->wheel_radius[0]    = radii[hit];
         ++out->wheel_prim_count;
-        out->wheel_count += static_cast<u32>(cand.set.count);
-        ++taken;
-        std::printf("[glb] %s prim %u: WHEEL mesh found by shape — %d wheel(s), axle axis %c, "
-                    "radius %.3f, centre %.2f,%.2f,%.2f (the names never say \"wheel\")\n",
-                    out->label, cand.prim, cand.set.count,
-                    "XYZ"[cand.set.axle_axis < 3 ? cand.set.axle_axis : 0],
-                    static_cast<double>(cand.set.radius[0]),
-                    static_cast<double>(cand.set.center[0][0]),
-                    static_cast<double>(cand.set.center[0][1]),
-                    static_cast<double>(cand.set.center[0][2]));
+        ++out->wheel_count;
+        ++attached;
+        std::printf("[glb] %s prim %u: turning with the wheel at %.2f,%.2f,%.2f (radius %.3f) — "
+                    "same angle as the tyre\n",
+                    out->label, at.prim, static_cast<double>(centers[3u * hit + 0u]),
+                    static_cast<double>(centers[3u * hit + 1u]),
+                    static_cast<double>(centers[3u * hit + 2u]), static_cast<double>(radii[hit]));
     }
-    if (taken == 0u) {
-        std::printf("[glb] %s: nothing matched by name and all %u shape candidate(s) were refused "
-                    "(%u with the wrong axle axis, %u not standing on the ground) — the wheels stay "
-                    "static\n",
-                    out->label, g_wheel_cand_n, refused_axis, refused_floor);
+    if (attached > 0u) {
+        std::printf("[glb] %s: %u wheel part(s) that the disc test refused now spin with the tyre\n",
+                    out->label, attached);
     }
-    g_wheel_cand_n = 0;
+    g_wheel_attach_n = 0;
     std::fflush(stdout);
+}
+
+void wheel_hunt_finish(TreeGlb* out) {
+    if (!out) {
+        return;
+    }
+    if (g_wheel_cand_n > 0u) {
+
+        if (g_wheel_cand_n == 0u || !out) {
+            return;
+        }
+        const float e[3] = {out->xmax - out->xmin, out->ymax - out->ymin, out->zmax - out->zmin};
+        // The same roles corolla_basis uses at draw time: longest = length, shortest = height.
+        int fwd = 0;
+        if (e[1] > e[fwd]) {
+            fwd = 1;
+        }
+        if (e[2] > e[fwd]) {
+            fwd = 2;
+        }
+        int up = (fwd == 0) ? 1 : 0;
+        for (int i = 0; i < 3; ++i) {
+            if (i != fwd && e[i] < e[up]) {
+                up = i;
+            }
+        }
+        const int   right    = 3 - fwd - up;
+        const float floor_up = (up == 0) ? out->xmin : (up == 1) ? out->ymin : out->zmin;
+        u32         taken = 0;
+        u32         refused_axis = 0;
+        u32         refused_floor = 0;
+        for (u32 c = 0; c < g_wheel_cand_n; ++c) {
+            const WheelCandidate& cand = g_wheel_cand[c];
+            if (cand.prim >= out->nprims) {
+                continue;
+            }
+            TreePrim* pr = &out->prims[cand.prim];
+            if (pr->wheel_count > 0) {
+                continue;
+            }
+            if (cand.set.axle_axis != right) {
+                ++refused_axis;
+                continue;
+            }
+            bool on_floor = true;
+            for (int w = 0; w < cand.set.count; ++w) {
+                if (!car_wheel_on_ground(cand.set.center[w][up], cand.set.radius[w], floor_up, e[up])) {
+                    on_floor = false;
+                }
+            }
+            if (!on_floor) {
+                ++refused_floor;
+                continue;
+            }
+            pr->wheel_count = cand.set.count;
+            pr->wheel_axis  = cand.set.axle_axis;
+            for (int w = 0; w < cand.set.count; ++w) {
+                pr->wheel_center[w][0] = cand.set.center[w][0];
+                pr->wheel_center[w][1] = cand.set.center[w][1];
+                pr->wheel_center[w][2] = cand.set.center[w][2];
+                pr->wheel_radius[w]    = cand.set.radius[w];
+                if (cand.set.radius[w] > out->wheel_radius) {
+                    out->wheel_radius = cand.set.radius[w];
+                }
+            }
+            ++out->wheel_prim_count;
+            out->wheel_count += static_cast<u32>(cand.set.count);
+            ++taken;
+            std::printf("[glb] %s prim %u: WHEEL mesh found by shape — %d wheel(s), axle axis %c, "
+                        "radius %.3f, centre %.2f,%.2f,%.2f (the names never say \"wheel\")\n",
+                        out->label, cand.prim, cand.set.count,
+                        "XYZ"[cand.set.axle_axis < 3 ? cand.set.axle_axis : 0],
+                        static_cast<double>(cand.set.radius[0]),
+                        static_cast<double>(cand.set.center[0][0]),
+                        static_cast<double>(cand.set.center[0][1]),
+                        static_cast<double>(cand.set.center[0][2]));
+        }
+        if (taken == 0u) {
+            std::printf("[glb] %s: nothing matched by name and all %u shape candidate(s) were refused "
+                        "(%u with the wrong axle axis, %u not standing on the ground) — the wheels stay "
+                        "static\n",
+                        out->label, g_wheel_cand_n, refused_axis, refused_floor);
+        }
+        g_wheel_cand_n = 0;
+        std::fflush(stdout);
+    }
+    wheel_hunt_attach(out);
 }
 
 unsigned fail_red_tex() {
@@ -1961,9 +2046,36 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
                 cand.set             = ws;
             }
         } else if (wheel_named) {
-            std::printf("[glb] %s prim %u: name suggests a wheel but the geometry does not fit "
-                        "one — left static\n",
-                        out->label, out->nprims);
+            // Named like a wheel but not a clean disc: a brake disc with its caliper, a rim
+            // with bolt heads, a hub cap. Park it with its own bounds and match it to the
+            // nearest fitted wheel once the whole car has been walked, so it turns too
+            // instead of sitting still inside a spinning tyre.
+            if (g_wheel_attach_n < 8u) {
+                WheelAttach& at = g_wheel_attach[g_wheel_attach_n++];
+                at.prim         = out->nprims;
+                float mn[3]     = {1.0e30f, 1.0e30f, 1.0e30f};
+                float mx[3]     = {-1.0e30f, -1.0e30f, -1.0e30f};
+                const u32 stride = static_cast<u32>(sizeof(TreeVert) / sizeof(float));
+                for (u32 i = 0; i < pc; ++i) {
+                    const float* p = reinterpret_cast<const float*>(verts) +
+                                     static_cast<usize>(i) * stride;
+                    for (int k = 0; k < 3; ++k) {
+                        if (p[k] < mn[k]) {
+                            mn[k] = p[k];
+                        }
+                        if (p[k] > mx[k]) {
+                            mx[k] = p[k];
+                        }
+                    }
+                }
+                for (int k = 0; k < 3; ++k) {
+                    at.center[k] = 0.5f * (mn[k] + mx[k]);
+                    at.extent[k] = mx[k] - mn[k];
+                }
+                std::printf("[glb] %s prim %u: name says wheel, geometry is not a clean disc — "
+                            "matching it to the nearest fitted wheel\n",
+                            out->label, out->nprims);
+            }
         }
         std::fflush(stdout);
     }
@@ -2129,6 +2241,7 @@ bool load_tree_glb(const char* path, TreeGlb* out) {
         out->label[i] = 0;
     }
     g_wheel_cand_n = 0; // one model at a time, and the hunt must not leak into the next
+    g_wheel_attach_n = 0;
     std::printf("[glb] Loading tree model: %s\n", path);
     std::fflush(stdout);
     FILE* f = std::fopen(path, "rb");

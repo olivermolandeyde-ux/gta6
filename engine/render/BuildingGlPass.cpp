@@ -1327,11 +1327,17 @@ void BuildingGlPass::buildMesh(World& world) {
                 continue;
             }
             car_wheel_radius[m] = g->wheel_radius * car_scale[m];
+            int   wheel_axis_log = -1;
+            float wheel_roll_log = 0.f;
             for (u32 p = 0; p < g->nprims; ++p) {
                 TreePrim& pr = g->prims[p];
                 if (pr.wheel_count > 0) {
                     pr.wheel_roll = car_wheel_roll_dir(car_fwd_axis[m], car_up_axis[m],
                                                        pr.wheel_axis);
+                    if (wheel_axis_log < 0) {
+                        wheel_axis_log = pr.wheel_axis; // the tyre primitive, not prim 0
+                        wheel_roll_log = pr.wheel_roll;
+                    }
                 }
             }
             if (g->wheel_prim_count == 0u) {
@@ -1340,10 +1346,11 @@ void BuildingGlPass::buildMesh(World& world) {
                             "other names, those names are what j_looks_like_wheel needs.\n",
                             m == 0u ? "Corolla E80" : "sports car");
             } else {
-                std::printf("[cars] %s: %u wheel(s) in %u primitive(s) spin about %c, tyre radius "
-                            "%.3f m world\n",
+                std::printf("[cars] %s: %u wheel part(s) in %u primitive(s) spin about %c, tyre "
+                            "radius %.3f m world, roll %+.0f\n",
                             m == 0u ? "Corolla E80" : "sports car", g->wheel_count, g->wheel_prim_count,
-                            "XYZ"[g->prims[0].wheel_axis & 3], static_cast<double>(car_wheel_radius[m]));
+                            "XYZ"[wheel_axis_log & 3], static_cast<double>(car_wheel_radius[m]),
+                            static_cast<double>(wheel_roll_log));
             }
             std::fflush(stdout);
         }

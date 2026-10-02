@@ -218,6 +218,55 @@ inline int argmin3(const float e[3]) {
     return std::fabs(bottom - floor_up) <= tol;
 }
 
+// Which fitted wheel does a primitive belong to, when the strict disc test refused it?
+//
+// A brake disc with its caliper, a rim with bolt heads, a hub cap and an upright are all
+// part of the wheel assembly, but they are not clean discs — a caliper sticking out, hex
+// bolts, a strut — and car_wheel_fit rejects exactly that on purpose, because it must
+// never spin a bumper. Such a primitive can still be spun safely when it is small and
+// concentric with a wheel whose disc test did pass: then it belongs to that wheel and has
+// to turn with it, at the same angle as the tyre.
+//
+// Returns the index of the fitted wheel to spin it about, or -1 to leave it static.
+// `centers` holds three floats per fitted wheel, `radii` one.
+[[nodiscard]] inline int car_wheel_attach_to(const float prim_center[3], const float prim_extent[3],
+                                             const float* centers, const float* radii, u32 n) {
+    if (!prim_center || !prim_extent || !centers || !radii || n == 0u) {
+        return -1;
+    }
+    int   best   = -1;
+    float best_d = 0.f;
+    for (u32 i = 0; i < n; ++i) {
+        if (radii[i] <= 1.0e-6f) {
+            continue;
+        }
+        const float dx = prim_center[0] - centers[3u * i + 0u];
+        const float dy = prim_center[1] - centers[3u * i + 1u];
+        const float dz = prim_center[2] - centers[3u * i + 2u];
+        const float d  = std::sqrt(dx * dx + dy * dy + dz * dz);
+        // Concentric, or a caliper's worth of offset — never a body panel down the street.
+        if (d <= radii[i] && (best < 0 || d < best_d)) {
+            best   = static_cast<int>(i);
+            best_d = d;
+        }
+    }
+    if (best < 0) {
+        return -1;
+    }
+    // And small enough to be one wheel's worth of parts. A whole underside, a fender or a
+    // sill spans metres and would be dragged around by the rotation.
+    float ext = prim_extent[0];
+    for (int k = 1; k < 3; ++k) {
+        if (prim_extent[k] > ext) {
+            ext = prim_extent[k];
+        }
+    }
+    if (ext > 3.5f * radii[best]) {
+        return -1;
+    }
+    return best;
+}
+
 // Sign that turns a forward-travelling angle into the model-space spin direction.
 //
 // While the car drives forward, the contact patch — the bottom of the tyre, the part that
