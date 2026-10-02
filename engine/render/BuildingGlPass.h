@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/Types.h"
+#include "render/CarTraffic.h"
 #include "render/TreeGlb.h"
 
 namespace engine {
@@ -26,8 +27,16 @@ struct BuildingGlPass {
     TreeGlb  tree_glb[kTreeKindCount];
     TreeGlb  sky_glb; // custom downtown skyscraper-2.glb
     TreeGlb  lamp_glb[kLampKindCount]; // klassisk, moderne
-    TreeGlb  corolla_glb;              // low-poly_toyota_corolla_e80_sedan.glb parked on asphalt
+    TreeGlb  corolla_glb;              // low-poly_toyota_corolla_e80_sedan.glb, instanced per frame
     TreeGlb  sports_glb;               // low_poly_sports_car__game_ready_vehicle.glb
+    // Moving traffic: circuits, agent state, and the per-frame instance matrices.
+    CarTraffic car_traffic;
+    bool       car_traffic_live;
+    float      car_clock;
+    float      car_basis[2][9]; // model → world basis, [0] Corolla, [1] sports
+    float      car_scale[2];
+    float      car_y[2];        // model origin height, so wheels sit on the road
+    float      car_mats[2][kCarAgentCap * 16];
     unsigned glow_prog, glow_vao, glow_vbo, glow_ibo, glow_ivbo, glow_nidx;
     u32      glow_count;
     unsigned street_count;
@@ -36,6 +45,7 @@ struct BuildingGlPass {
 
     bool init();
     void buildMesh(World& world);
+    void update_car_instances(float clock_s);
     void draw(World& world, float3 camera_pos, float3 camera_target, int width, int height,
               float time_of_day, float3 sun_dir, float clock_s);
     void shutdown();

@@ -9,7 +9,7 @@ A C++20 open-world simulation core built from scratch. No generic `Prop` / `Acto
   ██╔═══╝ ██╔══██╗██║   ██║██   ██║██╔══╝  ██║        ██║
   ██║     ██║  ██║╚██████╔╝╚█████╔╝███████╗╚██████╗   ██║
   ╚═╝     ╚═╝  ╚═╝ ╚═════╝  ╚════╝ ╚══════╝ ╚═════╝   ╚═╝
-  PHASE 19 — Procedural city · streets · window lighting · SDL2/GL
+  PHASE 20 — Procedural city · driving traffic · window lighting · SDL2/GL
 ```
 
 ## Architecture
@@ -40,9 +40,12 @@ cmake --build build
 # Native terrain (SDL2 + OpenGL 3.3). macOS: brew install sdl2
 cmake --build build --target leonida_terrain
 ./build/leonida_terrain
-# Native city (100 buildings, street grid, night windows)
+# Native city (100 buildings, street grid, night windows, driving traffic)
 cmake --build build --target leonida_city
 ./build/leonida_city
+# Headless check for the moving traffic circuits (no GPU needed)
+cmake --build build --target leonida_city_traffic_sandbox
+./build/leonida_city_traffic_sandbox
 cmake --build build --target generate_city
 cmake --build build --target run_full_sandbox
 ```

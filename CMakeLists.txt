@@ -133,8 +133,9 @@ if(APPLE)
         "-framework Metal -framework QuartzCore -framework Cocoa")
 endif()
 
-# Native terrain viewer: SDL2 + OpenGL 3.3 (no Metal).
-find_package(OpenGL REQUIRED)
+# Native terrain viewer: SDL2 + OpenGL 3.3 (no Metal). Both are optional so the
+# engine, the sandboxes and CI keep building on machines without SDL2/GL headers.
+find_package(OpenGL QUIET)
 find_package(SDL2 QUIET)
 if(NOT SDL2_FOUND)
     find_path(SDL2_INCLUDE_DIR SDL.h
@@ -157,6 +158,13 @@ if(NOT SDL2_FOUND)
     endif()
 endif()
 
+if(NOT (SDL2_FOUND AND OpenGL_FOUND))
+    message(STATUS
+        "SDL2/OpenGL not found — skipping leonida_terrain and leonida_city "
+        "(macOS: brew install sdl2; Debian/Ubuntu: apt-get install libsdl2-dev libgl1-mesa-dev)")
+endif()
+
+if(SDL2_FOUND AND OpenGL_FOUND)
 add_executable(leonida_terrain
     sandbox/TerrainSandbox.cpp
     engine/render/SdlGlWindow.cpp
@@ -173,8 +181,7 @@ elseif(SDL2_FOUND)
     target_include_directories(leonida_terrain PRIVATE ${SDL2_INCLUDE_DIR})
     target_link_libraries(leonida_terrain PRIVATE ${SDL2_LIBRARY})
 else()
-    message(FATAL_ERROR
-        "SDL2 is required for leonida_terrain. macOS: brew install sdl2")
+    message(FATAL_ERROR "SDL2 detected without include/library paths")
 endif()
 if(APPLE)
     target_link_libraries(leonida_terrain PRIVATE "-framework OpenGL")
@@ -182,6 +189,7 @@ endif()
 
 add_executable(leonida_city
     sandbox/CitySandbox.cpp
+    engine/render/CarTraffic.cpp
     engine/render/SdlGlWindow.cpp
     engine/render/TerrainGlPass.cpp
     engine/render/BuildingGlPass.cpp
@@ -199,13 +207,20 @@ elseif(SDL2_FOUND)
     target_include_directories(leonida_city PRIVATE ${SDL2_INCLUDE_DIR})
     target_link_libraries(leonida_city PRIVATE ${SDL2_LIBRARY})
 else()
-    message(FATAL_ERROR
-        "SDL2 is required for leonida_city. macOS: brew install sdl2")
+    message(FATAL_ERROR "SDL2 detected without include/library paths")
 endif()
 if(APPLE)
     target_link_libraries(leonida_city PRIVATE
         "-framework OpenGL" "-framework ImageIO" "-framework CoreGraphics" "-framework CoreFoundation")
 endif()
+endif() # SDL2_FOUND AND OpenGL_FOUND
+
+# Moving-traffic circuit maths: runs everywhere, no SDL2/GL needed.
+add_executable(leonida_city_traffic_sandbox
+    sandbox/CityTrafficSandbox.cpp
+    engine/render/CarTraffic.cpp
+)
+target_link_libraries(leonida_city_traffic_sandbox PRIVATE leonida_core)
 
 add_executable(leonida_full_sandbox
     sandbox/FullIntegrationSandbox.cpp
@@ -302,8 +317,10 @@ endif()
 
 if(EXISTS "${CMAKE_SOURCE_DIR}/assets")
     file(COPY ${CMAKE_SOURCE_DIR}/assets DESTINATION ${CMAKE_BINARY_DIR})
-    add_custom_command(TARGET leonida_city POST_BUILD
+    if(TARGET leonida_city)
+        add_custom_command(TARGET leonida_city POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
                 ${CMAKE_SOURCE_DIR}/assets ${CMAKE_BINARY_DIR}/assets
-        COMMENT "Copy assets/ into the build directory")
+            COMMENT "Copy assets/ into the build directory")
+    endif()
 endif()

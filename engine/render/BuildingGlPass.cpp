@@ -722,6 +722,12 @@ bool BuildingGlPass::init() {
     std::memset(lamp_glb, 0, sizeof(lamp_glb));
     std::memset(&corolla_glb, 0, sizeof(corolla_glb));
     std::memset(&sports_glb, 0, sizeof(sports_glb));
+    std::memset(&car_traffic, 0, sizeof(car_traffic));
+    car_traffic_live = false;
+    car_clock        = 0.f;
+    std::memset(car_basis, 0, sizeof(car_basis));
+    std::memset(car_scale, 0, sizeof(car_scale));
+    std::memset(car_y, 0, sizeof(car_y));
     glow_prog = glow_vao = glow_vbo = glow_ibo = glow_ivbo = glow_nidx = 0;
     glow_count = 0;
     cube_vao = cube_vbo = cube_ibo = 0;
@@ -1262,96 +1268,74 @@ void BuildingGlPass::buildMesh(World& world) {
     (void)skip_tree;
 #endif
     if (corolla_glb.nprims > 0 || sports_glb.nprims > 0) {
-        static float corolla_mats[kCorollaSpawnCap * 16];
-        static float sports_mats[kSportsSpawnCap * 16];
-        static float car_xz[(kCorollaSpawnCap + kSportsSpawnCap) * 2];
-        u32 n_corolla = 0;
-        u32 n_sports  = 0;
-        u32 n_xz      = 0;
-        float Rc[9];
-        float Rs[9];
+        // The models keep their accepted scale/orientation; the traffic plan only hands
+        // out a lane position and a heading, which are turned into matrices every frame.
         if (corolla_glb.nprims > 0) {
-            corolla_basis(&corolla_glb, Rc);
+            corolla_basis(&corolla_glb, car_basis[0]);
+            car_scale[0] = corolla_fit_scale(&corolla_glb);
+            car_y[0] =
+                kCityPlateauY + 0.30f - corolla_model_ymin(&corolla_glb, car_basis[0]) * car_scale[0];
         }
         if (sports_glb.nprims > 0) {
-            corolla_basis(&sports_glb, Rs);
+            corolla_basis(&sports_glb, car_basis[1]);
+            car_scale[1] = corolla_fit_scale(&sports_glb);
+            car_y[1] =
+                kCityPlateauY + 0.30f - corolla_model_ymin(&sports_glb, car_basis[1]) * car_scale[1];
         }
-        const float sc_c = corolla_fit_scale(&corolla_glb);
-        const float sc_s = corolla_fit_scale(&sports_glb);
-        const float y0c  = (corolla_glb.nprims > 0) ? corolla_model_ymin(&corolla_glb, Rc) : 0.f;
-        const float y0s  = (sports_glb.nprims > 0) ? corolla_model_ymin(&sports_glb, Rs) : 0.f;
-        const float yc   = kCityPlateauY + 0.30f - y0c * sc_c; // road top + 0.05 m
-        const float ys   = kCityPlateauY + 0.30f - y0s * sc_s;
-        const float park = 7.2f; // curb lane on 20 m asphalt, not the 11.5 m sidewalk
-        const u32   corolla_cap = (sports_glb.nprims > 0) ? 20u : kCorollaSpawnCap;
-        const u32   total_cap   = corolla_cap + ((sports_glb.nprims > 0) ? kSportsSpawnCap : 0u);
-        auto push_car = [&](float x, float z, float along) {
-            if (n_corolla + n_sports >= total_cap) {
-                return;
-            }
-            const float nx = std::round(x / kCityBlockPitch) * kCityBlockPitch;
-            const float nz = std::round(z / kCityBlockPitch) * kCityBlockPitch;
-            const float dx = x - nx;
-            const float dz = z - nz;
-            if (dx * dx + dz * dz < 15.f * 15.f) {
-                return;
-            }
-            if (xz_too_close(x, z, car_xz, n_xz, 8.0f)) {
-                return;
-            }
-            const u32 flip = static_cast<u32>(x * 17.f + z * 31.f) & 1u;
-            // AABB longest axis is world +Z; roads need that axis along the street → +90° yaw.
-            const float yaw = along + 1.5707963f + (flip ? 3.14159265f : 0.f);
-            const int corolla_ok = (corolla_glb.nprims > 0 && n_corolla < corolla_cap) ? 1 : 0;
-            const int sports_ok  = (sports_glb.nprims > 0 && n_sports < kSportsSpawnCap) ? 1 : 0;
-            int use_sports = 0;
-            if (sports_ok && corolla_ok) {
-                const u32 h = static_cast<u32>(x * 13.f + z * 29.f);
-                if ((h % 3u) == 0u || n_corolla >= corolla_cap) {
-                    use_sports = 1;
-                }
-            } else if (sports_ok) {
-                use_sports = 1;
-            } else if (!corolla_ok) {
-                return;
-            }
-            if (use_sports) {
-                // Sports mesh forward is opposite the Corolla after AABB — +180° yaw.
-                corolla_yaw_mat(&sports_mats[n_sports * 16], x, ys, z, yaw + 3.14159265f, sc_s, Rs);
-                ++n_sports;
-            } else {
-                corolla_yaw_mat(&corolla_mats[n_corolla * 16], x, yc, z, yaw, sc_c, Rc);
-                ++n_corolla;
-            }
-            car_xz[n_xz * 2u]     = x;
-            car_xz[n_xz * 2u + 1] = z;
-            ++n_xz;
-        };
-        for (u32 j = 0; j <= kCityBlocks && n_corolla + n_sports < total_cap; ++j) {
-            const float z = static_cast<float>(j) * kCityBlockPitch;
-            for (float x = 80.f; x < kCityExtentM - 80.f && n_corolla + n_sports < total_cap; x += 48.f) {
-                const float side = (static_cast<u32>(x) % 96u < 48u) ? park : -park;
-                push_car(x, z + side, 0.f);
-            }
+        car_traffic_build(&car_traffic, kCityBlockPitch, corolla_glb.nprims > 0 ? 1u : 0u,
+                          sports_glb.nprims > 0 ? 1u : 0u);
+        if (car_traffic.agent_count > 0) {
+            car_traffic_live = true;
+            car_clock        = 0.f;
+            update_car_instances(0.f); // the first frame already has traffic on the streets
+            const float kmh = (car_traffic.rings[0].perimeter / kCarLapPeriodS) * 3.6f;
+            std::printf("[cars] Traffic: %u circuits of %.0f m, %u vehicles driving (%.0f km/h)\n",
+                        car_traffic.ring_count, static_cast<double>(car_traffic.rings[0].perimeter),
+                        car_traffic.agent_count, static_cast<double>(kmh));
+            std::printf("[cars] Traffic: %.1f m lanes, %.1f m left turns, %u Corolla + %u sports, "
+                        "re-uploaded every frame\n",
+                        static_cast<double>(kCarLaneOffset), static_cast<double>(kCarCornerRadius),
+                        car_traffic.mesh_count[0], car_traffic.mesh_count[1]);
+            std::printf("[cars] Traffic: circuits follow the avenue at x = 1200 m, z = 0-960 m "
+                        "that the sandbox camera starts on\n");
+            std::fflush(stdout);
         }
-        for (u32 i = 0; i <= kCityBlocks && n_corolla + n_sports < total_cap; ++i) {
-            const float x = static_cast<float>(i) * kCityBlockPitch;
-            for (float z = 80.f; z < kCityExtentM - 80.f && n_corolla + n_sports < total_cap; z += 48.f) {
-                const float side = (static_cast<u32>(z) % 96u < 48u) ? park : -park;
-                push_car(x + side, z, 1.5707963f);
-            }
+    }
+}
+
+void BuildingGlPass::update_car_instances(float clock_s) {
+    if (!car_traffic_live) {
+        return;
+    }
+    float dt = clock_s - car_clock;
+    if (dt < 0.f || dt > 0.25f) {
+        dt = 0.f; // first frame, or a long stall: never teleport the fleet
+    }
+    car_clock = clock_s;
+    car_traffic_step(&car_traffic, dt);
+
+    u32 n[2] = {0u, 0u};
+    for (u32 i = 0; i < car_traffic.agent_count; ++i) {
+        const CarAgent& a = car_traffic.agents[i];
+        float x = 0.f, z = 0.f, yaw = 0.f;
+        car_ring_pose(&car_traffic.rings[a.ring], a.s, &x, &z, &yaw);
+        const u32 m = a.mesh == 1u ? 1u : 0u;
+        if (n[m] >= kCarAgentCap) {
+            continue;
         }
-        if (n_corolla > 0) {
-            tree_glb_set_instances(&corolla_glb, corolla_mats, n_corolla);
-        }
-        if (n_sports > 0) {
-            tree_glb_set_instances(&sports_glb, sports_mats, n_sports);
-        }
-        std::printf("[cars] Applied +90° yaw to face along road\n");
-        std::printf("[cars] Sports cars rotated 180° to match traffic flow\n");
-        std::printf("[cars] Parked %u Corolla E80 along roads\n", n_corolla);
-        std::printf("[cars] Parked %u sports cars along roads\n", n_sports);
-        std::fflush(stdout);
+        // The sports mesh forward axis is opposite the Corolla after the AABB basis.
+        const float mesh_yaw = (m == 1u) ? yaw + kCarPi : yaw;
+        corolla_yaw_mat(&car_mats[m][n[m] * 16u], x, car_y[m], z, mesh_yaw, car_scale[m],
+                        car_basis[m]);
+        ++n[m];
+    }
+    car_traffic.mesh_count[0] = n[0];
+    car_traffic.mesh_count[1] = n[1];
+    if (corolla_glb.nprims > 0 && n[0] > 0) {
+        tree_glb_set_instances(&corolla_glb, car_mats[0], n[0]);
+    }
+    if (sports_glb.nprims > 0 && n[1] > 0) {
+        tree_glb_set_instances(&sports_glb, car_mats[1], n[1]);
     }
 }
 
@@ -1360,6 +1344,7 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
     if (!ok) {
         return;
     }
+    update_car_instances(clock_s); // before the shadow pass, so car shadows match the cars
     float view[16], proj[16];
     mat_look(view, camera_pos, camera_target, float3{0.f, 1.f, 0.f});
     mat_persp(proj, 1.22173047f, static_cast<float>(width) / max_of(1, height), 0.15f, 8000.f);

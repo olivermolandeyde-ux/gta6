@@ -1,5 +1,20 @@
 # Leonida Engine Changelog
 
+## Unreleased — Living city traffic
+
+### Moving vehicles (`engine/render/CarTraffic.*`)
+- ✅ 8 closed left-turn circuits down the avenue the city sandbox opens on (x = 1200 m, z = 0-960 m)
+- ✅ 30 vehicles driving: 20 Toyota Corolla E80 + 10 sports cars, 2 instanced draw calls
+- ✅ Right-hand lane discipline, 4.2 m lane centres, 6 m left turns on the 20 m carriageway
+- ✅ Constant lap period → fixed timing between circuits, so no two vehicles ever share asphalt
+  (verified closest approach: 8.40 m, the opposite-lane separation)
+- ✅ Per-frame instance re-upload from `BuildingGlPass::draw()` — no per-frame logging, 60 FPS kept
+- ✅ Headless `leonida_city_traffic_sandbox`: geometry, continuity, lane side, spacing and flow
+
+### Build / CI
+- ✅ SDL2 + OpenGL viewers are optional CMake targets; configure no longer fails without SDL2
+- ✅ CI: actions bumped to v4, SDL2/GL headers installed, traffic sandbox wired into the pipeline
+
 ## Version 1.0.0 (Gold Master)
 
 ### Core Engine (Phases 1-8)
