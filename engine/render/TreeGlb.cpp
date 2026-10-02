@@ -1438,6 +1438,8 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
     if (!verts) {
         return false;
     }
+    float paxmin = 1.0e9f, paxmax = -1.0e9f, paymin = 1.0e9f, paymax = -1.0e9f, pazmin = 1.0e9f,
+          pazmax = -1.0e9f;
     for (u32 i = 0; i < pc; ++i) {
         const u8* vp = pb + i * ps;
         const u32 pel = (pcomp == 5126 || pcomp == 5125) ? 4u : (pcomp == 5123 || pcomp == 5122) ? 2u : 1u;
@@ -1450,6 +1452,24 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
         }
         float ox, oy, oz;
         mul_mat_vec3(world, x, y, z, &ox, &oy, &oz);
+        if (ox < paxmin) {
+            paxmin = ox;
+        }
+        if (ox > paxmax) {
+            paxmax = ox;
+        }
+        if (oy < paymin) {
+            paymin = oy;
+        }
+        if (oy > paymax) {
+            paymax = oy;
+        }
+        if (oz < pazmin) {
+            pazmin = oz;
+        }
+        if (oz > pazmax) {
+            pazmax = oz;
+        }
         if (ox < out->xmin) {
             out->xmin = ox;
         }
@@ -1723,6 +1743,29 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
     }
     if (!pr.tex_emit) {
         pr.tex_emit = black_tex();
+    }
+    if (is_suv_label(out->label) && suv_part != 2 && paxmax > paxmin) {
+        float ex = paxmax - paxmin, ey = paymax - paymin, ez = pazmax - pazmin;
+        float a0 = ex, a1 = ey, a2 = ez;
+        if (a0 > a1) {
+            const float t = a0;
+            a0            = a1;
+            a1            = t;
+        }
+        if (a1 > a2) {
+            const float t = a1;
+            a1            = a2;
+            a2            = t;
+        }
+        if (a0 > a1) {
+            const float t = a0;
+            a0            = a1;
+            a1            = t;
+        }
+        // 5-spoke hub is a thin disc; side windows are longer rectangles (a1/a2 ~ 0.6).
+        if (a2 > 1e-5f && a1 > 0.82f * a2 && a0 < 0.45f * a2) {
+            suv_part = 3;
+        }
     }
     if (is_suv_label(out->label) && suv_part) {
         if (suv_part == 1) {
