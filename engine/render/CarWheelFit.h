@@ -445,6 +445,45 @@ struct CarWheelBlob {
     return nc;
 }
 
+// Last-resort sanity check for a wheel part that could not be split into separate wheels
+// because its parts overlap. Handing such a part every fitted wheel centre is safe as long
+// as it is not wildly bigger than the wheels themselves: the vertex shader rotates each
+// vertex about the *nearest* centre, so each brake still turns about its own wheel. A part
+// the size of the whole car (a sill, an underside) fails this and stays static.
+[[nodiscard]] inline bool car_wheel_spread_ok(const float prim_extent[3], const float* centers,
+                                             u32 n) {
+    if (!prim_extent || !centers || n < 2u) {
+        return false;
+    }
+    float mn[3] = {1.0e30f, 1.0e30f, 1.0e30f};
+    float mx[3] = {-1.0e30f, -1.0e30f, -1.0e30f};
+    for (u32 i = 0; i < n; ++i) {
+        for (int k = 0; k < 3; ++k) {
+            const float v = centers[3u * i + static_cast<u32>(k)];
+            if (v < mn[k]) {
+                mn[k] = v;
+            }
+            if (v > mx[k]) {
+                mx[k] = v;
+            }
+        }
+    }
+    const float d0 = mx[0] - mn[0];
+    const float d1 = mx[1] - mn[1];
+    const float d2 = mx[2] - mn[2];
+    const float diag = std::sqrt(d0 * d0 + d1 * d1 + d2 * d2);
+    if (diag < 1.0e-4f) {
+        return false;
+    }
+    float ext = prim_extent[0];
+    for (int k = 1; k < 3; ++k) {
+        if (prim_extent[k] > ext) {
+            ext = prim_extent[k];
+        }
+    }
+    return ext <= 1.6f * diag;
+}
+
 // Distance from a point to the nearest fitted wheel centre, or -1 when there is none.
 // Used by the loader's report, so a part that is left static says how far off it is
 // instead of only that it was refused.

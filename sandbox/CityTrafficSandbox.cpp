@@ -688,6 +688,23 @@ int main(int argc, char** argv) {
                 expect(car_wheel_split(box, 3u, 8u, sb, one, 4u) == 1, "a box stays one part too");
             }
 
+            // Last resort: parts that overlap so badly that the split cannot separate them.
+            // Handing the primitive every fitted wheel centre is safe because the shader
+            // rotates each vertex about the nearest one — but only for wheel hardware, and
+            // only when the part is not bigger than the wheels it would be spread over.
+            const float axle4[4 * 3] = {1.30f, 0.35f, -0.75f, 1.30f, 0.35f, 0.75f,
+                                        -1.30f, 0.35f, -0.75f, -1.30f, 0.35f, 0.75f};
+            const float brake_span_e[3] = {3.20f, 0.62f, 1.50f}; // all four brakes as one box
+            expect(car_wheel_spread_ok(brake_span_e, axle4, 4u),
+                   "an all-four-brakes box may be spread over the four wheel centres");
+            const float body_e[3] = {6.50f, 1.40f, 2.60f}; // an underside
+            expect(!car_wheel_spread_ok(body_e, axle4, 4u),
+                   "an underside is far bigger than the wheels and is still refused");
+            expect(!car_wheel_spread_ok(brake_span_e, axle4, 1u),
+                   "spreading needs at least two wheels to spread over");
+            expect(car_wheel_spread_ok(brake_span_e, axle4, 0u) == false,
+                   "with no wheels there is nothing to spread over");
+
             // The refusal report says how far off a part is, so a static rim can be
             // explained from the log alone.
             expect(car_wheel_nearest_gap(centers, centers, 4) == 0.f,

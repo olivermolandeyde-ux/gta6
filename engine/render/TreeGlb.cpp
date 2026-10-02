@@ -1211,11 +1211,45 @@ void wheel_hunt_attach(TreeGlb* out) {
         if (at.prim >= out->nprims) {
             continue;
         }
+        PrimWheels* slot = nullptr;
+        for (u32 a = 0; a < na; ++a) {
+            if (agg[a].prim == at.prim) {
+                slot = &agg[a];
+                break;
+            }
+        }
+        if (!slot && na < 16u) {
+            slot        = &agg[na++];
+            slot->prim  = at.prim;
+            slot->count = 0u;
+            slot->axis  = -1;
+        }
         const int hit = car_wheel_attach_to(
             at.center, at.extent, centers, radii, nf,
             at.hardware ? kAttachOffsetHardware : kAttachOffsetGeneric,
             at.hardware ? kAttachExtentHardware : kAttachExtentGeneric);
         if (hit < 0) {
+            // The parts overlapped, so the split could not separate them. Hand the whole
+            // primitive every fitted wheel centre instead: the shader turns each vertex about
+            // the nearest centre, which is how a tyre primitive holding four wheels already
+            // works. Only for wheel hardware, and only when the part is not wildly bigger
+            // than the wheels it is spread over.
+            if (at.hardware && slot && slot->count == 0u && nf >= 2u &&
+                car_wheel_spread_ok(at.extent, centers, nf)) {
+                slot->axis = axes[0];
+                for (u32 i = 0; i < nf && slot->count < 4u; ++i) {
+                    slot->center[slot->count][0] = centers[3u * i + 0u];
+                    slot->center[slot->count][1] = centers[3u * i + 1u];
+                    slot->center[slot->count][2] = centers[3u * i + 2u];
+                    slot->radius[slot->count]    = radii[i];
+                    ++slot->count;
+                }
+                ++attached;
+                std::printf("[glb] %s prim %u: '%s' spans several wheels (its parts overlap, so it "
+                            "cannot be split) — turning about all %u wheel centres, nearest wins\n",
+                            out->label, at.prim, at.name, slot->count);
+                continue;
+            }
             // Say how far off it is: "not concentric" alone does not tell whether the model
             // is built differently or the thresholds are too tight for it.
             const float gap   = car_wheel_nearest_gap(at.center, centers, nf);
@@ -1232,21 +1266,11 @@ void wheel_hunt_attach(TreeGlb* out) {
             ++refused;
             continue;
         }
-        PrimWheels* slot = nullptr;
-        for (u32 a = 0; a < na; ++a) {
-            if (agg[a].prim == at.prim) {
-                slot = &agg[a];
-                break;
-            }
-        }
-        if (!slot && na < 16u) {
-            slot       = &agg[na++];
-            slot->prim = at.prim;
-            slot->count = 0u;
-            slot->axis  = axes[hit];
-        }
         if (!slot || slot->count >= 4u) {
             continue;
+        }
+        if (slot->axis < 0) {
+            slot->axis = axes[hit];
         }
         if (slot->count > 0u && slot->axis != axes[hit]) {
             std::printf("[glb] %s prim %u: '%s' matches wheels with different axle axes — left "
@@ -1265,7 +1289,7 @@ void wheel_hunt_attach(TreeGlb* out) {
 
     for (u32 a = 0; a < na; ++a) {
         TreePrim* pr = &out->prims[agg[a].prim];
-        if (pr->wheel_count > 0 || agg[a].count == 0u) {
+        if (pr->wheel_count > 0 || agg[a].count == 0u || agg[a].axis < 0) {
             continue;
         }
         pr->wheel_count = static_cast<int>(agg[a].count);
