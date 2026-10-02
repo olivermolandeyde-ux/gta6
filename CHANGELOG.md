@@ -34,12 +34,17 @@
   trim, "hjulbue") is disqualified however it is spelled, and a keyword glued to the end of
   another word only counts after "wheel" or "hjul" — a bare substring test for "rim" would
   otherwise happily match "tRIM"
+- ✅ One decisive report line per car model, so a wheel part that is *not* rotating can never
+  be silent again: `[glb] Corolla E80 wheel report: 8 primitive(s) spin — 4 by name, 4 by
+  shape, 4 attached to a wheel; 16 wheel(s), nothing wheel-like left static`. A part that is
+  refused says why in numbers: `… left static — nearest fitted wheel centre is 2.31 m away,
+  part is 0.62 m across (wheel hardware)`
 - ✅ The shadow pass spins the wheels too (identical uniforms, so the spokes in the shadow
   turn with the wheel), and both inline fallback shaders carry the same code as the files
-- ✅ Sandbox: 24 new headless checks (fit finds 4 wheels in a merged primitive, refuses a
+- ✅ Sandbox: 27 new headless checks (fit finds 4 wheels in a merged primitive, refuses a
   box, the patch rolls backwards through the whole basis+yaw chain for both bodies, and
   without slipping, plus the floor test, the attach rule and the real asset node names
-  from the Corolla) — 63/63
+  from the Corolla) — 66/66
 - ✅ Startup reports what it found: `[glb] … WHEEL mesh …` per wheel primitive and
   `[cars] … N wheel part(s) in M primitive(s) spin about Z, tyre radius 0.29 m world, roll -1`
 

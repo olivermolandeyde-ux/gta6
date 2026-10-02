@@ -1159,12 +1159,18 @@ struct WheelAttach {
 WheelAttach g_wheel_attach[16];
 u32         g_wheel_attach_n = 0;
 
+// Counters for the one-line wheel report printed after a model has been walked: how the
+// spinning parts were found, so a part that is left out of the rotation is visible in the
+// log instead of having to be spotted on screen.
+u32 g_wheel_by_name  = 0;
+u32 g_wheel_by_shape = 0;
+
 // Attach the non-disc wheel parts (brake discs with calipers, rims with bolts, hub caps)
 // to the wheels that did pass the disc test. The shader then spins them with the tyre:
 // they read the same per-vehicle angle, at the same radius, about the same centre.
 void wheel_hunt_attach(TreeGlb* out) {
-    if (!out || g_wheel_attach_n == 0u) {
-        return;
+    if (!out) {
+        return; // the loop below is empty when nothing is parked, but the report still prints
     }
     // Every wheel a disc test has already accepted, whether it was found by name or by shape.
     float centers[32 * 3];
@@ -1186,6 +1192,7 @@ void wheel_hunt_attach(TreeGlb* out) {
         }
     }
     u32 attached = 0;
+    u32 refused  = 0;
     for (u32 c = 0; c < g_wheel_attach_n; ++c) {
         const WheelAttach& at = g_wheel_attach[c];
         if (at.prim >= out->nprims) {
@@ -1200,9 +1207,18 @@ void wheel_hunt_attach(TreeGlb* out) {
             at.hardware ? kAttachOffsetHardware : kAttachOffsetGeneric,
             at.hardware ? kAttachExtentHardware : kAttachExtentGeneric);
         if (hit < 0) {
-            std::printf("[glb] %s prim %u: '%s' is not concentric with any fitted wheel (or is "
-                        "far larger than one) — left static\n",
-                        out->label, at.prim, at.name);
+            // Say how far off it is: "not concentric" alone does not tell whether the model
+            // is built differently or the thresholds are too tight for it.
+            const float gap = car_wheel_nearest_gap(at.center, centers, nf);
+            std::printf("[glb] %s prim %u: '%s' left static — nearest fitted wheel centre is %.2f m "
+                        "away, part is %.2f m across%s\n",
+                        out->label, at.prim, at.name, static_cast<double>(gap),
+                        static_cast<double>(at.extent[0] > at.extent[1] && at.extent[0] > at.extent[2]
+                                                ? at.extent[0]
+                                                : (at.extent[1] > at.extent[2] ? at.extent[1]
+                                                                               : at.extent[2])),
+                        at.hardware ? " (wheel hardware)" : "");
+            ++refused;
             continue;
         }
         pr->wheel_count        = 1;
@@ -1221,9 +1237,27 @@ void wheel_hunt_attach(TreeGlb* out) {
                     static_cast<double>(centers[3u * hit + 2u]), static_cast<double>(radii[hit]),
                     at.hardware ? ", wheel hardware" : "");
     }
-    if (attached > 0u) {
-        std::printf("[glb] %s: %u wheel part(s) that the disc test refused now spin with the tyre\n",
-                    out->label, attached);
+    if (!is_car_label(out->label)) {
+        g_wheel_attach_n = 0; // trees, lamps and buildings never carry wheels
+        return;
+    }
+    // One decisive line per car: what spins, and what does not. If a rim or a brake is left
+    // out of the rotation, this line says so rather than leaving it to be spotted on screen.
+    if (out->wheel_prim_count == 0u) {
+        std::printf("[glb] %s wheel report: nothing spins — no wheel was found, neither by name "
+                    "nor by shape\n",
+                    out->label);
+    } else if (refused == 0u) {
+        std::printf("[glb] %s wheel report: %u primitive(s) spin — %u by name, %u by shape, %u "
+                    "attached to a wheel; %u wheel(s), nothing wheel-like left static\n",
+                    out->label, out->wheel_prim_count, g_wheel_by_name, g_wheel_by_shape, attached,
+                    out->wheel_count);
+    } else {
+        std::printf("[glb] %s wheel report: %u primitive(s) spin — %u by name, %u by shape, %u "
+                    "attached to a wheel — but %u wheel-named part(s) are LEFT STATIC; the reason "
+                    "is printed above\n",
+                    out->label, out->wheel_prim_count, g_wheel_by_name, g_wheel_by_shape, attached,
+                    refused);
     }
     g_wheel_attach_n = 0;
     std::fflush(stdout);
@@ -1293,6 +1327,7 @@ void wheel_hunt_finish(TreeGlb* out) {
                 }
             }
             ++out->wheel_prim_count;
+            ++g_wheel_by_shape;
             out->wheel_count += static_cast<u32>(cand.set.count);
             ++taken;
             std::printf("[glb] %s prim %u: WHEEL mesh found by shape — %d wheel(s), axle axis %c, "
@@ -2064,6 +2099,7 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
                 }
             }
             ++out->wheel_prim_count;
+            ++g_wheel_by_name;
             out->wheel_count += static_cast<u32>(ws.count);
             std::printf("[glb] %s prim %u: WHEEL mesh — %d wheel(s), axle axis %c, radius %.3f m, "
                         "centres %.2f,%.2f,%.2f%s\n",
@@ -2277,6 +2313,8 @@ bool load_tree_glb(const char* path, TreeGlb* out) {
     }
     g_wheel_cand_n = 0; // one model at a time, and the hunt must not leak into the next
     g_wheel_attach_n = 0;
+    g_wheel_by_name = 0;
+    g_wheel_by_shape = 0;
     std::printf("[glb] Loading tree model: %s\n", path);
     std::fflush(stdout);
     FILE* f = std::fopen(path, "rb");

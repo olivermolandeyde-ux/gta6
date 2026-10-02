@@ -361,6 +361,26 @@ inline const char* const* hardware_words(unsigned* count) {
     return false;
 }
 
+// Distance from a point to the nearest fitted wheel centre, or -1 when there is none.
+// Used by the loader's report, so a part that is left static says how far off it is
+// instead of only that it was refused.
+[[nodiscard]] inline float car_wheel_nearest_gap(const float p[3], const float* centers, u32 n) {
+    if (!p || !centers || n == 0u) {
+        return -1.f;
+    }
+    float best = -1.f;
+    for (u32 i = 0; i < n; ++i) {
+        const float dx = p[0] - centers[3u * i + 0u];
+        const float dy = p[1] - centers[3u * i + 1u];
+        const float dz = p[2] - centers[3u * i + 2u];
+        const float d  = std::sqrt(dx * dx + dy * dy + dz * dz);
+        if (best < 0.f || d < best) {
+            best = d;
+        }
+    }
+    return best;
+}
+
 // Which fitted wheel does a primitive belong to, when the strict disc test refused it?
 //
 // A brake disc with its caliper, a rim with bolt heads, a hub cap and an upright are all

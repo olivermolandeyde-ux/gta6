@@ -590,6 +590,17 @@ int main(int argc, char** argv) {
             expect(car_wheel_attach_to(floor_c, floor_e, centers, radii, 4) == -1,
                    "a whole underside is refused");
 
+            // The refusal report says how far off a part is, so a static rim can be
+            // explained from the log alone.
+            expect(car_wheel_nearest_gap(centers, centers, 4) == 0.f,
+                   "the gap to a wheel it sits exactly on is zero");
+            const float between[3] = {0.f, 0.f, 0.f}; // mid-car: 1.5 m from any wheel (x=1.3, z=0.75)
+            const float gap = car_wheel_nearest_gap(between, centers, 4);
+            expectf(std::fabs(gap - std::sqrt(1.3f * 1.3f + 0.75f * 0.75f)) < 1.0e-4f,
+                    "the gap is the true distance to the nearest wheel (%.3f m)", static_cast<double>(gap));
+            expect(car_wheel_nearest_gap(between, centers, 0u) < 0.f,
+                   "with no fitted wheel the gap is undefined, not zero");
+
             // A wheel arch / arch trim is named "wheel..." and may sit close to the wheel, but
             // it is bodywork: it must never be attached, which is why a part named just
             // "wheel" has to be dead concentric and no larger than a disc.
