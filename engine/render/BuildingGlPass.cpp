@@ -902,9 +902,9 @@ bool BuildingGlPass::init() {
         const float hz = corolla_glb.zmax - corolla_glb.zmin;
         std::printf("[cars] Car bounds: %.2fx%.2fx%.2f meters\n", hx, hy, hz);
         if (rot == 1) {
-            std::printf("[cars] Applied Rx(+90°) + Rz(+90°) rotation\n");
+            std::printf("[cars] Applied side-to-wheels roll (Z up, X flipped)\n");
         } else if (rot == 2) {
-            std::printf("[cars] Applied Rx(+90°) + Rz(-90°) rotation\n");
+            std::printf("[cars] Applied opposite side-to-wheels roll\n");
         } else {
             std::printf("[cars] Using rotation option: %d\n", rot);
         }
@@ -1271,7 +1271,7 @@ void BuildingGlPass::buildMesh(World& world) {
                 push_suv(x, z + side, 0.f);
             }
         }
-        for (u32 i = 0; i <= kCityBlocks && sn < kCorollaSpawnCap; ++i) {
+        for (u32 i = 0; i 32 i = 0; i <= kCityBlocks && sn < kCorollaSpawnCap; ++i) {
             const float x = static_cast<float>(i) * kCityBlockPitch;
             for (float z = 80.f; z < kCityExtentM - 80.f && sn < kCorollaSpawnCap; z += 48.f) {
                 const float side = (static_cast<u32>(z) % 96u < 48u) ? park : -park;
