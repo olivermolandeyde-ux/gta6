@@ -104,11 +104,25 @@ int main(int argc, char** argv) {
     cityGen.generateCity(world, city_center, kCityCenterM, 900);
     buildings.buildMesh(world);
 
+    std::printf("[city] press F to flip the car bodies 180 deg (use if they drive boot-first)\n");
+    std::fflush(stdout);
+    bool flip_key_down = false;
     u32 frames = 0;
     bool announced = false;
     u32 fps_t0 = SDL_GetTicks();
     while (!window.shouldClose) {
         window.pollEvents();
+
+        const bool flip_now = window.isKeyDown('f') || window.isKeyDown('F');
+        if (flip_now && !flip_key_down) {
+            buildings.car_body_flip = (buildings.car_body_flip > 0.1f) ? 0.f : kCarPi;
+            std::printf("[cars] Body yaw offset now %.0f deg%s\n",
+                        static_cast<double>(buildings.car_body_flip * 180.f / kCarPi),
+                        buildings.car_body_flip > 0.1f ? " (flipped)" : " (default)");
+            std::fflush(stdout);
+        }
+        flip_key_down = flip_now;
+
         terrain.width  = window.width;
         terrain.height = window.height;
 

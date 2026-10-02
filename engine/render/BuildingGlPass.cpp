@@ -728,6 +728,7 @@ bool BuildingGlPass::init() {
     std::memset(car_basis, 0, sizeof(car_basis));
     std::memset(car_scale, 0, sizeof(car_scale));
     std::memset(car_y, 0, sizeof(car_y));
+    car_body_flip = 0.f;
     glow_prog = glow_vao = glow_vbo = glow_ibo = glow_ivbo = glow_nidx = 0;
     glow_count = 0;
     cube_vao = cube_vbo = cube_ibo = 0;
@@ -1298,6 +1299,9 @@ void BuildingGlPass::buildMesh(World& world) {
                         car_traffic.mesh_count[0], car_traffic.mesh_count[1]);
             std::printf("[cars] Traffic: circuits follow the avenue at x = 1200 m, z = 0-960 m "
                         "that the sandbox camera starts on\n");
+            std::printf("[cars] Body yaw offset: %.0f deg (press F in the sandbox to flip it if the "
+                        "cars drive boot-first)\n",
+                        static_cast<double>(car_body_flip * 180.f / kCarPi));
             std::fflush(stdout);
         }
     }
@@ -1323,12 +1327,14 @@ void BuildingGlPass::update_car_instances(float clock_s) {
         if (n[m] >= kCarAgentCap) {
             continue;
         }
-        // Both bodies are authored so the AABB longest axis (which the basis maps to
-        // world +Z) points at the boot, i.e. opposite the direction of travel. The
-        // ring heading is the driving direction, so every body needs 180° on top of
-        // it. The sports mesh stays a further 180° from the Corolla: its longest
-        // axis is the opposite end of the car, and both were yawed together before.
-        const float mesh_yaw = yaw + kCarPi + (m == 1u ? kCarPi : 0.f);
+        // The AABB basis maps each model's longest axis onto the ring heading, and on a
+        // car that axis is its length, so the body needs a yaw offset to face along the
+        // direction of travel. The sports mesh stays a further 180° from the Corolla:
+        // its longest axis is the opposite end of the car, and both were yawed together
+        // when they were parked. car_body_flip is the live fine-tune for the last
+        // unknown — which end of the author's mesh is the bonnet — press F in the
+        // sandbox to flip both bodies 180° and keep whichever looks right.
+        const float mesh_yaw = yaw + kCarPi + car_body_flip + (m == 1u ? kCarPi : 0.f);
         corolla_yaw_mat(&car_mats[m][n[m] * 16u], x, car_y[m], z, mesh_yaw, car_scale[m],
                         car_basis[m]);
         ++n[m];

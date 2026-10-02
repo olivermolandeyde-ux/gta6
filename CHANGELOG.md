@@ -13,6 +13,11 @@
 - ✅ Closest approach stays 8.40 m over three laps — the opposite-lane separation, which
   is the tightest two vehicles can ever come
 
+### Diagnostics
+- ✅ Live body-yaw flip: press F in the city sandbox to add/remove 180° on both car bodies
+  (and the startup log prints the current offset), so which end of the authored mesh is
+  the bonnet can be settled on screen instead of guessed in code
+
 ### Build / CI
 - ✅ `actions/upload-artifact@v4`, `linux-perf` fallback, SDL2/GL headers in CI
 
