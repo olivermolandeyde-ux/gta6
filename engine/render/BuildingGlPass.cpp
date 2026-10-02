@@ -495,6 +495,22 @@ void log_glb_textures(const char* name, const TreeGlb* t) {
     std::fflush(stdout);
 }
 
+// Ry(yaw) * Rx(+90°) * S — Corolla Z-down / Y-forward. Rx(-90°) put it on the roof.
+void corolla_yaw_mat(float* m, float x, float y, float z, float yaw, float sc) {
+    const float c = std::cos(yaw);
+    const float s = std::sin(yaw);
+    std::memset(m, 0, 16 * sizeof(float));
+    m[0]  = c * sc;
+    m[2]  = -s * sc;
+    m[4]  = s * sc;
+    m[6]  = c * sc;
+    m[9]  = -sc;
+    m[12] = x;
+    m[13] = y;
+    m[14] = z;
+    m[15] = 1.f;
+}
+
 void tree_yaw_mat(float* m, float x, float y, float z, float yaw, float sc, int z_up) {
     const float c = std::cos(yaw);
     const float s = std::sin(yaw);
@@ -815,19 +831,13 @@ bool BuildingGlPass::init() {
     std::printf("[glb] Loading lamp model: gatelys_moderne.glb\n");
     load_city_tree("gatelys_moderne.glb", &lamp_glb[1]);
     if (load_city_tree("low-poly_toyota_corolla_e80_sedan.glb", &corolla_glb)) {
-        corolla_glb.z_up = 2; // X-up: Rx(-90°) laid it on its side; Rz(90°) stands on wheels
+        corolla_glb.z_up = 3; // Rx(+90°): Rx(-90°) and Rz(90°) both laid it on its side/roof
         std::printf("[cars] Loaded Toyota Corolla E80: %u verts (should be < 10,000)\n", corolla_glb.nverts);
         const float hx = corolla_glb.xmax - corolla_glb.xmin;
         const float hy = corolla_glb.ymax - corolla_glb.ymin;
         const float hz = corolla_glb.zmax - corolla_glb.zmin;
         std::printf("[cars] Car bounds: %.2fx%.2fx%.2f meters\n", hx, hy, hz);
-        if (corolla_glb.z_up == 1) {
-            std::printf("[cars] Applied Z-up to Y-up rotation\n");
-        } else if (corolla_glb.z_up == 2) {
-            std::printf("[cars] Applied X-up to Y-up rotation\n");
-        } else {
-            std::printf("[cars] Orientation: Y-up (correct)\n");
-        }
+        std::printf("[cars] Applied Rx(+90) Z-down to Y-up rotation\n");
         const float sc = corolla_fit_scale(&corolla_glb);
         float L = hx, W = hz, H = hy;
         if (corolla_glb.z_up == 1) {
@@ -1164,8 +1174,7 @@ void BuildingGlPass::buildMesh(World& world) {
         u32 sn       = 0;
         u32 n_corolla_xz = 0;
         const float sc   = corolla_fit_scale(&corolla_glb);
-        const int   zup  = 2; // X-up → Y-up (Rz 90°)
-        const float y0   = tree_up_min(&corolla_glb);
+        const float y0   = -corolla_glb.zmax; // after Rx(+90) world Y = -Z
         const float y    = kCityPlateauY + 0.28f - y0 * sc; // road top is plateau+0.25
         const float park = 7.2f; // curb lane on 20 m asphalt, not the 11.5 m sidewalk
         auto push_suv = [&](float x, float z, float along) {
@@ -1184,7 +1193,7 @@ void BuildingGlPass::buildMesh(World& world) {
             }
             const u32 flip = static_cast<u32>(x * 17.f + z * 31.f) & 1u;
             const float yaw = along + (flip ? 3.14159265f : 0.f);
-            tree_yaw_mat(&corolla_mats[sn * 16], x, y, z, yaw, sc, zup);
+            corolla_yaw_mat(&corolla_mats[sn * 16], x, y, z, yaw, sc);
             corolla_xz[n_corolla_xz * 2u]     = x;
             corolla_xz[n_corolla_xz * 2u + 1] = z;
             ++n_corolla_xz;
