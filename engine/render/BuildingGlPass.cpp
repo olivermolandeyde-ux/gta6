@@ -496,8 +496,8 @@ void log_glb_textures(const char* name, const TreeGlb* t) {
     std::fflush(stdout);
 }
 
-// 1 Rx(+90)*Rz(+90)  2 Rx(+90)*Rz(-90)  3 axis-swap Rx(-90)  4 Rx(-90)*Rz(+90)
-inline constexpr int kCorollaRotDefault = 3;
+// 1 Rx(+90) then Rz(+90)  2 Rx(+90) then Rz(-90)  3 Rx(-90)  4 Rx(-90) then Rz(+90)
+inline constexpr int kCorollaRotDefault = 1;
 
 int corolla_rot_opt() {
     const char* e = std::getenv("LEONIDA_COROLLA_ROT");
@@ -509,15 +509,15 @@ int corolla_rot_opt() {
 
 void corolla_fix_point(int opt, float x, float y, float z, float* ox, float* oy, float* oz) {
     switch (opt) {
-        case 1: // Rz(+90) then Rx(+90): (x,y,z) → (-y, -z, x)
-            *ox = -y;
-            *oy = -z;
-            *oz = x;
+        case 1: // Rx(+90) then Rz(+90): (x,y,z) → (z, x, y)
+            *ox = z;
+            *oy = x;
+            *oz = y;
             break;
-        case 2: // Rz(-90) then Rx(+90): (x,y,z) → (y, -z, -x)
-            *ox = y;
-            *oy = -z;
-            *oz = -x;
+        case 2: // Rx(+90) then Rz(-90): (x,y,z) → (-z, -x, y)
+            *ox = -z;
+            *oy = -x;
+            *oz = y;
             break;
         case 4: // Rz(+90) then Rx(-90): (x,y,z) → (-y, z, -x)
             *ox = -y;
@@ -901,7 +901,13 @@ bool BuildingGlPass::init() {
         const float hy = corolla_glb.ymax - corolla_glb.ymin;
         const float hz = corolla_glb.zmax - corolla_glb.zmin;
         std::printf("[cars] Car bounds: %.2fx%.2fx%.2f meters\n", hx, hy, hz);
-        std::printf("[cars] Using rotation option: %d\n", rot);
+        if (rot == 1) {
+            std::printf("[cars] Applied Rx(+90°) + Rz(+90°) rotation\n");
+        } else if (rot == 2) {
+            std::printf("[cars] Applied Rx(+90°) + Rz(-90°) rotation\n");
+        } else {
+            std::printf("[cars] Using rotation option: %d\n", rot);
+        }
         const float sc = corolla_fit_scale(&corolla_glb);
         float L = hx;
         if (hy > L) {
