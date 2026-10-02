@@ -34,56 +34,75 @@ void put_seg(CarRing* r, u32 i, float sx, float sz, float cx, float cz, float ya
     g.kappa = kappa;
 }
 
-// The citywide plan: 16 loops, all mutually disjoint, spread over the 2.4 km grid.
+// The citywide plan: 15 loops, all mutually disjoint, spread over the 2.4 km grid.
 // i0 must be even and j0 a multiple of 4 - that is what keeps neighbouring loops from
 // sharing an intersection (two loops whose rectangles touch would have corner arcs that
 // cross, and then their timings would matter). Speeds differ per loop, which is safe
 // precisely because the loops never share asphalt.
 //
-//   Corolla loops: 8.2 - 9.8 m/s (30 - 35 km/h), normal traffic
-//   sports loops: 12.6 - 14.2 m/s (45 - 51 km/h), the fast loops
+//   Corolla loops: 8.0 - 10.0 m/s (29 - 36 km/h), 3 cars each  -> 15
+//   sports loops: 12.0 - 15.0 m/s (43 - 54 km/h), 2 cars each  -> 10
+//   SUV loops:     7.0 -  9.0 m/s (25 - 32 km/h), 1 car each   ->  5
 //
 // Loop 0 runs the streets around the block the city sandbox camera starts on
-// (x = 1200..1320 m, z = 0..240 m), so there is traffic right beside the lens.
+// (x = 1200..1320 m, z = 0..240 m), so there is traffic right beside the lens. A loop is
+// one block wide and two blocks long, so two loops that share i0 have j0 at least 4 apart
+// (a full block of gap) and can never touch.
 struct CarLoopPlan {
     u32   i0, j0; // street-grid line indices; metres = index * block pitch
     float speed;  // m/s, constant for every vehicle on this loop
-    int   sports; // 1 = sports model on this loop
+    int   cls;    // 0 Corolla, 1 sports, 2 SUV
 };
 
 constexpr u32 kPlanCount = kCarLoopCount;
 
 constexpr CarLoopPlan kPlan[kPlanCount] = {
-    // Corolla loops — normal speeds, spread corner to corner.
+    // Corolla loops — normal speed, three cars each, scattered corner to corner.
     {10u, 0u, 9.0f, 0},   // beside the sandbox camera
-    {10u, 4u, 8.4f, 0},
-    {6u, 0u, 9.6f, 0},
-    {14u, 0u, 8.8f, 0},
-    {2u, 4u, 9.2f, 0},
-    {18u, 4u, 8.6f, 0},
-    {0u, 12u, 9.4f, 0},
-    {4u, 0u, 9.0f, 0},
-    {8u, 8u, 8.2f, 0},
-    {12u, 12u, 9.8f, 0},
-    {16u, 0u, 8.4f, 0},
-    {18u, 16u, 9.2f, 0},
-    // Sports loops — faster, on their own paths so they never catch a Corolla.
+    {2u, 4u, 8.4f, 0},
+    {14u, 0u, 9.6f, 0},
+    {6u, 12u, 8.8f, 0},
+    {18u, 8u, 9.2f, 0},
+    // Sports loops — the fast class, two cars each.
     {8u, 0u, 13.4f, 1},
-    {12u, 0u, 12.6f, 1},
-    {10u, 12u, 14.2f, 1},
-    {16u, 12u, 13.0f, 1},
+    {12u, 12u, 12.6f, 1},
+    {4u, 16u, 14.2f, 1},
+    {16u, 4u, 13.0f, 1},
+    {0u, 8u, 14.6f, 1},
+    // SUV loops — a little slower than the Corollas, one car each.
+    {10u, 8u, 7.4f, 2},
+    {6u, 0u, 8.0f, 2},
+    {14u, 12u, 7.8f, 2},
+    {2u, 16u, 8.6f, 2},
+    {18u, 0u, 8.2f, 2},
 };
 
-constexpr u32 count_sports_loops() {
+constexpr u32 count_loops_of_class(int cls) {
     u32 n = 0;
     for (u32 i = 0; i < kPlanCount; ++i) {
-        if (kPlan[i].sports != 0) {
+        if (kPlan[i].cls == cls) {
             ++n;
         }
     }
     return n;
 }
-static_assert(count_sports_loops() == kCarSportsLoops, "sports loop count must match CarTraffic.h");
+
+constexpr u32 count_cars_of_class(int cls) {
+    u32 n = 0;
+    for (u32 i = 0; i < kPlanCount; ++i) {
+        if (kPlan[i].cls == cls) {
+            n += kCarCarsPerLoop[cls];
+        }
+    }
+    return n;
+}
+
+static_assert(count_loops_of_class(0) == kCarCorollaLoops, "Corolla loop count must match CarTraffic.h");
+static_assert(count_loops_of_class(1) == kCarSportsLoops, "sports loop count must match CarTraffic.h");
+static_assert(count_loops_of_class(2) == kCarSuvLoops, "SUV loop count must match CarTraffic.h");
+static_assert(count_cars_of_class(0) + count_cars_of_class(1) + count_cars_of_class(2) ==
+                  kCarVehicleCount,
+              "the three classes must add up to the fleet");
 static_assert(sizeof(kPlan) / sizeof(kPlan[0]) == kCarLoopCount, "plan must list every loop");
 
 } // namespace
@@ -179,13 +198,29 @@ void car_ring_pose(const CarRing* r, float s, float* x, float* z, float* yaw) {
     }
 }
 
-void car_traffic_build(CarTraffic* t, float block_pitch, u32 corolla_available,
-                       u32 sports_available) {
-    if (!t) {
+void car_traffic_build(CarTraffic* t, float block_pitch, const u32 available[kCarMeshCount]) {
+    if (!t || !available) {
         return;
     }
     std::memset(t, 0, sizeof(*t));
-    if ((!corolla_available && !sports_available) || block_pitch <= 0.f) {
+    // A class whose model is missing borrows one that loaded, so the fleet stays complete
+    // and the collision argument (one speed per loop) is untouched by the substitution.
+    // mesh_for_class[m] is the model a vehicle of class m is actually drawn with.
+    u32 mesh_for_class[kCarMeshCount];
+    u32 any = kCarMeshCount;
+    for (u32 m = 0; m < kCarMeshCount; ++m) {
+        if (available[m]) {
+            any = m;
+            break;
+        }
+    }
+    if (any == kCarMeshCount) {
+        return; // no car model at all
+    }
+    for (u32 m = 0; m < kCarMeshCount; ++m) {
+        mesh_for_class[m] = available[m] ? m : any;
+    }
+    if (block_pitch <= 0.f) {
         return;
     }
     for (u32 p = 0; p < kPlanCount && t->ring_count < kCarLoopCap; ++p) {
@@ -200,24 +235,22 @@ void car_traffic_build(CarTraffic* t, float block_pitch, u32 corolla_available,
             continue;
         }
         ring->speed     = plan.speed;
-        ring->sports    = plan.sports;
+        ring->cls       = plan.cls;
+        ring->cars      = kCarCarsPerLoop[plan.cls];
         ring->travelled = 0.0;
 
         // Even spacing is the whole collision story: one speed per loop, so no vehicle
         // ever gains on the one ahead of it. The stagger keeps the loops from looking
         // like one machine — it never changes the spacing, so it stays safe.
-        const u32   n       = kCarCarsPerLoop;
+        const u32   n       = ring->cars;
         const float spacing = ring->perimeter / static_cast<float>(n);
         const float phase   = 0.37f * spacing * static_cast<float>(t->ring_count);
+        const u32   mesh    = mesh_for_class[plan.cls];
         for (u32 k = 0; k < n && t->agent_count < kCarAgentCap; ++k) {
-            CarAgent*  a        = &t->agents[t->agent_count];
-            const bool want_fast = plan.sports != 0 && sports_available != 0u;
-            a->ring             = t->ring_count;
-            a->mesh             = want_fast ? 1u : 0u;
-            if (corolla_available == 0u && !want_fast) {
-                a->mesh = 1u; // Corolla mesh missing: fill the slow loops with the other one
-            }
-            a->offset = wrap_len((0.5f + static_cast<float>(k)) * spacing + phase, ring->perimeter);
+            CarAgent* a  = &t->agents[t->agent_count];
+            a->ring      = t->ring_count;
+            a->mesh      = mesh;
+            a->offset    = wrap_len((0.5f + static_cast<float>(k)) * spacing + phase, ring->perimeter);
             ++t->mesh_count[a->mesh];
             ++t->agent_count;
         }

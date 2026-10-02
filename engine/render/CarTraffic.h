@@ -4,8 +4,8 @@
 
 namespace engine {
 
-// Moving city traffic for the GL city pass: 16 closed left-turn loops spread over the
-// 2.4 km grid. Not a generic Vehicle / Path / TrafficLight graph — a loop is a drivable
+// Moving city traffic for the GL city pass: 15 closed left-turn loops spread over the
+// 2.4 km grid, carrying 30 vehicles in three classes (Corolla, sports, SUV). Not a generic Vehicle / Path / TrafficLight graph — a loop is a drivable
 // circuit with one speed for the whole loop, which keeps the collision argument trivial:
 //
 //   1. On a loop every vehicle runs at the same speed, so the even spacing it spawned
@@ -14,8 +14,9 @@ namespace engine {
 //   2. The loops are pairwise disjoint: no two loops share a metre of asphalt, so a
 //      vehicle on one loop can never meet a vehicle on another, whatever the speeds.
 //
-// That is what lets the sports cars run 12-15 m/s while the Corollas hold 8-10 m/s
-// without a single per-frame distance check (which instanced rendering cannot afford).
+// That is what lets the sports cars run 12-15 m/s while the Corollas hold 8-10 m/s and
+// the SUVs 7-9 m/s without a single per-frame distance check (which instanced rendering
+// cannot afford). One class per loop keeps the model and the speed tied together.
 //
 // Geometry law: the circuit is offset outwards from the block rectangle by `lane` metres,
 // every corner is a left turn of radius `radius`, and the heading follows the city pass
@@ -26,14 +27,22 @@ namespace engine {
 // Traffic plan law: loop (i, j) drives the streets around the block at
 // x = pitch*i .. pitch*(i+1), z = pitch*j .. pitch*(j+2) — one block wide, two blocks
 // long — with i even and j a multiple of 4, which is what makes the loops disjoint.
+// Each loop also states how many vehicles it carries and which class they are, so the
+// fleet's 30 vehicles are spread over the whole grid instead of piling onto one avenue.
 
 inline constexpr float kCarPi            = 3.14159265358979323846f;
 inline constexpr u32   kCarSegmentCap    = 8;  // 4 straights + 4 corner arcs
 inline constexpr u32   kCarLoopCap       = 24;
-inline constexpr u32   kCarLoopCount     = 16; // 12 Corolla loops + 4 sports loops
-inline constexpr u32   kCarSportsLoops   = 4;
-inline constexpr u32   kCarCarsPerLoop   = 8;  // evenly spaced, one speed per loop
-inline constexpr u32   kCarVehicleCount  = kCarLoopCount * kCarCarsPerLoop;
+inline constexpr u32   kCarLoopCount     = 15; // 5 Corolla + 5 sports + 5 SUV loops
+inline constexpr u32   kCarCorollaLoops  = 5;
+inline constexpr u32   kCarSportsLoops   = 5;
+inline constexpr u32   kCarSuvLoops      = 5;
+inline constexpr u32   kCarMeshCount     = 3;  // 0 Corolla E80, 1 sports, 2 SUV
+// Vehicles per loop, per class: 5*3 + 5*2 + 5*1 = 30, evenly spaced around each loop.
+inline constexpr u32   kCarCarsPerLoop[kCarMeshCount] = {3u, 2u, 1u};
+inline constexpr u32   kCarVehicleCount  =
+    kCarCorollaLoops * kCarCarsPerLoop[0] + kCarSportsLoops * kCarCarsPerLoop[1] +
+    kCarSuvLoops * kCarCarsPerLoop[2];
 inline constexpr u32   kCarAgentCap      = 192; // headroom over kCarVehicleCount
 inline constexpr float kCarLaneOffset    = 4.2f; // lane centre, metres off the street centre line
 inline constexpr float kCarCornerRadius  = 6.0f; // left-turn radius at every intersection
@@ -41,6 +50,8 @@ inline constexpr float kCarCorollaSpeedMin = 8.0f;  // m/s — normal speed limi
 inline constexpr float kCarCorollaSpeedMax = 10.0f;
 inline constexpr float kCarSportsSpeedMin  = 12.0f; // m/s — the fast loops
 inline constexpr float kCarSportsSpeedMax  = 15.0f;
+inline constexpr float kCarSuvSpeedMin     = 7.0f;  // m/s — the SUVs roll a little slower
+inline constexpr float kCarSuvSpeedMax     = 9.0f;
 
 // One straight or one constant-curvature corner of a loop.
 struct CarSegment {
@@ -59,12 +70,13 @@ struct CarRing {
     float      lane;
     float      radius;
     float      speed;     // m/s, the same for every vehicle on this loop
-    int        sports;    // 1 = this loop carries the sports model
+    u32        cars;      // vehicles on this loop, evenly spaced
+    int        cls;       // 0 Corolla, 1 sports, 2 SUV — every vehicle here is this model
     double     travelled; // metres every vehicle on this loop has covered, double so it
                           // never drifts (float fmod lost ~1 cm per three laps)
 };
 
-// One vehicle on a loop. Mesh 0 = Corolla E80, mesh 1 = sports car.
+// One vehicle on a loop. Mesh 0 = Corolla E80, 1 = sports car, 2 = SUV.
 struct CarAgent {
     u32   ring;
     u32   mesh;
@@ -76,7 +88,7 @@ struct CarTraffic {
     u32      ring_count;
     CarAgent agents[kCarAgentCap];
     u32      agent_count;
-    u32      mesh_count[2];
+    u32      mesh_count[kCarMeshCount];
     float    sim_time;
 };
 
@@ -94,8 +106,9 @@ void car_ring_pose(const CarRing* r, float s, float* x, float* z, float* yaw);
 // Pose of a vehicle at its current loop position.
 void car_agent_pose(const CarTraffic* t, u32 index, float* x, float* z, float* yaw);
 
-// Spawns the citywide plan and spaces each loop's vehicles evenly around it.
-void car_traffic_build(CarTraffic* t, float block_pitch, u32 corolla_available, u32 sports_available);
+// Spawns the citywide plan and spaces each loop's vehicles evenly around it. A class whose
+// model failed to load is filled with a model that did load, so the fleet stays complete.
+void car_traffic_build(CarTraffic* t, float block_pitch, const u32 available[kCarMeshCount]);
 
 // Advances every vehicle at its loop speed. Free, no allocation, no collision work.
 void car_traffic_step(CarTraffic* t, float dt);

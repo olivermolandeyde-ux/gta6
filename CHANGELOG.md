@@ -1,5 +1,29 @@
 # Leonida Engine Changelog
 
+## Unreleased — Three car classes on the streets
+
+### Traffic (`engine/render/CarTraffic.*`, `BuildingGlPass.*`)
+- ✅ The SUV is back in the mix: 15 Corolla E80 + 10 sports cars + 5 SUVs = **30 vehicles**
+  on 15 disjoint loops, still two instanced draw calls per model (colour + shadow) and no
+  per-frame distance checks
+- ✅ One class per loop keeps the model and the speed tied together: Corollas 8.0-10.0 m/s
+  (3 per loop), sports 12.0-15.0 m/s (2 per loop), SUVs 7.0-9.0 m/s (1 per loop) — the
+  fleet asked for, spread over the whole 2.4 km grid rather than one avenue
+- ✅ The wheel fix applies to the SUV unchanged, because it is the same loader, the same
+  `TreePrim` wheel data and the same per-vehicle angle for every car class
+- ✅ An SUV is tall and narrow: its shortest AABB axis can be the *width*, which is also the
+  wheel axle, and "shortest axis is the height" would have laid it on its side. The fitted
+  wheel axle now settles the axis roles, and only ever changes the answer when the old rule
+  picked the axle itself — the Corolla and sports car bases come out exactly as before
+- ✅ The SUV's body yaw offset is **read from the model** instead of guessed: wheel meshes
+  are named per corner ("wheel.Ft.L", "wheelbrake.Bk.R"), so the front axle's position says
+  which end of the car is the nose. Where the names say nothing, it falls back to the
+  Corolla's confirmed 180°, and G in the sandbox flips the SUV alone (F flips all bodies)
+- ✅ A class whose model is missing borrows one that loaded, so the fleet is never short a
+  vehicle and the collision argument is untouched by the substitution
+- ✅ Sandbox: 30 vehicles, the 15/10/5 mix, three speed bands and the disjointness of the
+  new 15-loop plan re-asserted; 92/92 checks
+
 ## Unreleased — Wheels that spin
 
 ### Rendering (`engine/render/CarWheelFit.h`, `TreeGlb.*`, `shaders/tree.vert`)

@@ -219,6 +219,79 @@ inline int argmin3(const float e[3]) {
     return std::fabs(bottom - floor_up) <= tol;
 }
 
+// Which AABB axis of a car model is its length, and which is its height?
+//
+// The rule the renderer has always used is "longest axis is the length, shortest is the
+// height", and it is right for a Corolla and a sports car. It is wrong for a tall, narrow
+// vehicle: an SUV that is 1.75 m tall and 1.70 m wide has the *width* as its shortest
+// axis, and the rule would lay the car on its side.
+//
+// The wheels settle it. A wheel's axle axis is the vehicle's width, always, so if the
+// shortest axis is the axle axis the height has to be the remaining one. `axle_hint` is
+// the fitted wheel axis of the model, or -1 when no wheel was found (then the old rule is
+// kept unchanged, which is what every previously accepted model relies on).
+inline void car_axis_roles(const float ext[3], int axle_hint, int* fwd_out, int* up_out) {
+    int fwd = 0;
+    if (ext[1] > ext[fwd]) {
+        fwd = 1;
+    }
+    if (ext[2] > ext[fwd]) {
+        fwd = 2;
+    }
+    int up = (fwd == 0) ? 1 : 0;
+    for (int i = 0; i < 3; ++i) {
+        if (i != fwd && ext[i] < ext[up]) {
+            up = i;
+        }
+    }
+    if (up == axle_hint) {
+        const int other = 3 - fwd - up;
+        if (other != up) {
+            up = other; // a wheel's axle is the width: the height is the only axis left
+        }
+    }
+    if (fwd_out) {
+        *fwd_out = fwd;
+    }
+    if (up_out) {
+        *up_out = up;
+    }
+}
+
+// Which end of the model is the nose, from where the *front* wheels sit relative to the
+// *back* wheels. Wheel meshes in this asset pack are named per corner ("wheel.Ft.L",
+// "wheelbrake.Bk.R"), so the geometry itself answers the question the body yaw offset
+// otherwise has to guess: a car's front axle is nearer its nose than its rear axle is.
+//
+// `pts` holds one centre per sample (three floats each), `ends` is +1 for a part whose
+// name says front, -1 for back, 0 for unknown, and `axis` the model axis the car's length
+// runs along. Returns +1 when the nose is at larger coordinates on that axis, -1 when it
+// is at smaller ones, and 0 when the names did not say (or the two sets coincide).
+[[nodiscard]] inline int car_nose_sign(const float* pts, const int* ends, u32 n, int axis) {
+    if (!pts || !ends || n == 0u || axis < 0 || axis > 2) {
+        return 0;
+    }
+    float fsum = 0.f, bsum = 0.f;
+    u32   fn = 0, bn = 0;
+    for (u32 i = 0; i < n; ++i) {
+        if (ends[i] > 0) {
+            fsum += pts[3u * i + static_cast<u32>(axis)];
+            ++fn;
+        } else if (ends[i] < 0) {
+            bsum += pts[3u * i + static_cast<u32>(axis)];
+            ++bn;
+        }
+    }
+    if (fn == 0u || bn == 0u) {
+        return 0;
+    }
+    const float d = fsum / static_cast<float>(fn) - bsum / static_cast<float>(bn);
+    if (std::fabs(d) < 1.0e-4f) {
+        return 0; // coincident: nothing to learn
+    }
+    return d > 0.f ? 1 : -1;
+}
+
 // Name tests for wheel detection, as plain C strings, so the sandbox can run real asset
 // node names through exactly this code without a GLB or a JSON DOM. Both are
 // case-insensitive substring tests, like the rest of the loader's naming rules, with one
@@ -502,6 +575,27 @@ struct CarWheelBlob {
         }
     }
     return best;
+}
+
+// Front or back, from a part's name: +1 front, -1 back, 0 unknown. Only ever asked about
+// names that already say "wheel", so the short forms are safe here.
+[[nodiscard]] inline int car_wheel_name_end(const char* name) {
+    if (!name || !*name) {
+        return 0;
+    }
+    static const char* const kFront[] = {"ft", "front", "fore", "fram", "foran"};
+    static const char* const kBack[]  = {"bk", "back", "rear", "baktill", "bakre"};
+    for (const char* w : kFront) {
+        if (car_wheel_detail::has_icase(name, w)) {
+            return 1;
+        }
+    }
+    for (const char* w : kBack) {
+        if (car_wheel_detail::has_icase(name, w)) {
+            return -1;
+        }
+    }
+    return 0;
 }
 
 // Which fitted wheel does a primitive belong to, when the strict disc test refused it?

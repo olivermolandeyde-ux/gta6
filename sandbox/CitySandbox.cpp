@@ -104,9 +104,10 @@ int main(int argc, char** argv) {
     cityGen.generateCity(world, city_center, kCityCenterM, 900);
     buildings.buildMesh(world);
 
-    std::printf("[city] press F to flip the car bodies 180 deg (use if they drive boot-first)\n");
+    std::printf("[city] press F to flip the car bodies 180 deg, G to flip the SUV alone\n");
     std::fflush(stdout);
     bool flip_key_down = false;
+    bool suv_key_down  = false;
     u32 frames = 0;
     bool announced = false;
     u32 fps_t0 = SDL_GetTicks();
@@ -122,6 +123,16 @@ int main(int argc, char** argv) {
             std::fflush(stdout);
         }
         flip_key_down = flip_now;
+
+        const bool suv_now = window.isKeyDown('g') || window.isKeyDown('G');
+        if (suv_now && !suv_key_down) {
+            buildings.car_suv_flip = (buildings.car_suv_flip > 0.1f) ? 0.f : kCarPi;
+            std::printf("[cars] SUV yaw offset now %.0f deg%s\n",
+                        static_cast<double>(buildings.car_suv_flip * 180.f / kCarPi),
+                        buildings.car_suv_flip > 0.1f ? " (flipped)" : " (default)");
+            std::fflush(stdout);
+        }
+        suv_key_down = suv_now;
 
         terrain.width  = window.width;
         terrain.height = window.height;

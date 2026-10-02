@@ -40,7 +40,7 @@ cmake --build build
 # Native terrain (SDL2 + OpenGL 3.3). macOS: brew install sdl2
 cmake --build build --target leonida_terrain
 ./build/leonida_terrain
-# Native city (100 buildings, street grid, night windows, driving traffic)
+# Native city (100 buildings, street grid, night windows, 30 driving cars in three classes)
 cmake --build build --target leonida_city
 ./build/leonida_city
 # Headless check for the moving traffic circuits and the wheel maths (no GPU needed)

@@ -498,21 +498,27 @@ void log_glb_textures(const char* name, const TreeGlb* t) {
 }
 
 // Build model→world 3x3: longest AABB axis = forward (Z), shortest = up (Y), rest = right (X).
+// The GLB of one car class: 0 Corolla, 1 sports, 2 SUV.
+TreeGlb* car_glb_model(BuildingGlPass& p, u32 m) {
+    if (m == 0u) {
+        return &p.corolla_glb;
+    }
+    if (m == 1u) {
+        return &p.sports_glb;
+    }
+    if (m == 2u) {
+        return &p.suv_glb;
+    }
+    return nullptr;
+}
+
 void corolla_basis(const TreeGlb* t, float R[9], int* fwd_axis_out, int* up_axis_out) {
     const float e[3] = {t->xmax - t->xmin, t->ymax - t->ymin, t->zmax - t->zmin};
+    // Longest axis = length, shortest = height, except that a wheel's axle axis is the
+    // width by definition: a tall, narrow SUV would otherwise be laid on its side.
     int fwd = 0;
-    if (e[1] > e[fwd]) {
-        fwd = 1;
-    }
-    if (e[2] > e[fwd]) {
-        fwd = 2;
-    }
-    int up = (fwd == 0) ? 1 : 0;
-    for (int i = 0; i < 3; ++i) {
-        if (i != fwd && e[i] < e[up]) {
-            up = i;
-        }
-    }
+    int up  = 0;
+    car_axis_roles(e, t->wheel_axis, &fwd, &up);
     float fu[3] = {0.f, 0.f, 0.f};
     float uu[3] = {0.f, 0.f, 0.f};
     fu[fwd] = 1.f;
@@ -739,6 +745,8 @@ bool BuildingGlPass::init() {
     std::memset(lamp_glb, 0, sizeof(lamp_glb));
     std::memset(&corolla_glb, 0, sizeof(corolla_glb));
     std::memset(&sports_glb, 0, sizeof(sports_glb));
+    std::memset(&suv_glb, 0, sizeof(suv_glb));
+    corolla_glb.wheel_axis = sports_glb.wheel_axis = suv_glb.wheel_axis = -1;
     std::memset(&car_traffic, 0, sizeof(car_traffic));
     car_traffic_live = false;
     car_clock        = 0.f;
@@ -746,7 +754,13 @@ bool BuildingGlPass::init() {
     std::memset(car_scale, 0, sizeof(car_scale));
     std::memset(car_y, 0, sizeof(car_y));
     car_body_flip = 0.f;
-    car_wheel_radius[0] = car_wheel_radius[1] = 0.f;
+    car_suv_flip  = 0.f;
+    for (u32 m = 0; m < kCarMeshCount; ++m) {
+        car_wheel_radius[m] = 0.f;
+        car_yaw_off[m]      = kCarPi;
+        car_fwd_axis[m]     = 0;
+        car_up_axis[m]      = 1;
+    }
     std::memset(car_wheel_angles, 0, sizeof(car_wheel_angles));
     glow_prog = glow_vao = glow_vbo = glow_ibo = glow_ivbo = glow_nidx = 0;
     glow_count = 0;
@@ -993,6 +1007,21 @@ bool BuildingGlPass::init() {
         std::fflush(stdout);
     } else {
         std::printf("[cars] low_poly_sports_car__game_ready_vehicle.glb not found — Corolla only\n");
+        std::fflush(stdout);
+    }
+    if (load_city_tree("low_poly_suv.glb", &suv_glb)) {
+        std::printf("[cars] Loaded SUV: %u verts\n", suv_glb.nverts);
+        const float hx = suv_glb.xmax - suv_glb.xmin;
+        const float hy = suv_glb.ymax - suv_glb.ymin;
+        const float hz = suv_glb.zmax - suv_glb.zmin;
+        std::printf("[cars] SUV bounds: %.2fx%.2fx%.2f meters (length/height/width axes are "
+                    "settled by the wheels)\n",
+                    hx, hy, hz);
+        const float sc = corolla_fit_scale(&suv_glb);
+        std::printf("[cars] SUV scale factor: %.5f\n", sc);
+        std::fflush(stdout);
+    } else {
+        std::printf("[cars] low_poly_suv.glb not found — the SUV class stays out of the mix\n");
         std::fflush(stdout);
     }
     std::printf("[glb] Loaded street lamp models: klassisk (%u verts), moderne (%u verts)\n",
@@ -1304,26 +1333,52 @@ void BuildingGlPass::buildMesh(World& world) {
     (void)skip_lamp;
     (void)skip_tree;
 #endif
-    if (corolla_glb.nprims > 0 || sports_glb.nprims > 0) {
+    if (corolla_glb.nprims > 0 || sports_glb.nprims > 0 || suv_glb.nprims > 0) {
         // The models keep their accepted scale/orientation; the traffic plan only hands
         // out a lane position and a heading, which are turned into matrices every frame.
-        if (corolla_glb.nprims > 0) {
-            corolla_basis(&corolla_glb, car_basis[0], &car_fwd_axis[0], &car_up_axis[0]);
-            car_scale[0] = corolla_fit_scale(&corolla_glb);
-            car_y[0] =
-                kCityPlateauY + 0.30f - corolla_model_ymin(&corolla_glb, car_basis[0]) * car_scale[0];
+        TreeGlb*    car_glb[kCarMeshCount]  = {&corolla_glb, &sports_glb, &suv_glb};
+        const char* car_name[kCarMeshCount] = {"Corolla E80", "sports car", "SUV"};
+        u32         car_avail[kCarMeshCount];
+        for (u32 m = 0; m < kCarMeshCount; ++m) {
+            car_avail[m] = car_glb[m]->nprims > 0 ? 1u : 0u;
+            if (car_avail[m] == 0u) {
+                continue;
+            }
+            corolla_basis(car_glb[m], car_basis[m], &car_fwd_axis[m], &car_up_axis[m]);
+            car_scale[m] = corolla_fit_scale(car_glb[m]);
+            car_y[m] = kCityPlateauY + 0.30f -
+                       corolla_model_ymin(car_glb[m], car_basis[m]) * car_scale[m];
         }
-        if (sports_glb.nprims > 0) {
-            corolla_basis(&sports_glb, car_basis[1], &car_fwd_axis[1], &car_up_axis[1]);
-            car_scale[1] = corolla_fit_scale(&sports_glb);
-            car_y[1] =
-                kCityPlateauY + 0.30f - corolla_model_ymin(&sports_glb, car_basis[1]) * car_scale[1];
+
+        // Body yaw offset: 0 means the model's nose already points along the length axis
+        // that the basis maps onto the ring heading, 180 deg means it points the other way.
+        // The Corolla and the sports car are settled on the Mac. The SUV is new, so its
+        // nose is read from where its front wheels sit; if its names never said which end
+        // is which, it falls back to the Corolla's answer, and G in the sandbox flips it.
+        car_yaw_off[0] = kCarPi;       // confirmed on the Mac
+        car_yaw_off[1] = 2.f * kCarPi; // confirmed on the Mac
+        car_yaw_off[2] = (suv_glb.nose_sign < 0) ? kCarPi : 0.f;
+        if (car_avail[2] && suv_glb.nose_sign == 0) {
+            car_yaw_off[2] = kCarPi;
         }
+        for (u32 m = 0; m < kCarMeshCount; ++m) {
+            if (car_avail[m] == 0u) {
+                continue;
+            }
+            const bool  read_it = (m == 2u && car_glb[m]->nose_sign != 0);
+            const float deg     = static_cast<double>(car_yaw_off[m] * 180.f / kCarPi);
+            std::printf("[cars] %s: nose faces %c%c along the length axis (%s), body yaw offset "
+                        "%.0f deg\n",
+                        car_name[m], car_glb[m]->nose_sign >= 0 ? '+' : '-', "XYZ"[car_fwd_axis[m]],
+                        read_it ? "read from where the front wheels sit" : "confirmed on the Mac",
+                        deg);
+        }
+
         // Wheels: the loader found the wheel meshes, so give each the axle it spins about
         // and work out the spin rate in world metres.
-        for (u32 m = 0; m < 2u; ++m) {
-            TreeGlb*    g       = (m == 0u) ? &corolla_glb : &sports_glb;
-            if (g->nprims == 0 || car_scale[m] <= 0.f) {
+        for (u32 m = 0; m < kCarMeshCount; ++m) {
+            TreeGlb* g = car_glb[m];
+            if (car_avail[m] == 0u || car_scale[m] <= 0.f) {
                 continue;
             }
             car_wheel_radius[m] = g->wheel_radius * car_scale[m];
@@ -1344,49 +1399,56 @@ void BuildingGlPass::buildMesh(World& world) {
                 std::printf("[cars] %s: no wheel meshes found — the body drives but the wheels stay "
                             "static. See the [glb] primitive lines above; if the wheel materials have "
                             "other names, those names are what j_looks_like_wheel needs.\n",
-                            m == 0u ? "Corolla E80" : "sports car");
+                            car_name[m]);
             } else {
                 std::printf("[cars] %s: %u wheel part(s) in %u primitive(s) spin about %c, tyre "
                             "radius %.3f m world, roll %+.0f\n",
-                            m == 0u ? "Corolla E80" : "sports car", g->wheel_count, g->wheel_prim_count,
-                            "XYZ"[wheel_axis_log & 3], static_cast<double>(car_wheel_radius[m]),
+                            car_name[m], g->wheel_count, g->wheel_prim_count, "XYZ"[wheel_axis_log & 3],
+                            static_cast<double>(car_wheel_radius[m]),
                             static_cast<double>(wheel_roll_log));
             }
             std::fflush(stdout);
         }
-        car_traffic_build(&car_traffic, kCityBlockPitch, corolla_glb.nprims > 0 ? 1u : 0u,
-                          sports_glb.nprims > 0 ? 1u : 0u);
+        car_traffic_build(&car_traffic, kCityBlockPitch, car_avail);
         if (car_traffic.agent_count > 0) {
             car_traffic_live = true;
             car_clock        = 0.f;
             update_car_instances(0.f); // the first frame already has traffic on the streets
-            float slow_min = 1.0e9f;
-            float slow_max = 0.f;
-            float fast_min = 1.0e9f;
-            float fast_max = 0.f;
+            float cls_min[kCarMeshCount];
+            float cls_max[kCarMeshCount];
+            for (u32 m = 0; m < kCarMeshCount; ++m) {
+                cls_min[m] = 1.0e9f;
+                cls_max[m] = 0.f;
+            }
             for (u32 r = 0; r < car_traffic.ring_count; ++r) {
                 const CarRing& ring = car_traffic.rings[r];
-                if (ring.sports != 0) {
-                    fast_min = min_of(fast_min, ring.speed);
-                    fast_max = max_of(fast_max, ring.speed);
-                } else {
-                    slow_min = min_of(slow_min, ring.speed);
-                    slow_max = max_of(slow_max, ring.speed);
-                }
+                const u32      c    = static_cast<u32>(ring.cls) < kCarMeshCount
+                                          ? static_cast<u32>(ring.cls)
+                                          : 0u;
+                cls_min[c] = min_of(cls_min[c], ring.speed);
+                cls_max[c] = max_of(cls_max[c], ring.speed);
             }
             std::printf("[cars] Traffic: %u disjoint loops over the 2.4 km grid, %u vehicles driving\n",
                         car_traffic.ring_count, car_traffic.agent_count);
-            std::printf("[cars] Traffic: Corolla loops %.1f-%.1f m/s, sports loops %.1f-%.1f m/s, "
-                        "%u Corolla + %u sports\n",
-                        static_cast<double>(slow_min), static_cast<double>(slow_max),
-                        static_cast<double>(fast_min), static_cast<double>(fast_max),
-                        car_traffic.mesh_count[0], car_traffic.mesh_count[1]);
-            std::printf("[cars] Traffic: one speed per loop and %.0f m spacing, and the loops share "
-                        "no asphalt, so no collision is possible without any per-frame physics\n",
-                        static_cast<double>(car_traffic.rings[0].perimeter /
-                                            static_cast<float>(kCarCarsPerLoop)));
+            std::printf("[cars] Traffic: Corolla %.1f-%.1f m/s (%u), sports %.1f-%.1f m/s (%u), "
+                        "SUV %.1f-%.1f m/s (%u)\n",
+                        static_cast<double>(cls_min[0]), static_cast<double>(cls_max[0]),
+                        car_traffic.mesh_count[0], static_cast<double>(cls_min[1]),
+                        static_cast<double>(cls_max[1]), car_traffic.mesh_count[1],
+                        static_cast<double>(cls_min[2]), static_cast<double>(cls_max[2]),
+                        car_traffic.mesh_count[2]);
+            float spacing_min = 1.0e9f;
+            for (u32 r = 0; r < car_traffic.ring_count; ++r) {
+                const CarRing& ring = car_traffic.rings[r];
+                if (ring.cars > 0u) {
+                    spacing_min = min_of(spacing_min, ring.perimeter / static_cast<float>(ring.cars));
+                }
+            }
+            std::printf("[cars] Traffic: one speed per loop and at least %.0f m spacing, and the loops "
+                        "share no asphalt, so no collision is possible without any per-frame physics\n",
+                        static_cast<double>(spacing_min));
             std::printf("[cars] Traffic: loop 0 runs beside the sandbox camera x = 1200..1320 m, "
-                        "z = 0..240 m; press F to flip the car bodies if they drive boot-first\n");
+                        "z = 0..240 m; press F to flip the car bodies, G to flip the SUV alone\n");
             std::fflush(stdout);
         }
     }
@@ -1403,12 +1465,15 @@ void BuildingGlPass::update_car_instances(float clock_s) {
     car_clock = clock_s;
     car_traffic_step(&car_traffic, dt);
 
-    u32 n[2] = {0u, 0u};
+    u32 n[kCarMeshCount] = {0u, 0u, 0u};
     for (u32 i = 0; i < car_traffic.agent_count; ++i) {
         const CarAgent& a = car_traffic.agents[i];
         float x = 0.f, z = 0.f, yaw = 0.f;
         car_agent_pose(&car_traffic, i, &x, &z, &yaw);
-        const u32 m = a.mesh == 1u ? 1u : 0u;
+        const u32 m = a.mesh < kCarMeshCount ? a.mesh : 0u;
+        if (car_glb_model(*this, m) == nullptr) {
+            continue;
+        }
         if (n[m] >= kCarAgentCap) {
             continue;
         }
@@ -1423,25 +1488,24 @@ void BuildingGlPass::update_car_instances(float clock_s) {
         }
         // The AABB basis maps each model's longest axis onto the ring heading, and on a
         // car that axis is its length, so the body needs a yaw offset to face along the
-        // direction of travel. This default — 180° for the Corolla, and a further 180°
-        // for the sports mesh, whose longest axis is the opposite end of the car — is
-        // confirmed on the Mac: the fleet drives nose-first. car_body_flip stays as a
-        // debug aid; press F in the sandbox to flip both bodies if a new model is ever
-        // authored the other way round.
-        const float mesh_yaw = yaw + kCarPi + car_body_flip + (m == 1u ? kCarPi : 0.f);
+        // direction of travel. Those offsets are set at build time (the Corolla's and the
+        // sports car's are confirmed on the Mac, the SUV's is read from its front wheels);
+        // car_body_flip and car_suv_flip stay as debug aids, on F and G in the sandbox.
+        float mesh_yaw = yaw + car_yaw_off[m] + car_body_flip;
+        if (m == 2u) {
+            mesh_yaw += car_suv_flip;
+        }
         corolla_yaw_mat(&car_mats[m][n[m] * 16u], x, car_y[m], z, mesh_yaw, car_scale[m],
                         car_basis[m]);
         ++n[m];
     }
-    car_traffic.mesh_count[0] = n[0];
-    car_traffic.mesh_count[1] = n[1];
-    if (corolla_glb.nprims > 0 && n[0] > 0) {
-        tree_glb_set_instances(&corolla_glb, car_mats[0], n[0]);
-        tree_glb_set_wheel_angles(&corolla_glb, car_wheel_angles[0], n[0]);
-    }
-    if (sports_glb.nprims > 0 && n[1] > 0) {
-        tree_glb_set_instances(&sports_glb, car_mats[1], n[1]);
-        tree_glb_set_wheel_angles(&sports_glb, car_wheel_angles[1], n[1]);
+    for (u32 m = 0; m < kCarMeshCount; ++m) {
+        car_traffic.mesh_count[m] = n[m];
+        TreeGlb* g = car_glb_model(*this, m);
+        if (g != nullptr && g->nprims > 0 && n[m] > 0) {
+            tree_glb_set_instances(g, car_mats[m], n[m]);
+            tree_glb_set_wheel_angles(g, car_wheel_angles[m], n[m]);
+        }
     }
 }
 
@@ -1523,8 +1587,11 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
                 draw_instanced_glb(&sky_glb, tree_shadow_prog);
             }
             draw_tree_glbs(tree_glb, tree_shadow_prog);
-            if (corolla_glb.instance_count > 0) {
-                draw_instanced_glb(&corolla_glb, tree_shadow_prog);
+            for (u32 m = 0; m < kCarMeshCount; ++m) {
+                TreeGlb* cg = car_glb_model(*this, m);
+                if (cg != nullptr && cg->instance_count > 0) {
+                    draw_instanced_glb(cg, tree_shadow_prog);
+                }
             }
             if (sports_glb.instance_count > 0) {
                 draw_instanced_glb(&sports_glb, tree_shadow_prog);
@@ -1683,8 +1750,12 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
         draw_tree_glbs(tree_glb, tree_prog);
         draw_instanced_glb(&sky_glb, tree_prog);
         glUniform1f(glGetUniformLocation(tree_prog, "uNightGlow"), 0.f);
-        draw_instanced_glb(&corolla_glb, tree_prog);
-        draw_instanced_glb(&sports_glb, tree_prog);
+        for (u32 m = 0; m < kCarMeshCount; ++m) {
+            TreeGlb* cg = car_glb_model(*this, m);
+            if (cg != nullptr && cg->nprims > 0) {
+                draw_instanced_glb(cg, tree_prog);
+            }
+        }
         glUseProgram(building_prog);
     }
     if (glow_prog && glow_count > 0 && night > 0.01f) {

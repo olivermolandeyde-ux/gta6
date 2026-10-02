@@ -49,6 +49,10 @@ struct TreeGlb {
     u32      instance_count;
     u32      wheel_prim_count;   // primitives that carry rotating wheels
     u32      wheel_count;        // wheels across those primitives (4 for a whole car)
+    int      wheel_axis;         // model-space axle axis of the fitted wheels, -1 if none
+    int      nose_sign;          // +1/-1: the nose is at larger/smaller coords on the length
+                                 // axis, from where the front wheels sit vs the back ones
+                                 // (0 = the names did not say)
     float    wheel_radius;       // model units, the tyre radius used for the spin rate
     float    ymin;
     float    ymax;

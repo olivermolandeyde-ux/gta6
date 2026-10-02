@@ -1159,6 +1159,17 @@ struct WheelAttach {
 WheelAttach g_wheel_attach[16];
 u32         g_wheel_attach_n = 0;
 
+// Where the front wheels are relative to the back ones, which is how the loader knows
+// which end of a car model is the nose without guessing. Every fitted wheel cluster of a
+// wheel-named part contributes one sample, with the end its name claims.
+struct WheelEndSample {
+    float p[3];
+    int   end; // +1 front, -1 back
+};
+
+WheelEndSample g_wheel_ends[24];
+u32            g_wheel_ends_n = 0;
+
 // Counters for the one-line wheel report printed after a model has been walked: how the
 // spinning parts were found, so a part that is left out of the rotation is visible in the
 // log instead of having to be spotted on screen.
@@ -2161,6 +2172,24 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
             scratch && car_wheel_fit(reinterpret_cast<const float*>(verts),
                                      sizeof(TreeVert) / sizeof(float), pc, scratch, &ws);
         std::free(scratch);
+        if (fitted) {
+            // Remember the model's axle axis and where its front wheels sit, so the renderer
+            // can pick the height axis of a tall vehicle and the nose end of a car whose
+            // authoring direction we have never seen. Neither affects a confirmed model:
+            // the Corolla and the sports car keep the values their Mac checks settled.
+            out->wheel_axis = ws.axle_axis;
+            char wname[96];
+            name_copy(wname, sizeof(wname),
+                      j_looks_like_wheel(node_name) ? node_name : mesh_name);
+            const int wend = car_wheel_name_end(wname);
+            for (int w = 0; w < ws.count && g_wheel_ends_n < 24u; ++w) {
+                WheelEndSample& smp = g_wheel_ends[g_wheel_ends_n++];
+                smp.p[0]            = ws.center[w][0];
+                smp.p[1]            = ws.center[w][1];
+                smp.p[2]            = ws.center[w][2];
+                smp.end             = wend;
+            }
+        }
         if (fitted && wheel_named) {
             pr.wheel_count = ws.count;
             pr.wheel_axis  = ws.axle_axis;
@@ -2393,6 +2422,9 @@ bool load_tree_glb(const char* path, TreeGlb* out) {
     g_wheel_attach_n = 0;
     g_wheel_by_name = 0;
     g_wheel_by_shape = 0;
+    g_wheel_ends_n = 0;
+    out->wheel_axis = -1;
+    out->nose_sign  = 0;
     std::printf("[glb] Loading tree model: %s\n", path);
     std::fflush(stdout);
     FILE* f = std::fopen(path, "rb");
@@ -2563,6 +2595,24 @@ bool load_tree_glb(const char* path, TreeGlb* out) {
     // Decide the shape-only wheel candidates now: the walk is done, so the car's floor and
     // its length/height axes are known, and this is still before attrib 8 is attached.
     wheel_hunt_finish(out);
+
+    // With the whole model measured, the axis roles are known, so the front/back wheel
+    // samples can answer which end of the car is the nose.
+    if (g_wheel_ends_n > 0u) {
+        const float ext[3] = {out->xmax - out->xmin, out->ymax - out->ymin, out->zmax - out->zmin};
+        int         fwd = 0, up = 0;
+        car_axis_roles(ext, out->wheel_axis, &fwd, &up);
+        float pts[24 * 3];
+        int   ends[24];
+        for (u32 i = 0; i < g_wheel_ends_n; ++i) {
+            pts[3u * i + 0u] = g_wheel_ends[i].p[0];
+            pts[3u * i + 1u] = g_wheel_ends[i].p[1];
+            pts[3u * i + 2u] = g_wheel_ends[i].p[2];
+            ends[i]          = g_wheel_ends[i].end;
+        }
+        out->nose_sign = car_nose_sign(pts, ends, g_wheel_ends_n, fwd);
+        g_wheel_ends_n = 0;
+    }
 
     glGenBuffers(1, &out->instance_vbo);
     glBindBuffer(GL_ARRAY_BUFFER, out->instance_vbo);

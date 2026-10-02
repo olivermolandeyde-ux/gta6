@@ -29,19 +29,22 @@ struct BuildingGlPass {
     TreeGlb  lamp_glb[kLampKindCount]; // klassisk, moderne
     TreeGlb  corolla_glb;              // low-poly_toyota_corolla_e80_sedan.glb, instanced per frame
     TreeGlb  sports_glb;               // low_poly_sports_car__game_ready_vehicle.glb
+    TreeGlb  suv_glb;                  // low_poly_suv.glb — the third class in the mix
     // Moving traffic: circuits, agent state, and the per-frame instance matrices.
     CarTraffic car_traffic;
     bool       car_traffic_live;
     float      car_clock;
-    float      car_basis[2][9]; // model → world basis, [0] Corolla, [1] sports
-    float      car_scale[2];
-    float      car_y[2];        // model origin height, so wheels sit on the road
-    float      car_body_flip;   // extra yaw on both bodies; the sandbox F key toggles it
-    int        car_fwd_axis[2];                   // model-space length axis, from the AABB basis
-    int        car_up_axis[2];                    // model-space height axis, from the AABB basis
-    float      car_wheel_radius[2];               // world metres, [0] Corolla, [1] sports
-    float      car_wheel_angles[2][kCarAgentCap]; // radians per vehicle, uploaded every frame
-    float      car_mats[2][kCarAgentCap * 16];
+    float      car_basis[kCarMeshCount][9]; // model → world basis, by mesh class
+    float      car_scale[kCarMeshCount];
+    float      car_y[kCarMeshCount];        // model origin height, so wheels sit on the road
+    float      car_body_flip;   // extra yaw on every body; the sandbox F key toggles it
+    float      car_suv_flip;    // extra yaw on the SUV alone; the sandbox G key toggles it
+    float      car_yaw_off[kCarMeshCount]; // baked body yaw offset per model (nose direction)
+    int        car_fwd_axis[kCarMeshCount];          // model-space length axis, from the AABB
+    int        car_up_axis[kCarMeshCount];           // model-space height axis, from the AABB
+    float      car_wheel_radius[kCarMeshCount];      // world metres, per model
+    float      car_wheel_angles[kCarMeshCount][kCarAgentCap]; // radians, uploaded every frame
+    float      car_mats[kCarMeshCount][kCarAgentCap * 16];
     unsigned glow_prog, glow_vao, glow_vbo, glow_ibo, glow_ivbo, glow_nidx;
     u32      glow_count;
     unsigned street_count;

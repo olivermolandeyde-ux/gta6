@@ -122,15 +122,33 @@ int main(int argc, char** argv) {
                 static_cast<double>(seconds));
 
     CarTraffic traffic{};
-    car_traffic_build(&traffic, kCityBlockPitch, 1u, 1u);
+    const u32 car_avail[kCarMeshCount] = {1u, 1u, 1u};
+    car_traffic_build(&traffic, kCityBlockPitch, car_avail);
 
-    const u32 corolla_cars = (kCarLoopCount - kCarSportsLoops) * kCarCarsPerLoop;
-    const u32 sports_cars  = kCarSportsLoops * kCarCarsPerLoop;
+    const u32 corolla_cars = kCarCorollaLoops * kCarCarsPerLoop[0];
+    const u32 sports_cars  = kCarSportsLoops * kCarCarsPerLoop[1];
+    const u32 suv_cars     = kCarSuvLoops * kCarCarsPerLoop[2];
+    expect(corolla_cars == 15u && sports_cars == 10u && suv_cars == 5u,
+           "the requested mix is 15 Corolla + 10 sports + 5 SUV");
+    expect(traffic.agent_count == 30u && kCarVehicleCount == 30u,
+           "30 vehicles in the fleet, as asked");
     expect(traffic.agent_count == kCarVehicleCount, "vehicle count matches the citywide plan");
-    expectf(traffic.mesh_count[0] == corolla_cars && traffic.mesh_count[1] == sports_cars,
-            "mesh split: %u Corolla E80 + %u sports across %u loops", traffic.mesh_count[0],
-            traffic.mesh_count[1], traffic.ring_count);
+    expectf(traffic.mesh_count[0] == corolla_cars && traffic.mesh_count[1] == sports_cars &&
+                traffic.mesh_count[2] == suv_cars,
+            "mesh split: %u Corolla E80 + %u sports + %u SUV across %u loops",
+            traffic.mesh_count[0], traffic.mesh_count[1], traffic.mesh_count[2],
+            traffic.ring_count);
     expect(traffic.ring_count == kCarLoopCount, "every planned loop was built");
+
+    // A class whose model is missing borrows one that loaded, so the fleet stays complete
+    // (the renderer does exactly this when the SUV glb is not on disk).
+    {
+        CarTraffic no_suv{};
+        const u32   avail2[kCarMeshCount] = {1u, 1u, 0u};
+        car_traffic_build(&no_suv, kCityBlockPitch, avail2);
+        expect(no_suv.agent_count == 30u && no_suv.mesh_count[2] == 0u,
+               "with no SUV model the fleet still has all 30 vehicles, on other models");
+    }
 
     // ---- geometry and lattice law of every loop -------------------------------------
     float worst_yaw_step = 0.f;
@@ -220,27 +238,43 @@ int main(int argc, char** argv) {
 
     // ---- safety argument 2: one speed per loop, so the spacing never closes up ------
     u32   class_bad   = 0;
-    float slow_max    = 0.f;
-    float fast_min    = 1.0e9f;
+    float class_max[kCarMeshCount];
+    float class_min[kCarMeshCount];
     float spacing_min = 1.0e9f;
+    for (u32 m = 0; m < kCarMeshCount; ++m) {
+        class_min[m] = 1.0e9f;
+        class_max[m] = 0.f;
+    }
     for (u32 r = 0; r < traffic.ring_count; ++r) {
         const CarRing& ring = traffic.rings[r];
-        const float    lo   = ring.sports != 0 ? kCarSportsSpeedMin : kCarCorollaSpeedMin;
-        const float    hi   = ring.sports != 0 ? kCarSportsSpeedMax : kCarCorollaSpeedMax;
-        if (ring.speed < lo || ring.speed > hi) {
+        const u32      c    = static_cast<u32>(ring.cls);
+        const float    lo   = (c == 1u) ? kCarSportsSpeedMin
+                                        : (c == 2u) ? kCarSuvSpeedMin : kCarCorollaSpeedMin;
+        const float    hi   = (c == 1u) ? kCarSportsSpeedMax
+                                        : (c == 2u) ? kCarSuvSpeedMax : kCarCorollaSpeedMax;
+        if (c >= kCarMeshCount || ring.speed < lo || ring.speed > hi) {
             ++class_bad;
         }
-        if (ring.sports != 0) {
-            fast_min = fast_min < ring.speed ? fast_min : ring.speed;
-        } else {
-            slow_max = slow_max > ring.speed ? slow_max : ring.speed;
+        if (c < kCarMeshCount) {
+            class_min[c] = class_min[c] < ring.speed ? class_min[c] : ring.speed;
+            class_max[c] = class_max[c] > ring.speed ? class_max[c] : ring.speed;
         }
-        const float spacing = ring.perimeter / static_cast<float>(kCarCarsPerLoop);
+        const float spacing = ring.perimeter / static_cast<float>(ring.cars);
         spacing_min         = spacing_min < spacing ? spacing_min : spacing;
     }
-    expect(class_bad == 0u, "every loop speed is inside its class range (8-10 / 12-15 m/s)");
-    expectf(fast_min > slow_max, "sports loops are faster than every Corolla loop (%.1f > %.1f m/s)",
-            static_cast<double>(fast_min), static_cast<double>(slow_max));
+    expect(class_bad == 0u,
+           "every loop speed is inside its class range (Corolla 8-10, sports 12-15, SUV 7-9 m/s)");
+    expectf(class_min[0] >= 8.f && class_max[0] <= 10.f && class_min[1] >= 12.f &&
+                class_max[1] <= 15.f && class_min[2] >= 7.f && class_max[2] <= 9.f,
+            "speeds: Corolla %.1f-%.1f, sports %.1f-%.1f, SUV %.1f-%.1f m/s",
+            static_cast<double>(class_min[0]), static_cast<double>(class_max[0]),
+            static_cast<double>(class_min[1]), static_cast<double>(class_max[1]),
+            static_cast<double>(class_min[2]), static_cast<double>(class_max[2]));
+    expectf(class_min[1] > class_max[0], "sports loops are faster than every other loop (%.1f > %.1f)",
+            static_cast<double>(class_min[1]), static_cast<double>(class_max[0]));
+    expectf(class_min[2] < class_min[0],
+            "SUVs roll slower than the Corollas (%.1f < %.1f m/s)", static_cast<double>(class_min[2]),
+            static_cast<double>(class_min[0]));
     expectf(spacing_min > 60.f,
             "safe following distance at spawn: %.1f m between vehicles on a loop, invariant because "
             "each loop runs at one speed",
@@ -516,6 +550,57 @@ int main(int argc, char** argv) {
                "a spare tyre resting in the boot is refused");
         expect(car_wheel_on_ground(0.36f, 0.35f, 0.01f, car_h),
                "a wheel one centimetre off the road is still accepted (meshes are never exact)");
+
+        // A tall, narrow SUV: the shortest AABB axis is its width, which is also the wheel
+        // axle. The old rule ("shortest axis is the height") would lay the SUV on its side,
+        // so the axle settles it — and the two confirmed models must not change.
+        {
+            float ext_suv[3] = {4.90f, 1.75f, 1.70f}; // length X, height Y, width Z
+            int   fwd = -1, up = -1;
+            car_axis_roles(ext_suv, 2, &fwd, &up);
+            expect(fwd == 0 && up == 1,
+                   "a tall SUV keeps its length on X and its height on Y (axle says Z is width)");
+
+            float ext_cor[3] = {4.60f, 1.50f, 2.00f}; // the Corolla's accepted shape
+            car_axis_roles(ext_cor, 2, &fwd, &up);
+            expect(fwd == 0 && up == 1, "the Corolla's axes are unchanged by the axle rule");
+
+            float ext_sports[3] = {4.20f, 1.10f, 1.90f};
+            car_axis_roles(ext_sports, 2, &fwd, &up);
+            expect(fwd == 0 && up == 1, "the sports car's axes are unchanged by the axle rule");
+
+            // No fitted wheel (no axle hint): the old rule stands, unchanged.
+            car_axis_roles(ext_suv, -1, &fwd, &up);
+            expect(fwd == 0 && up == 2, "without wheels the old shortest-axis rule is kept");
+        }
+
+        // Which end of a car model is the nose: the front axle is nearer the nose than the
+        // rear axle is, and the asset names say which axle is which ("Ft" / "Bk").
+        {
+            expect(car_wheel_name_end("wheel.Ft.L_tire_0") == 1 &&
+                       car_wheel_name_end("wheelbrake.Ft.R_metal_rough_plus_0") == 1,
+                   "\"Ft\" in a wheel name means the front axle");
+            expect(car_wheel_name_end("wheelbrake.Bk.L_metal_rough_plus_0") == -1,
+                   "\"Bk\" in a wheel name means the back axle");
+            expect(car_wheel_name_end("wheel_0") == 0, "a name that says neither end is neutral");
+
+            const float pts_back_nose[6] = {-1.30f, 0.f, 0.f, 1.30f, 0.f, 0.f};
+            const int   ends_back_nose[2] = {-1, 1}; // back axle at -X, front axle at +X
+            expect(car_nose_sign(pts_back_nose, ends_back_nose, 2u, 0) == 1,
+                   "front wheels at +X: the nose faces +X, so no yaw offset is needed");
+
+            const float pts_front_nose[6] = {1.30f, 0.f, 0.f, -1.30f, 0.f, 0.f};
+            const int   ends_front_nose[2] = {-1, 1};
+            expect(car_nose_sign(pts_front_nose, ends_front_nose, 2u, 0) == -1,
+                   "front wheels at -X: the nose faces -X, so the body needs 180 degrees");
+
+            const int unknown_ends[2] = {0, 0};
+            expect(car_nose_sign(pts_front_nose, unknown_ends, 2u, 0) == 0,
+                   "names that never say front or back teach nothing");
+            const int front_only[2] = {1, 1};
+            expect(car_nose_sign(pts_front_nose, front_only, 2u, 0) == 0,
+                   "one axle alone is not enough to say which way the car faces");
+        }
 
         // The real asset names from the Corolla GLB. The tire rotated while the brake parts
         // did not, because "brake" was not in the keyword list at all and the geometry test
