@@ -1,0 +1,87 @@
+name: Leonida Engine CI/CD
+
+on:
+  push:
+    branches: [main, arena/*]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++ python3 python3-pip libsdl2-dev libgl1-mesa-dev
+          pip3 install numpy
+
+      - name: Configure CMake (Release)
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS="-O3 -DNDEBUG"
+
+      - name: Build Engine
+        run: cmake --build build --parallel 4
+
+      - name: Verify Native City Target Built (SDL2 + OpenGL)
+        run: |
+          test -x build/leonida_city || { echo "leonida_city missing — SDL2/OpenGL were not found"; exit 1; }
+          test -x build/leonida_terrain || { echo "leonida_terrain missing"; exit 1; }
+          echo "native city + terrain viewers built"
+
+      - name: Generate City Data
+        run: python3 tools/citygen/master_generate.py
+
+      - name: Generate AI Data
+        run: python3 tools/citygen/master_generate.py --ai-only
+
+      - name: Run Phase 1-10 Integration Test
+        run: ./build/leonida_full_sandbox --test-all-phases --output test_results.json
+
+      - name: Run City Traffic Test (circuits, lanes, closest approach)
+        run: ./build/leonida_city_traffic_sandbox
+
+      - name: Run Phase 11-15 Gameplay Test
+        run: ./build/leonida_phase15_sandbox --full-gameplay-test
+
+      - name: Verify Save/Load Integrity (Phase 14)
+        run: ./build/leonida_phase14_sandbox --save-load-stress-test --iterations 100
+
+      - name: Upload Test Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: test_results.json
+          if-no-files-found: ignore
+
+  performance-profiling:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Perf Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y linux-tools-common linux-tools-generic || true
+          sudo sysctl -w kernel.perf_event_paranoid=-1 || true
+          perf --version || echo "perf unavailable on this runner — falling back to a plain run"
+
+      - name: Build with Debug Symbols
+        run: cmake -S . -B build-perf -DCMAKE_BUILD_TYPE=RelWithDebInfo
+
+      - name: Run Performance Profile
+        run: |
+          if perf record -g -o perf.data ./build-perf/leonida_full_sandbox --benchmark --frames 10000; then
+            perf report --stdio --input perf.data > perf_report.txt
+          else
+            echo "perf sampling unavailable — recorded the sandbox output instead" | tee perf_report.txt
+            ./build-perf/leonida_full_sandbox --benchmark --frames 10000 | tee -a perf_report.txt
+          fi
+
+      - name: Upload Performance Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-report
+          path: perf_report.txt
+          if-no-files-found: ignore

@@ -1,0 +1,62 @@
+#pragma once
+
+#include "core/Types.h"
+#include "render/CarTraffic.h"
+#include "render/TreeGlb.h"
+
+namespace engine {
+
+class World;
+
+// Dedicated OpenGL building / street / lamp pass. Not a generic Renderer.
+struct BuildingGlPass {
+    unsigned building_prog;
+    unsigned street_prog;
+    unsigned cube_vao;
+    unsigned cube_vbo;
+    unsigned cube_ibo;
+    unsigned street_vao;
+    unsigned street_vbo;
+    unsigned cloud_prog;
+    unsigned cyl_vao, cyl_ibo, cyl_count;
+    unsigned sph_vao, sph_ibo, sph_count;
+    unsigned cone_vao, cone_ibo, cone_count;
+    unsigned tex_brick, tex_brick_n, tex_conc, tex_conc_n, tex_asph, tex_bark, tex_leaf;
+    unsigned shadow_fbo, shadow_tex, shadow_prog;
+    unsigned tree_prog, tree_shadow_prog;
+    TreeGlb  tree_glb[kTreeKindCount];
+    TreeGlb  sky_glb; // custom downtown skyscraper-2.glb
+    TreeGlb  lamp_glb[kLampKindCount]; // klassisk, moderne
+    TreeGlb  corolla_glb;              // low-poly_toyota_corolla_e80_sedan.glb, instanced per frame
+    TreeGlb  sports_glb;               // low_poly_sports_car__game_ready_vehicle.glb
+    TreeGlb  suv_glb;                  // low_poly_suv.glb — the third class in the mix
+    // Moving traffic: circuits, agent state, and the per-frame instance matrices.
+    CarTraffic car_traffic;
+    bool       car_traffic_live;
+    float      car_clock;
+    float      car_basis[kCarMeshCount][9]; // model → world basis, by mesh class
+    float      car_scale[kCarMeshCount];
+    float      car_y[kCarMeshCount];        // model origin height, so wheels sit on the road
+    float      car_body_flip;   // extra yaw on every body; the sandbox F key toggles it
+    float      car_suv_flip;    // extra yaw on the SUV alone; the sandbox G key toggles it
+    float      car_yaw_off[kCarMeshCount]; // baked body yaw offset per model (nose direction)
+    int        car_fwd_axis[kCarMeshCount];          // model-space length axis, from the AABB
+    int        car_up_axis[kCarMeshCount];           // model-space height axis, from the AABB
+    float      car_wheel_radius[kCarMeshCount];      // world metres, per model
+    float      car_wheel_angles[kCarMeshCount][kCarAgentCap]; // radians, uploaded every frame
+    float      car_mats[kCarMeshCount][kCarAgentCap * 16];
+    unsigned glow_prog, glow_vao, glow_vbo, glow_ibo, glow_ivbo, glow_nidx;
+    u32      glow_count;
+    unsigned street_count;
+    u32      num_buildings;
+    bool     ok;
+
+    bool init();
+    void buildMesh(World& world);
+    void update_car_instances(float clock_s);
+    void draw(World& world, float3 camera_pos, float3 camera_target, int width, int height,
+              float time_of_day, float3 sun_dir, float clock_s);
+    void shutdown();
+};
+
+} // namespace engine
