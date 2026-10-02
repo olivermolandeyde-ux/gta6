@@ -11,6 +11,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #if defined(__APPLE__)
@@ -460,7 +461,7 @@ float corolla_fit_scale(const TreeGlb* t) {
     if (length < 0.001f) {
         return 1.f;
     }
-    float s = (4.2f * 1.75f) / length;
+    float s = (4.2f * 2.2f) / length;
     if (s > 50.f) {
         s = 50.f;
     }
@@ -495,17 +496,78 @@ void log_glb_textures(const char* name, const TreeGlb* t) {
     std::fflush(stdout);
 }
 
-// T * Ry(yaw) * Rx(-90°) * S  — Z-up Blender GLB stands on its wheels (Y-up).
-// Rx(-90): (x,y,z) → (x, z, -y). Uniform scale commutes.
-void corolla_yaw_mat(float* m, float x, float y, float z, float yaw, float sc) {
+// 1 Rx(+90)*Rz(+90)  2 Rx(+90)*Rz(-90)  3 axis-swap Rx(-90)  4 Rx(-90)*Rz(+90)
+inline constexpr int kCorollaRotDefault = 3;
+
+int corolla_rot_opt() {
+    const char* e = std::getenv("LEONIDA_COROLLA_ROT");
+    if (e && e[0] >= '1' && e[0] <= '4') {
+        return e[0] - '0';
+    }
+    return kCorollaRotDefault;
+}
+
+void corolla_fix_point(int opt, float x, float y, float z, float* ox, float* oy, float* oz) {
+    switch (opt) {
+        case 1: // Rz(+90) then Rx(+90): (x,y,z) → (-y, -z, x)
+            *ox = -y;
+            *oy = -z;
+            *oz = x;
+            break;
+        case 2: // Rz(-90) then Rx(+90): (x,y,z) → (y, -z, -x)
+            *ox = y;
+            *oy = -z;
+            *oz = -x;
+            break;
+        case 4: // Rz(+90) then Rx(-90): (x,y,z) → (-y, z, -x)
+            *ox = -y;
+            *oy = z;
+            *oz = -x;
+            break;
+        default: // 3: swap Y/Z, negate Y — Rx(-90): (x,y,z) → (x, z, -y)
+            *ox = x;
+            *oy = z;
+            *oz = -y;
+            break;
+    }
+}
+
+float corolla_model_ymin(const TreeGlb* t, int opt) {
+    float mn = 1.0e9f;
+    const float xs[2] = {t->xmin, t->xmax};
+    const float ys[2] = {t->ymin, t->ymax};
+    const float zs[2] = {t->zmin, t->zmax};
+    for (int i = 0; i < 2; ++i) {
+        for (int j = 0; j < 2; ++j) {
+            for (int k = 0; k < 2; ++k) {
+                float ox, oy, oz;
+                corolla_fix_point(opt, xs[i], ys[j], zs[k], &ox, &oy, &oz);
+                if (oy < mn) {
+                    mn = oy;
+                }
+            }
+        }
+    }
+    return mn;
+}
+
+void corolla_yaw_mat(float* m, float x, float y, float z, float yaw, float sc, int opt) {
+    float ax, ay, az, bx, by, bz, cx, cy, cz;
+    corolla_fix_point(opt, sc, 0.f, 0.f, &ax, &ay, &az);
+    corolla_fix_point(opt, 0.f, sc, 0.f, &bx, &by, &bz);
+    corolla_fix_point(opt, 0.f, 0.f, sc, &cx, &cy, &cz);
     const float c = std::cos(yaw);
     const float s = std::sin(yaw);
     std::memset(m, 0, 16 * sizeof(float));
-    m[0]  = c * sc;
-    m[2]  = -s * sc;
-    m[4]  = -s * sc;
-    m[6]  = -c * sc;
-    m[9]  = sc;
+    m[0]  = c * ax + s * az;
+    m[1]  = ay;
+    m[2]  = -s * ax + c * az;
+    m[4]  = c * bx + s * bz;
+    m[5]  = by;
+    m[6]  = -s * bx + c * bz;
+    m[8]  = c * cx + s * cz;
+    m[9]  = cy;
+    m[10] = -s * cx + c * cz;
     m[12] = x;
     m[13] = y;
     m[14] = z;
@@ -832,19 +894,24 @@ bool BuildingGlPass::init() {
     std::printf("[glb] Loading lamp model: gatelys_moderne.glb\n");
     load_city_tree("gatelys_moderne.glb", &lamp_glb[1]);
     if (load_city_tree("low-poly_toyota_corolla_e80_sedan.glb", &corolla_glb)) {
-        corolla_glb.z_up = 1; // Rx(-90°) Z-up → Y-up
+        const int rot = corolla_rot_opt();
+        corolla_glb.z_up = rot;
         std::printf("[cars] Loaded Toyota Corolla E80: %u verts (should be < 10,000)\n", corolla_glb.nverts);
         const float hx = corolla_glb.xmax - corolla_glb.xmin;
         const float hy = corolla_glb.ymax - corolla_glb.ymin;
         const float hz = corolla_glb.zmax - corolla_glb.zmin;
         std::printf("[cars] Car bounds: %.2fx%.2fx%.2f meters\n", hx, hy, hz);
-        std::printf("[cars] Applied Z-up to Y-up rotation\n");
+        std::printf("[cars] Using rotation option: %d\n", rot);
         const float sc = corolla_fit_scale(&corolla_glb);
-        float L = hx > hy ? hx : hy;
-        float W = hx > hy ? hy : hx;
-        float H = hz;
-        std::printf("[cars] Final scale: %.5f, dimensions: %.2fx%.2fx%.2f meters\n", sc, L * sc, W * sc, H * sc);
-        std::printf("[cars] Car size: %.2f x %.2f x %.2f meters\n", L * sc, W * sc, H * sc);
+        float L = hx;
+        if (hy > L) {
+            L = hy;
+        }
+        if (hz > L) {
+            L = hz;
+        }
+        std::printf("[cars] Scale factor: %.5f, final size: %.2f x %.2f x %.2f meters\n", sc, L * sc, hx * sc,
+                    hy * sc);
         std::fflush(stdout);
     } else {
         std::printf("[cars] low-poly_toyota_corolla_e80_sedan.glb not found — no parked cars\n");
@@ -1164,8 +1231,9 @@ void BuildingGlPass::buildMesh(World& world) {
         static float corolla_xz[kCorollaSpawnCap * 2];
         u32 sn       = 0;
         u32 n_corolla_xz = 0;
+        const int   rot  = corolla_rot_opt();
         const float sc   = corolla_fit_scale(&corolla_glb);
-        const float y0   = corolla_glb.zmin; // after Rx(-90) world Y = Z
+        const float y0   = corolla_model_ymin(&corolla_glb, rot);
         const float y    = kCityPlateauY + 0.30f - y0 * sc; // road top + 0.05 m
         const float park = 7.2f; // curb lane on 20 m asphalt, not the 11.5 m sidewalk
         auto push_suv = [&](float x, float z, float along) {
@@ -1184,7 +1252,7 @@ void BuildingGlPass::buildMesh(World& world) {
             }
             const u32 flip = static_cast<u32>(x * 17.f + z * 31.f) & 1u;
             const float yaw = along + (flip ? 3.14159265f : 0.f);
-            corolla_yaw_mat(&corolla_mats[sn * 16], x, y, z, yaw, sc);
+            corolla_yaw_mat(&corolla_mats[sn * 16], x, y, z, yaw, sc, rot);
             corolla_xz[n_corolla_xz * 2u]     = x;
             corolla_xz[n_corolla_xz * 2u + 1] = z;
             ++n_corolla_xz;
