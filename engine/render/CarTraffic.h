@@ -13,6 +13,12 @@ namespace engine {
 // follows the city pass convention forward = (sin yaw, 0, cos yaw). Driving on the
 // right-hand lane therefore falls out of the offset+left-turn pairing: the lane a
 // circuit drives in is always the right-hand lane of its travel direction.
+//
+// The pairing is not optional. The very same lane offsets traversed with *right*
+// turns put every car in the left-hand lane (the driver would keep the centre line
+// on the right) — British-style traffic on a Florida-style grid. The sandbox asserts
+// both the lane side and that no lane carries two directions, so a future edit that
+// flips the traversal without flipping the turns is caught immediately.
 
 inline constexpr float kCarPi           = 3.14159265358979323846f;
 inline constexpr u32   kCarSegmentCap   = 8;  // 4 straights + 4 corner arcs

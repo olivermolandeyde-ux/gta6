@@ -54,8 +54,10 @@ constexpr u32 kPlanCount = 8;
 
 // Phases were searched once (see the city traffic sandbox) so that no two circuits
 // reach a shared intersection at the same instant. Because every circuit has the
-// same perimeter and the same lap period, these offsets hold forever. Retune them
-// if the vehicle counts per circuit change — the sandbox checks the closest approach.
+// same perimeter and the same lap period, these offsets hold forever, and they still
+// hold after the traversal was flipped to left turns: the closest approach over ten
+// laps is 8.40 m, exactly the opposite-lane separation, so nothing can come nearer.
+// Retune them if the vehicle counts per circuit change — the sandbox checks it.
 const CarRingPlan kPlan[kPlanCount] = {
     {9u, 0u, 10u, 2u, 4u, 0.f},      // west of the avenue, z 0-240 m
     {9u, 2u, 10u, 4u, 4u, 33.17f},   // west of the avenue, next block north
@@ -91,22 +93,26 @@ void car_ring_init(CarRing* r, float x0, float z0, float x1, float z1, float lan
     const float dx     = (x1 - x0) + 2.f * (L - R);
     const float dz     = (z1 - z0) + 2.f * (L - R);
     const float quarter = 0.5f * kCarPi * R;
-    const float kappa   = -1.f / R; // left turns, heading decreases
+    const float kappa   = 1.f / R; // left turns: the heading increases
     if (dx <= 0.f || dz <= 0.f) {
         return;
     }
     const float hy = 0.5f * kCarPi; // 90°
 
-    // Order: corner (x0,z0), +X straight, corner (x1,z0), +Z straight,
-    //        corner (x1,z1), -X straight, corner (x0,z1), -Z straight.
-    put_seg(r, 0u, x0 - L, z0 - L + R, x0 - L + R, z0 - L + R, kCarPi, quarter, kappa);
-    put_seg(r, 1u, x0 - L + R, z0 - L, 0.f, 0.f, hy, dx, 0.f);
-    put_seg(r, 2u, x1 + L - R, z0 - L, x1 + L - R, z0 - L + R, hy, quarter, kappa);
-    put_seg(r, 3u, x1 + L, z0 - L + R, 0.f, 0.f, 0.f, dz, 0.f);
-    put_seg(r, 4u, x1 + L, z1 + L - R, x1 + L - R, z1 + L - R, 0.f, quarter, kappa);
-    put_seg(r, 5u, x1 + L - R, z1 + L, 0.f, 0.f, -hy, dx, 0.f);
-    put_seg(r, 6u, x0 - L + R, z1 + L, x0 - L + R, z1 + L - R, -hy, quarter, kappa);
-    put_seg(r, 7u, x0 - L, z1 + L - R, 0.f, 0.f, kCarPi, dz, 0.f);
+    // Right-hand traffic, verified against the heading convention: travelling
+    // +Z (yaw 0) the driver's left is +X, so the lane at x = centre - L keeps the
+    // street centre line on the driver's left, as does every other straight below.
+    // Left turns then fall out of the loop, and the arcs sweep through the junction.
+    // Order: -Z lane straight, +X lane straight, +Z lane straight, -X lane straight,
+    // each pair joined by a left turn.
+    put_seg(r, 0u, x0 - L, z0 - L + R, 0.f, 0.f, 0.f, dz, 0.f);
+    put_seg(r, 1u, x0 - L, z1 + L - R, x0 - L + R, z1 + L - R, 0.f, quarter, kappa);
+    put_seg(r, 2u, x0 - L + R, z1 + L, 0.f, 0.f, hy, dx, 0.f);
+    put_seg(r, 3u, x1 + L - R, z1 + L, x1 + L - R, z1 + L - R, hy, quarter, kappa);
+    put_seg(r, 4u, x1 + L, z1 + L - R, 0.f, 0.f, kCarPi, dz, 0.f);
+    put_seg(r, 5u, x1 + L, z0 - L + R, x1 + L - R, z0 - L + R, kCarPi, quarter, kappa);
+    put_seg(r, 6u, x1 + L - R, z0 - L, 0.f, 0.f, -hy, dx, 0.f);
+    put_seg(r, 7u, x0 - L + R, z0 - L, x0 - L + R, z0 - L + R, -hy, quarter, kappa);
     r->nseg      = kCarSegmentCap;
     r->perimeter = 2.f * dx + 2.f * dz + 4.f * quarter;
 }

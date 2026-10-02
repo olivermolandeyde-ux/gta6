@@ -143,8 +143,14 @@ int main(int argc, char** argv) {
     expectf(worst_yaw_step < 0.02f, "heading is continuous: worst 5 cm yaw step is %.4f rad",
             static_cast<double>(worst_yaw_step));
 
-    // ---- lane discipline: every straight drives the right-hand lane -----------------
-    u32 straights = 0;
+    // ---- lane discipline: right-hand traffic on every straight ----------------------
+    // Law: in right-hand traffic the street centre line is on the driver's left.
+    // left = up x forward, with forward = (sin yaw, 0, cos yaw):
+    //   travel +Z -> left = +X -> the lane must sit at x < centre line
+    //   travel -Z -> left = -X -> the lane must sit at x > centre line
+    //   travel +X -> left = -Z -> the lane must sit at z > centre line
+    //   travel -X -> left = +Z -> the lane must sit at z < centre line
+    u32 straights  = 0;
     u32 wrong_side = 0;
     for (u32 r = 0; r < traffic.ring_count; ++r) {
         const CarRing& ring = traffic.rings[r];
@@ -156,25 +162,60 @@ int main(int argc, char** argv) {
             ++straights;
             const float fx = std::sin(g.yaw0);
             const float fz = std::cos(g.yaw0);
+            bool ok = false;
             if (std::fabs(fx) > 0.5f) {
-                // Driving along X: the right-hand lane sits at z < centre line when
-                // travelling +X, and at z > centre line when travelling -X.
                 const float line = std::round(g.sz / kCityBlockPitch) * kCityBlockPitch;
-                const bool  ok   = (fx > 0.f) ? (g.sz < line) : (g.sz > line);
-                if (!ok) {
-                    ++wrong_side;
-                }
+                ok = (fx > 0.f) ? (g.sz > line) : (g.sz < line);
             } else {
                 const float line = std::round(g.sx / kCityBlockPitch) * kCityBlockPitch;
-                const bool  ok   = (fz > 0.f) ? (g.sx > line) : (g.sx < line);
-                if (!ok) {
-                    ++wrong_side;
-                }
+                ok = (fz > 0.f) ? (g.sx < line) : (g.sx > line);
+            }
+            if (!ok) {
+                ++wrong_side;
             }
         }
     }
-    expectf(wrong_side == 0u, "right-hand traffic: %u of %u straights are in the correct lane",
+    expectf(wrong_side == 0u, "right-hand traffic: %u of %u straights keep the centre line on the driver's left",
             straights - wrong_side, straights);
+
+    // Per street, no side of the centre line may carry traffic in both directions
+    // (that would be a head-on lane). Rings that share a lane are fine: same offset,
+    // same direction.
+    struct SideUse {
+        float line;
+        int   runs_z;
+        int   side;  // +1 / -1, the side of the centre line the lane sits on
+        float dir;   // +1 / -1, the direction of travel
+    };
+    SideUse uses[64];
+    u32     n_uses   = 0;
+    u32     conflict = 0;
+    for (u32 r = 0; r < traffic.ring_count; ++r) {
+        const CarRing& ring = traffic.rings[r];
+        for (u32 i = 0; i < ring.nseg; ++i) {
+            const CarSegment& g = ring.seg[i];
+            if (g.kappa != 0.f || n_uses >= 64u) {
+                continue;
+            }
+            const float fx     = std::sin(g.yaw0);
+            const float fz     = std::cos(g.yaw0);
+            const int   runs_z = std::fabs(fx) < 0.5f ? 1 : 0;
+            const float line   = std::round((runs_z ? g.sx : g.sz) / kCityBlockPitch) * kCityBlockPitch;
+            const float off    = (runs_z ? g.sx : g.sz) - line;
+            uses[n_uses++]     = SideUse{line, runs_z, off > 0.f ? 1 : -1, (runs_z ? fz : fx) > 0.f ? 1.f : -1.f};
+        }
+    }
+    for (u32 a = 0; a < n_uses; ++a) {
+        for (u32 b = a + 1u; b < n_uses; ++b) {
+            if (uses[a].line == uses[b].line && uses[a].runs_z == uses[b].runs_z &&
+                uses[a].side == uses[b].side && uses[a].dir != uses[b].dir) {
+                ++conflict;
+            }
+        }
+    }
+    expectf(conflict == 0u,
+            "no lane on either side of a centre line carries both directions (%u conflicts in %u lanes)",
+            conflict, n_uses);
 
     // ---- simulate: spacing, minimum separation, flow past the start camera ----------
     const float dt      = 1.f / 60.f;
@@ -254,8 +295,8 @@ int main(int argc, char** argv) {
     expect(spacing_ok, "vehicles on a circuit keep their spawn spacing for the whole run");
 
     const float minutes = seconds / 60.f;
-    std::printf("[ok] traffic flow past the start camera: %.1f vehicles/min northbound, "
-                "%.1f southbound (gate z = %.0f m, |x - 1200| <= 14 m)\n",
+    std::printf("[ok] traffic flow past the start camera: %.1f vehicles/min away from the camera, "
+                "%.1f toward the camera (gate z = %.0f m, |x - 1200| <= 14 m)\n",
                 static_cast<double>(static_cast<float>(pass_pos) / minutes),
                 static_cast<double>(static_cast<float>(pass_neg) / minutes),
                 static_cast<double>(gate_z));

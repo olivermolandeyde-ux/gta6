@@ -1,5 +1,21 @@
 # Leonida Engine Changelog
 
+## Unreleased — Traffic orientation and lane side
+
+### Bug fixes
+- ✅ Cars drove boot-first: the AABB longest axis of both bodies points at the boot, so
+  the ring heading needed 180° on top of it (the sports mesh keeps its extra 180°)
+- ✅ Cars drove on the left: the lane offsets were paired with *right* turns, which put
+  the street centre line on the driver's right (British-style). The circuits are now
+  traversed as left turns, so every straight keeps the centre line on the driver's left
+- ✅ Per-straight right-hand-traffic assertion plus a "no lane carries both directions"
+  check in the headless sandbox, so a future traversal flip cannot silently break it
+- ✅ Closest approach stays 8.40 m over three laps — the opposite-lane separation, which
+  is the tightest two vehicles can ever come
+
+### Build / CI
+- ✅ `actions/upload-artifact@v4`, `linux-perf` fallback, SDL2/GL headers in CI
+
 ## Unreleased — Living city traffic
 
 ### Moving vehicles (`engine/render/CarTraffic.*`)
