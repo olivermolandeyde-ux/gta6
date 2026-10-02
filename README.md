@@ -9,7 +9,7 @@ A C++20 open-world simulation core built from scratch. No generic `Prop` / `Acto
   ██╔═══╝ ██╔══██╗██║   ██║██   ██║██╔══╝  ██║        ██║
   ██║     ██║  ██║╚██████╔╝╚█████╔╝███████╗╚██████╗   ██║
   ╚═╝     ╚═╝  ╚═╝ ╚═════╝  ╚════╝ ╚══════╝ ╚═════╝   ╚═╝
-  PHASE 20 — Procedural city · driving traffic · window lighting · SDL2/GL
+  PHASE 21 — Procedural city · citywide traffic · window lighting · SDL2/GL
 ```
 
 ## Architecture

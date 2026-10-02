@@ -1,5 +1,22 @@
 # Leonida Engine Changelog
 
+## Unreleased — Citywide traffic with no collisions
+
+### Traffic (`engine/render/CarTraffic.*`)
+- ✅ 16 loops spread over the whole 2.4 km grid instead of one avenue, 128 vehicles
+  (96 Corolla E80 + 32 sports), still 2 instanced draw calls and no per-frame logging
+- ✅ Varied speeds: Corolla loops 8.2-9.8 m/s (30-35 km/h), sports loops 12.6-14.2 m/s
+  (45-51 km/h) — the sports cars never share a path with the slow ones
+- ✅ Zero-collision guarantee without per-frame physics, from two invariants:
+  1. one speed per loop, so the even spacing a loop spawned with can never close up
+     (92.9 m between vehicles); the loop's travelled distance is a shared double clock
+     and the vehicles are constant offsets, so the spacing cannot even drift
+  2. the loops are pairwise disjoint — closest two loops are 111.6 m apart — so no
+     vehicle on one loop can meet a vehicle on another, whatever the speeds
+- ✅ Disjointness comes from the lattice law: i even, j a multiple of 4, asserted
+  in the sandbox (as is the lattice itself, the speed classes, the spacing and the flow)
+- ✅ Right-hand traffic re-asserted on all 64 straights after the change
+
 ## Unreleased — Traffic orientation and lane side
 
 ### Bug fixes

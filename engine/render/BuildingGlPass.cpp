@@ -1289,19 +1289,33 @@ void BuildingGlPass::buildMesh(World& world) {
             car_traffic_live = true;
             car_clock        = 0.f;
             update_car_instances(0.f); // the first frame already has traffic on the streets
-            const float kmh = (car_traffic.rings[0].perimeter / kCarLapPeriodS) * 3.6f;
-            std::printf("[cars] Traffic: %u circuits of %.0f m, %u vehicles driving (%.0f km/h)\n",
-                        car_traffic.ring_count, static_cast<double>(car_traffic.rings[0].perimeter),
-                        car_traffic.agent_count, static_cast<double>(kmh));
-            std::printf("[cars] Traffic: %.1f m lanes, %.1f m left turns, %u Corolla + %u sports, "
-                        "re-uploaded every frame\n",
-                        static_cast<double>(kCarLaneOffset), static_cast<double>(kCarCornerRadius),
+            float slow_min = 1.0e9f;
+            float slow_max = 0.f;
+            float fast_min = 1.0e9f;
+            float fast_max = 0.f;
+            for (u32 r = 0; r < car_traffic.ring_count; ++r) {
+                const CarRing& ring = car_traffic.rings[r];
+                if (ring.sports != 0) {
+                    fast_min = min_of(fast_min, ring.speed);
+                    fast_max = max_of(fast_max, ring.speed);
+                } else {
+                    slow_min = min_of(slow_min, ring.speed);
+                    slow_max = max_of(slow_max, ring.speed);
+                }
+            }
+            std::printf("[cars] Traffic: %u disjoint loops over the 2.4 km grid, %u vehicles driving\n",
+                        car_traffic.ring_count, car_traffic.agent_count);
+            std::printf("[cars] Traffic: Corolla loops %.1f-%.1f m/s, sports loops %.1f-%.1f m/s, "
+                        "%u Corolla + %u sports\n",
+                        static_cast<double>(slow_min), static_cast<double>(slow_max),
+                        static_cast<double>(fast_min), static_cast<double>(fast_max),
                         car_traffic.mesh_count[0], car_traffic.mesh_count[1]);
-            std::printf("[cars] Traffic: circuits follow the avenue at x = 1200 m, z = 0-960 m "
-                        "that the sandbox camera starts on\n");
-            std::printf("[cars] Body yaw offset: %.0f deg (press F in the sandbox to flip it if the "
-                        "cars drive boot-first)\n",
-                        static_cast<double>(car_body_flip * 180.f / kCarPi));
+            std::printf("[cars] Traffic: one speed per loop and %.0f m spacing, and the loops share "
+                        "no asphalt, so no collision is possible without any per-frame physics\n",
+                        static_cast<double>(car_traffic.rings[0].perimeter /
+                                            static_cast<float>(kCarCarsPerLoop)));
+            std::printf("[cars] Traffic: loop 0 runs beside the sandbox camera x = 1200..1320 m, "
+                        "z = 0..240 m; press F to flip the car bodies if they drive boot-first\n");
             std::fflush(stdout);
         }
     }
@@ -1322,7 +1336,7 @@ void BuildingGlPass::update_car_instances(float clock_s) {
     for (u32 i = 0; i < car_traffic.agent_count; ++i) {
         const CarAgent& a = car_traffic.agents[i];
         float x = 0.f, z = 0.f, yaw = 0.f;
-        car_ring_pose(&car_traffic.rings[a.ring], a.s, &x, &z, &yaw);
+        car_agent_pose(&car_traffic, i, &x, &z, &yaw);
         const u32 m = a.mesh == 1u ? 1u : 0u;
         if (n[m] >= kCarAgentCap) {
             continue;

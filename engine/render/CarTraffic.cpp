@@ -34,40 +34,57 @@ void put_seg(CarRing* r, u32 i, float sx, float sz, float cx, float cz, float ya
     g.kappa = kappa;
 }
 
-// One circuit per city block column, laid out along the avenue the city sandbox
-// opens on (camera starts at x = 1200, z = 130 looking north up the street at
-// x = 1200). Each circuit is one block wide and two blocks long, so the two
-// streets flanking the avenue carry both directions of traffic and vehicles run
-// straight for 240 m before the next left turn.
+// The citywide plan: 16 loops, all mutually disjoint, spread over the 2.4 km grid.
+// i0 must be even and j0 a multiple of 4 - that is what keeps neighbouring loops from
+// sharing an intersection (two loops whose rectangles touch would have corner arcs that
+// cross, and then their timings would matter). Speeds differ per loop, which is safe
+// precisely because the loops never share asphalt.
 //
-// Every circuit has the same perimeter, so holding the lap period constant gives
-// every vehicle the same speed and a fixed timing between circuits: the phases
-// below can then be chosen once and stay valid forever (see the sandbox, which
-// replays laps and proves no two vehicles share asphalt).
-struct CarRingPlan {
-    u32   i0, j0, i1, j1; // corners in street-grid lines, times block pitch
-    u32   vehicles;
-    float phase; // arc-length offset of the first vehicle, metres
+//   Corolla loops: 8.2 - 9.8 m/s (30 - 35 km/h), normal traffic
+//   sports loops: 12.6 - 14.2 m/s (45 - 51 km/h), the fast loops
+//
+// Loop 0 runs the streets around the block the city sandbox camera starts on
+// (x = 1200..1320 m, z = 0..240 m), so there is traffic right beside the lens.
+struct CarLoopPlan {
+    u32   i0, j0; // street-grid line indices; metres = index * block pitch
+    float speed;  // m/s, constant for every vehicle on this loop
+    int   sports; // 1 = sports model on this loop
 };
 
-constexpr u32 kPlanCount = 8;
+constexpr u32 kPlanCount = kCarLoopCount;
 
-// Phases were searched once (see the city traffic sandbox) so that no two circuits
-// reach a shared intersection at the same instant. Because every circuit has the
-// same perimeter and the same lap period, these offsets hold forever, and they still
-// hold after the traversal was flipped to left turns: the closest approach over ten
-// laps is 8.40 m, exactly the opposite-lane separation, so nothing can come nearer.
-// Retune them if the vehicle counts per circuit change — the sandbox checks it.
-const CarRingPlan kPlan[kPlanCount] = {
-    {9u, 0u, 10u, 2u, 4u, 0.f},      // west of the avenue, z 0-240 m
-    {9u, 2u, 10u, 4u, 4u, 33.17f},   // west of the avenue, next block north
-    {9u, 4u, 10u, 6u, 4u, 15.62f},
-    {9u, 6u, 10u, 8u, 4u, 29.51f},
-    {10u, 0u, 11u, 2u, 4u, 155.09f}, // east of the avenue, z 0-240 m
-    {10u, 2u, 11u, 4u, 4u, 143.32f},
-    {10u, 4u, 11u, 6u, 3u, 95.09f},
-    {10u, 6u, 11u, 8u, 3u, 135.73f},
+constexpr CarLoopPlan kPlan[kPlanCount] = {
+    // Corolla loops — normal speeds, spread corner to corner.
+    {10u, 0u, 9.0f, 0},   // beside the sandbox camera
+    {10u, 4u, 8.4f, 0},
+    {6u, 0u, 9.6f, 0},
+    {14u, 0u, 8.8f, 0},
+    {2u, 4u, 9.2f, 0},
+    {18u, 4u, 8.6f, 0},
+    {0u, 12u, 9.4f, 0},
+    {4u, 0u, 9.0f, 0},
+    {8u, 8u, 8.2f, 0},
+    {12u, 12u, 9.8f, 0},
+    {16u, 0u, 8.4f, 0},
+    {18u, 16u, 9.2f, 0},
+    // Sports loops — faster, on their own paths so they never catch a Corolla.
+    {8u, 0u, 13.4f, 1},
+    {12u, 0u, 12.6f, 1},
+    {10u, 12u, 14.2f, 1},
+    {16u, 12u, 13.0f, 1},
 };
+
+constexpr u32 count_sports_loops() {
+    u32 n = 0;
+    for (u32 i = 0; i < kPlanCount; ++i) {
+        if (kPlan[i].sports != 0) {
+            ++n;
+        }
+    }
+    return n;
+}
+static_assert(count_sports_loops() == kCarSportsLoops, "sports loop count must match CarTraffic.h");
+static_assert(sizeof(kPlan) / sizeof(kPlan[0]) == kCarLoopCount, "plan must list every loop");
 
 } // namespace
 
@@ -171,51 +188,84 @@ void car_traffic_build(CarTraffic* t, float block_pitch, u32 corolla_available,
     if ((!corolla_available && !sports_available) || block_pitch <= 0.f) {
         return;
     }
-
-    u32 vehicle = 0;
-    for (u32 p = 0; p < kPlanCount && t->ring_count < kCarRingCap; ++p) {
-        const CarRingPlan& plan = kPlan[p];
-        if (plan.vehicles == 0u) {
-            continue;
-        }
-        CarRing* ring = &t->rings[t->ring_count];
+    for (u32 p = 0; p < kPlanCount && t->ring_count < kCarLoopCap; ++p) {
+        const CarLoopPlan& plan = kPlan[p];
+        CarRing*           ring = &t->rings[t->ring_count];
         car_ring_init(ring, block_pitch * static_cast<float>(plan.i0),
                       block_pitch * static_cast<float>(plan.j0),
-                      block_pitch * static_cast<float>(plan.i1),
-                      block_pitch * static_cast<float>(plan.j1), kCarLaneOffset, kCarCornerRadius);
+                      block_pitch * static_cast<float>(plan.i0 + 1u),
+                      block_pitch * static_cast<float>(plan.j0 + 2u), kCarLaneOffset,
+                      kCarCornerRadius);
         if (ring->nseg == 0u) {
             continue;
         }
-        const u32   n       = plan.vehicles;
+        ring->speed     = plan.speed;
+        ring->sports    = plan.sports;
+        ring->travelled = 0.0;
+
+        // Even spacing is the whole collision story: one speed per loop, so no vehicle
+        // ever gains on the one ahead of it. The stagger keeps the loops from looking
+        // like one machine — it never changes the spacing, so it stays safe.
+        const u32   n       = kCarCarsPerLoop;
         const float spacing = ring->perimeter / static_cast<float>(n);
-        // Same lap period everywhere: equal speed, and timing between circuits never drifts.
-        const float speed   = ring->perimeter / kCarLapPeriodS;
+        const float phase   = 0.37f * spacing * static_cast<float>(t->ring_count);
         for (u32 k = 0; k < n && t->agent_count < kCarAgentCap; ++k) {
-            CarAgent* a = &t->agents[t->agent_count];
-            a->ring     = t->ring_count;
-            // Every third vehicle is the sports car: 20 Corolla + 10 sports.
-            a->mesh     = (sports_available && (!corolla_available || (vehicle % 3u) == 0u)) ? 1u : 0u;
-            a->speed    = speed;
-            a->s        = wrap_len((0.5f + static_cast<float>(k)) * spacing + plan.phase,
-                                   ring->perimeter);
+            CarAgent*  a        = &t->agents[t->agent_count];
+            const bool want_fast = plan.sports != 0 && sports_available != 0u;
+            a->ring             = t->ring_count;
+            a->mesh             = want_fast ? 1u : 0u;
+            if (corolla_available == 0u && !want_fast) {
+                a->mesh = 1u; // Corolla mesh missing: fill the slow loops with the other one
+            }
+            a->offset = wrap_len((0.5f + static_cast<float>(k)) * spacing + phase, ring->perimeter);
             ++t->mesh_count[a->mesh];
             ++t->agent_count;
-            ++vehicle;
         }
         ++t->ring_count;
     }
 }
 
+[[nodiscard]] float car_agent_s(const CarTraffic* t, u32 index) {
+    if (!t || index >= t->agent_count) {
+        return 0.f;
+    }
+    const CarAgent& a = t->agents[index];
+    const CarRing&  r = t->rings[a.ring];
+    if (r.perimeter <= 0.f) {
+        return 0.f;
+    }
+    // The travelled term is shared by the whole loop, so any rounding in it is common to
+    // every vehicle on that loop and cancels out of the spacing between them.
+    const double leg = std::fmod(r.travelled, static_cast<double>(r.perimeter));
+    return wrap_len(static_cast<float>(leg) + a.offset, r.perimeter);
+}
+
+void car_agent_pose(const CarTraffic* t, u32 index, float* x, float* z, float* yaw) {
+    if (!t || index >= t->agent_count) {
+        if (x) {
+            *x = 0.f;
+        }
+        if (z) {
+            *z = 0.f;
+        }
+        if (yaw) {
+            *yaw = 0.f;
+        }
+        return;
+    }
+    car_ring_pose(&t->rings[t->agents[index].ring], car_agent_s(t, index), x, z, yaw);
+}
+
 void car_traffic_step(CarTraffic* t, float dt) {
-    if (!t || dt <= 0.f || t->agent_count == 0u) {
+    if (!t || dt <= 0.f || t->ring_count == 0u) {
         return;
     }
     if (dt > 0.25f) {
         dt = 0.25f; // never teleport vehicles after a stall
     }
-    for (u32 i = 0; i < t->agent_count; ++i) {
-        CarAgent& a = t->agents[i];
-        a.s         = wrap_len(a.s + a.speed * dt, t->rings[a.ring].perimeter);
+    for (u32 r = 0; r < t->ring_count; ++r) {
+        t->rings[r].travelled +=
+            static_cast<double>(t->rings[r].speed) * static_cast<double>(dt);
     }
     t->sim_time += dt;
 }
