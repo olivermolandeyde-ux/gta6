@@ -496,43 +496,50 @@ void log_glb_textures(const char* name, const TreeGlb* t) {
     std::fflush(stdout);
 }
 
-// 1 Rx(+90) then Rz(+90)  2 Rx(+90) then Rz(-90)  3 Rx(-90)  4 Rx(-90) then Rz(+90)
-inline constexpr int kCorollaRotDefault = 1;
-
-int corolla_rot_opt() {
-    const char* e = std::getenv("LEONIDA_COROLLA_ROT");
-    if (e && e[0] >= '1' && e[0] <= '4') {
-        return e[0] - '0';
+// Build model→world 3x3: longest AABB axis = forward (Z), shortest = up (Y), rest = right (X).
+void corolla_basis(const TreeGlb* t, float R[9]) {
+    const float e[3] = {t->xmax - t->xmin, t->ymax - t->ymin, t->zmax - t->zmin};
+    int fwd = 0;
+    if (e[1] > e[fwd]) {
+        fwd = 1;
     }
-    return kCorollaRotDefault;
+    if (e[2] > e[fwd]) {
+        fwd = 2;
+    }
+    int up = (fwd == 0) ? 1 : 0;
+    for (int i = 0; i < 3; ++i) {
+        if (i != fwd && e[i] < e[up]) {
+            up = i;
+        }
+    }
+    float fu[3] = {0.f, 0.f, 0.f};
+    float uu[3] = {0.f, 0.f, 0.f};
+    fu[fwd] = 1.f;
+    uu[up]  = 1.f;
+    const float ru[3] = {fu[1] * uu[2] - fu[2] * uu[1], fu[2] * uu[0] - fu[0] * uu[2],
+                         fu[0] * uu[1] - fu[1] * uu[0]};
+    static const char* kAxis = "XYZ";
+    std::printf("[cars] basis length=%c height=%c (stand on wheels)\n", kAxis[fwd], kAxis[up]);
+    std::fflush(stdout);
+    // columns = images of model X,Y,Z  (world X=right, Y=up, Z=forward)
+    R[0] = ru[0];
+    R[1] = uu[0];
+    R[2] = fu[0];
+    R[3] = ru[1];
+    R[4] = uu[1];
+    R[5] = fu[1];
+    R[6] = ru[2];
+    R[7] = uu[2];
+    R[8] = fu[2];
 }
 
-void corolla_fix_point(int opt, float x, float y, float z, float* ox, float* oy, float* oz) {
-    switch (opt) {
-        case 1: // Rx(+90) then Rz(+90): (x,y,z) → (z, x, y)
-            *ox = z;
-            *oy = x;
-            *oz = y;
-            break;
-        case 2: // Rx(+90) then Rz(-90): (x,y,z) → (-z, -x, y)
-            *ox = -z;
-            *oy = -x;
-            *oz = y;
-            break;
-        case 4: // Rz(+90) then Rx(-90): (x,y,z) → (-y, z, -x)
-            *ox = -y;
-            *oy = z;
-            *oz = -x;
-            break;
-        default: // 3: swap Y/Z, negate Y — Rx(-90): (x,y,z) → (x, z, -y)
-            *ox = x;
-            *oy = z;
-            *oz = -y;
-            break;
-    }
+void corolla_mul(const float R[9], float x, float y, float z, float* ox, float* oy, float* oz) {
+    *ox = R[0] * x + R[3] * y + R[6] * z;
+    *oy = R[1] * x + R[4] * y + R[7] * z;
+    *oz = R[2] * x + R[5] * y + R[8] * z;
 }
 
-float corolla_model_ymin(const TreeGlb* t, int opt) {
+float corolla_model_ymin(const TreeGlb* t, const float R[9]) {
     float mn = 1.0e9f;
     const float xs[2] = {t->xmin, t->xmax};
     const float ys[2] = {t->ymin, t->ymax};
@@ -541,7 +548,7 @@ float corolla_model_ymin(const TreeGlb* t, int opt) {
         for (int j = 0; j < 2; ++j) {
             for (int k = 0; k < 2; ++k) {
                 float ox, oy, oz;
-                corolla_fix_point(opt, xs[i], ys[j], zs[k], &ox, &oy, &oz);
+                corolla_mul(R, xs[i], ys[j], zs[k], &ox, &oy, &oz);
                 if (oy < mn) {
                     mn = oy;
                 }
@@ -551,11 +558,11 @@ float corolla_model_ymin(const TreeGlb* t, int opt) {
     return mn;
 }
 
-void corolla_yaw_mat(float* m, float x, float y, float z, float yaw, float sc, int opt) {
+void corolla_yaw_mat(float* m, float x, float y, float z, float yaw, float sc, const float R[9]) {
     float ax, ay, az, bx, by, bz, cx, cy, cz;
-    corolla_fix_point(opt, sc, 0.f, 0.f, &ax, &ay, &az);
-    corolla_fix_point(opt, 0.f, sc, 0.f, &bx, &by, &bz);
-    corolla_fix_point(opt, 0.f, 0.f, sc, &cx, &cy, &cz);
+    corolla_mul(R, sc, 0.f, 0.f, &ax, &ay, &az);
+    corolla_mul(R, 0.f, sc, 0.f, &bx, &by, &bz);
+    corolla_mul(R, 0.f, 0.f, sc, &cx, &cy, &cz);
     const float c = std::cos(yaw);
     const float s = std::sin(yaw);
     std::memset(m, 0, 16 * sizeof(float));
@@ -894,19 +901,14 @@ bool BuildingGlPass::init() {
     std::printf("[glb] Loading lamp model: gatelys_moderne.glb\n");
     load_city_tree("gatelys_moderne.glb", &lamp_glb[1]);
     if (load_city_tree("low-poly_toyota_corolla_e80_sedan.glb", &corolla_glb)) {
-        const int rot = corolla_rot_opt();
-        corolla_glb.z_up = rot;
         std::printf("[cars] Loaded Toyota Corolla E80: %u verts (should be < 10,000)\n", corolla_glb.nverts);
         const float hx = corolla_glb.xmax - corolla_glb.xmin;
         const float hy = corolla_glb.ymax - corolla_glb.ymin;
         const float hz = corolla_glb.zmax - corolla_glb.zmin;
         std::printf("[cars] Car bounds: %.2fx%.2fx%.2f meters\n", hx, hy, hz);
-        if (rot == 1) {
-            std::printf("[cars] Applied side-to-wheels roll (Z up, X flipped)\n");
-        } else if (rot == 2) {
-            std::printf("[cars] Applied opposite side-to-wheels roll\n");
-        } else {
-            std::printf("[cars] Using rotation option: %d\n", rot);
+        {
+            float Rtmp[9];
+            corolla_basis(&corolla_glb, Rtmp);
         }
         const float sc = corolla_fit_scale(&corolla_glb);
         float L = hx;
@@ -1237,9 +1239,10 @@ void BuildingGlPass::buildMesh(World& world) {
         static float corolla_xz[kCorollaSpawnCap * 2];
         u32 sn       = 0;
         u32 n_corolla_xz = 0;
-        const int   rot  = corolla_rot_opt();
+        float R[9];
+        corolla_basis(&corolla_glb, R);
         const float sc   = corolla_fit_scale(&corolla_glb);
-        const float y0   = corolla_model_ymin(&corolla_glb, rot);
+        const float y0   = corolla_model_ymin(&corolla_glb, R);
         const float y    = kCityPlateauY + 0.30f - y0 * sc; // road top + 0.05 m
         const float park = 7.2f; // curb lane on 20 m asphalt, not the 11.5 m sidewalk
         auto push_suv = [&](float x, float z, float along) {
@@ -1258,7 +1261,7 @@ void BuildingGlPass::buildMesh(World& world) {
             }
             const u32 flip = static_cast<u32>(x * 17.f + z * 31.f) & 1u;
             const float yaw = along + (flip ? 3.14159265f : 0.f);
-            corolla_yaw_mat(&corolla_mats[sn * 16], x, y, z, yaw, sc, rot);
+            corolla_yaw_mat(&corolla_mats[sn * 16], x, y, z, yaw, sc, R);
             corolla_xz[n_corolla_xz * 2u]     = x;
             corolla_xz[n_corolla_xz * 2u + 1] = z;
             ++n_corolla_xz;
