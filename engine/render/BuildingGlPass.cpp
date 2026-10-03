@@ -1068,7 +1068,7 @@ bool BuildingGlPass::init() {
             // Log texture info for each primitive
             for (u32 p = 0; p < dst->nprims; ++p) {
                 const TreePrim& pr = dst->prims[p];
-                std::printf("[buildings]   Prim %u: %u verts, tex=%u (%.0fx%.0f), emit_tex=%u, "
+                std::printf("[buildings]   Prim %u: %u verts, tex=%u (%ux%u), emit_tex=%u, "
                             "has_alpha=%d, alpha_mask=%d, gl_mode=%d\n",
                             p, pr.nidx, pr.tex, pr.tex_w, pr.tex_h, pr.tex_emit,
                             pr.has_alpha, pr.alpha_mask, pr.gl_mode);
@@ -1619,12 +1619,14 @@ void BuildingGlPass::buildMesh(World& world) {
         // Block centers are at (60 + 120*i, 60 + 120*j) for i,j = 0,1,2,...
         // This ensures we're inside building lots, not on roads
 
-        auto try_place_at_block_center = [&](u32 block_i, u32 block_j, float& placed_count, u32& attempts,
+        auto try_place_at_block_center = [&](u32 block_i, u32 block_j, u32& placed_count, u32& attempts,
                                                u32& skipped_road, TreeGlb* glb_array[3], u32& count,
-                                               const char* type_name, u32 target_district) -> bool {
-            if (placed_count >= target_shops && type_name == "shop") return false;
-            if (placed_count >= target_apts && type_name == "apartment") return false;
-            if (placed_count >= target_whses && type_name == "warehouse") return false;
+                                               const char* type_name, u32 target_district,
+                                               float* mats_array) -> bool {
+            // placed_count and count are the same variable - use placed_count for checks
+            if (placed_count >= target_shops && strcmp(type_name, "shop") == 0) return false;
+            if (placed_count >= target_apts && strcmp(type_name, "apartment") == 0) return false;
+            if (placed_count >= target_whses && strcmp(type_name, "warehouse") == 0) return false;
 
             // Calculate block center position
             const float cx = 60.f + block_i * kCityBlockPitch;
@@ -1657,13 +1659,12 @@ void BuildingGlPass::buildMesh(World& world) {
 
             // Place building
             const float yaw = std::fmod(cx * 0.137f + cz * 0.097f, 6.2831853f);
-            const float target_h = (type_name == "shop") ? 4.0f : (type_name == "apartment") ? 18.0f : 10.0f;
+            const float target_h = (strcmp(type_name, "shop") == 0) ? 4.0f : (strcmp(type_name, "apartment") == 0) ? 18.0f : 10.0f;
             const float sc = glb_fit_scale(glb_array[variant], target_h);
             const float y0 = glb_array[variant]->z_up ? glb_array[variant]->zmin : glb_array[variant]->ymin;
             const float y = kCityPlateauY + 0.05f - y0 * sc;
 
-            tree_yaw_mat(&glb_array[variant == 0 ? 0 : (variant == 1 ? 1 : 2)][count * 16],
-                         cx, y, cz, yaw, sc, glb_array[variant]->z_up);
+            tree_yaw_mat(&mats_array[count * 16], cx, y, cz, yaw, sc, glb_array[variant]->z_up);
             ++count;
             new_bld_xz[n_new_bld_xz * 2u] = cx;
             new_bld_xz[n_new_bld_xz * 2u + 1] = cz;
@@ -1706,21 +1707,21 @@ void BuildingGlPass::buildMesh(World& world) {
                 if (shop_count < target_shops && (block_district == kDistrictCommercial || block_district == kDistrictRetail || block_district == kDistrictDowntown)) {
                     shop_attempts++;
                     try_place_at_block_center(bi, bj, shop_count, shop_attempts, shop_skipped_road,
-                                              shop_glb, shop_count, "shop", block_district);
+                                              shop_glb, shop_count, "shop", block_district, shop_mats);
                 }
 
                 // Place apartments in residential areas
                 if (apartment_count < target_apts && (block_district == kDistrictResidential || block_district == kDistrictSuburban || block_district == kDistrictDowntown)) {
                     apt_attempts++;
                     try_place_at_block_center(bi, bj, apartment_count, apt_attempts, apt_skipped_road,
-                                              apartment_glb, apartment_count, "apartment", block_district);
+                                              apartment_glb, apartment_count, "apartment", block_district, apartment_mats);
                 }
 
                 // Place warehouses in industrial areas or edges
                 if (warehouse_count < target_whses && (block_district == kDistrictIndustrial || bi < 2 || bj < 2 || bi > 17 || bj > 17)) {
                     whse_attempts++;
                     try_place_at_block_center(bi, bj, warehouse_count, whse_attempts, whse_skipped_road,
-                                              warehouse_glb, warehouse_count, "warehouse", block_district);
+                                              warehouse_glb, warehouse_count, "warehouse", block_district, warehouse_mats);
                 }
             }
         }
