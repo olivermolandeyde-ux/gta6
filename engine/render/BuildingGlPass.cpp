@@ -1575,9 +1575,6 @@ void BuildingGlPass::buildMesh(World& world) {
             ++n_new_bld_xz;
             ++apts_placed;
             std::printf("[buildings] DEBUG: Apartment placed successfully!\n");
-            } else {
-                std::printf("[buildings] DEBUG: Position not on building lot!\n");
-            }
         } else {
             std::printf("[buildings] DEBUG: Could not place apartment at fixed position\n");
         }
