@@ -1047,6 +1047,17 @@ bool BuildingGlPass::init() {
                         type, dst->nverts, dst->nprims, dst->z_up);
             std::printf("[buildings]   Bounds: x=[%.2f, %.2f] y=[%.2f, %.2f] z=[%.2f, %.2f]\n",
                         dst->xmin, dst->xmax, dst->ymin, dst->ymax, dst->zmin, dst->zmax);
+            // Log texture info for each primitive
+            for (u32 p = 0; p < dst->nprims; ++p) {
+                const TreePrim& pr = dst->prims[p];
+                std::printf("[buildings]   Prim %u: %u verts, tex=%u (%.0fx%.0f), emit_tex=%u, "
+                            "has_alpha=%d, alpha_mask=%d, gl_mode=%d\n",
+                            p, pr.nidx, pr.tex, pr.tex_w, pr.tex_h, pr.tex_emit,
+                            pr.has_alpha, pr.alpha_mask, pr.gl_mode);
+                if (pr.tex == 0) {
+                    std::printf("[buildings]   WARNING: Prim %u has NO texture bound! Will render pink.\n", p);
+                }
+            }
             if (dst->nprims > 0) {
                 std::printf("[buildings]   First prim: %u verts, has_alpha=%d\n",
                             dst->prims[0].nidx, dst->prims[0].has_alpha);
@@ -1421,6 +1432,38 @@ void BuildingGlPass::buildMesh(World& world) {
             const float droad = dist_to_road_edge(x, z);
             return (droad >= 0.4f && droad <= 3.2f);
         };
+        // Check if position is on a building lot (inside a block, not on road/sidewalk)
+        auto on_building_lot = [&](float x, float z) -> bool {
+            // A building lot is inside a city block, away from roads and sidewalks
+            // Block size = kCityBlockPitch (120m), road = kCityStreetWidth (20m), sidewalk = 3m
+            const float road_half = kCityStreetWidth * 0.5f;  // 10m
+            const float sidewalk = 3.0f;
+            const float block_inner = road_half + sidewalk + 2.0f; // 15m from block center
+
+            // Find nearest block center
+            const float bx = std::round(x / kCityBlockPitch) * kCityBlockPitch;
+            const float bz = std::round(z / kCityBlockPitch) * kCityBlockPitch;
+
+            // Distance from block center
+            const float dx = std::fabs(x - bx);
+            const float dz = std::fabs(z - bz);
+
+            // Must be inside the block (not in road/intersection)
+            // Block half-size = kCityBlockPitch/2 = 60m
+            // Road takes 10m from edge, sidewalk 3m more = 13m from edge
+            const float max_dist_from_center = kCityBlockPitch * 0.5f - block_inner;
+            if (dx > max_dist_from_center || dz > max_dist_from_center) {
+                return false; // On road, sidewalk, or intersection
+            }
+
+            // Also check we're not too close to block edges (for building placement)
+            const float min_dist_from_edge = 5.0f; // 5m from block edge for building spacing
+            if (dx < min_dist_from_edge || dz < min_dist_from_edge) {
+                return false; // Too close to edge
+            }
+
+            return true;
+        };
         auto dist_to_any_lamp = [&](float x, float z) -> float {
             float best = 1.0e9f;
             for (u32 i = 0; i < n_lamp_xz; ++i) {
@@ -1532,6 +1575,7 @@ void BuildingGlPass::buildMesh(World& world) {
 
         // Place shops near intersections (commercial/retail districts)
         u32 shop_attempts = 0;
+        u32 shop_skipped_road = 0;
         for (u32 i = 0; i < n_bld_positions && shops_placed < target_shops; ++i) {
             const BldPos& bp = bld_positions[i];
             if (bp.district != kDistrictCommercial && bp.district != kDistrictRetail) continue;
@@ -1543,7 +1587,14 @@ void BuildingGlPass::buildMesh(World& world) {
             shop_attempts++;
 
             if (bld_xz_too_close(bp.x, bp.z, 5.0f)) continue;
-            if (!bld_on_sidewalk(bp.x, bp.z)) continue;
+            // Check if on building lot (not road/sidewalk)
+            if (!on_building_lot(bp.x, bp.z)) {
+                ++shop_skipped_road;
+                if (shop_skipped_road <= 5) {
+                    std::printf("[buildings] Skipped shop position (%.1f, %.1f) - not on building lot\n", bp.x, bp.z);
+                }
+                continue;
+            }
             if (dist_to_any_lamp(bp.x, bp.z) < 4.0f) continue;
 
             u32 variant = static_cast<u32>(bp.x * 73u + bp.z * 131u) % 3u;
@@ -1561,17 +1612,25 @@ void BuildingGlPass::buildMesh(World& world) {
             ++n_new_bld_xz;
             ++shops_placed;
         }
-        std::printf("[buildings] Shops: attempted %u positions, placed %u\n", shop_attempts, shops_placed);
+        std::printf("[buildings] Shops: attempted %u positions, placed %u, skipped (not on lot): %u\n", shop_attempts, shops_placed, shop_skipped_road);
 
         // Place apartments in residential blocks
         u32 apt_attempts = 0;
+        u32 apt_skipped_road = 0;
         for (u32 i = 0; i < n_bld_positions && apts_placed < target_apts; ++i) {
             const BldPos& bp = bld_positions[i];
             if (bp.district != kDistrictResidential && bp.district != kDistrictSuburban) continue;
             apt_attempts++;
 
             if (bld_xz_too_close(bp.x, bp.z, 5.0f)) continue;
-            if (!bld_on_sidewalk(bp.x, bp.z)) continue;
+            // Check if on building lot (not road/sidewalk)
+            if (!on_building_lot(bp.x, bp.z)) {
+                ++apt_skipped_road;
+                if (apt_skipped_road <= 5) {
+                    std::printf("[buildings] Skipped apartment position (%.1f, %.1f) - not on building lot\n", bp.x, bp.z);
+                }
+                continue;
+            }
             if (dist_to_any_lamp(bp.x, bp.z) < 4.0f) continue;
 
             u32 variant = static_cast<u32>(bp.x * 101u + bp.z * 197u) % 3u;
@@ -1589,10 +1648,11 @@ void BuildingGlPass::buildMesh(World& world) {
             ++n_new_bld_xz;
             ++apts_placed;
         }
-        std::printf("[buildings] Apartments: attempted %u positions, placed %u\n", apt_attempts, apts_placed);
+        std::printf("[buildings] Apartments: attempted %u positions, placed %u, skipped (not on lot): %u\n", apt_attempts, apts_placed, apt_skipped_road);
 
         // Place warehouses at industrial zones (map edges)
         u32 whse_attempts = 0;
+        u32 whse_skipped_road = 0;
         for (u32 i = 0; i < n_bld_positions && whses_placed < target_whses; ++i) {
             const BldPos& bp = bld_positions[i];
             if (bp.district != kDistrictIndustrial) continue;
@@ -1601,7 +1661,14 @@ void BuildingGlPass::buildMesh(World& world) {
             whse_attempts++;
 
             if (bld_xz_too_close(bp.x, bp.z, 5.0f)) continue;
-            if (!bld_on_sidewalk(bp.x, bp.z)) continue;
+            // Check if on building lot (not road/sidewalk)
+            if (!on_building_lot(bp.x, bp.z)) {
+                ++whse_skipped_road;
+                if (whse_skipped_road <= 5) {
+                    std::printf("[buildings] Skipped warehouse position (%.1f, %.1f) - not on building lot\n", bp.x, bp.z);
+                }
+                continue;
+            }
             if (dist_to_any_lamp(bp.x, bp.z) < 4.0f) continue;
 
             u32 variant = static_cast<u32>(bp.x * 53u + bp.z * 97u) % 3u;
@@ -1619,7 +1686,7 @@ void BuildingGlPass::buildMesh(World& world) {
             ++n_new_bld_xz;
             ++whses_placed;
         }
-        std::printf("[buildings] Warehouses: attempted %u positions, placed %u\n", whse_attempts, whses_placed);
+        std::printf("[buildings] Warehouses: attempted %u positions, placed %u, skipped (not on lot): %u\n", whse_attempts, whses_placed, whse_skipped_road);
 
         // Set instances for all new building types
         std::printf("\n[buildings] === Setting up instanced rendering ===\n");
