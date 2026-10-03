@@ -30,6 +30,17 @@ struct BuildingGlPass {
     TreeGlb  corolla_glb;              // low-poly_toyota_corolla_e80_sedan.glb, instanced per frame
     TreeGlb  sports_glb;               // low_poly_sports_car__game_ready_vehicle.glb
     TreeGlb  suv_glb;                  // low_poly_suv.glb — the third class in the mix
+    // New GLB building types (3 variants each × 3 types = 9 models)
+    TreeGlb  shop_glb[3];               // shop_small_variant_a/b/c.glb
+    TreeGlb  apartment_glb[3];         // apartment_5story_variant_a/b/c.glb
+    TreeGlb  warehouse_glb[3];         // warehouse_industrial_variant_a/b/c.glb
+    // Instance matrices for new buildings
+    float    shop_mats[kTreeInstanceCap * 16];
+    float    apartment_mats[kTreeInstanceCap * 16];
+    float    warehouse_mats[kTreeInstanceCap * 16];
+    u32      shop_count;
+    u32      apartment_count;
+    u32      warehouse_count;
     // Moving traffic: circuits, agent state, and the per-frame instance matrices.
     CarTraffic car_traffic;
     bool       car_traffic_live;
