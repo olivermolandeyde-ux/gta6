@@ -1524,10 +1524,22 @@ void BuildingGlPass::buildMesh(World& world) {
         // Roads are at multiples of 120m (kCityBlockPitch)
         // Building lots are centered at 60m, 180m, 300m, etc. (60 + 120*n)
         // First block centers: x=60, z=60 (between roads at 0 and 120)
-        const float test_x = 60.f;  // Center of first block (NOT on road at 0 or 120)
-        const float test_z_shops = 60.f;    // Center of first block
-        const float test_z_apts = 180.f;    // Center of second block (z=60+120)
-        const float test_z_whses = 300.f;   // Center of third block (z=60+240)
+        const float test_x = 1200.f;  // OPEN AREA near camera start
+        const float test_z_shops = -30.f;    // Open area, no buildings
+        const float test_z_apts = -60.f;     // Open area, no buildings (z=60+120)
+        const float test_z_whses = -90.f;    // Open area, no buildings (z=60+240)
+
+        // Force Y = terrain_height + 15.0 (FLOATING ABOVE EVERYTHING)
+        // Force scale = 1.0 (known true size)
+        const float force_y = kCityPlateauY + 0.25f + 15.0f;  // terrain + 15m up
+        const float force_scale = 1.0f;
+
+        std::printf("[buildings] DEBUG: TEST BUILDINGS - FORCED VISIBLE POSITION\n");
+        std::printf("[buildings] DEBUG:   Shop at (%.1f, %.1f), Y=%.1f, scale=%.1f\n", test_x, test_z_shops, force_y, force_scale);
+        std::printf("[buildings] DEBUG:   Apartment at (%.1f, %.1f), Y=%.1f, scale=%.1f\n", test_x, test_z_apts, force_y, force_scale);
+        std::printf("[buildings] DEBUG:   Warehouse at (%.1f, %.1f), Y=%.1f, scale=%.1f\n", test_x, test_z_whses, force_y, force_scale);
+        std::printf("[buildings] DEBUG:   (Floating 15m above terrain for visibility!)\n");
+
 
         std::printf("[buildings] DEBUG: Test positions are INSIDE blocks:\n");
         std::printf("[buildings] DEBUG:   Shop at (%.1f, %.1f) - block center between roads 0-120\n", test_x, test_z_shops);
@@ -1537,46 +1549,32 @@ void BuildingGlPass::buildMesh(World& world) {
         // Try shop at fixed position
         if (shop_glb[0].nprims > 0 && !bld_xz_too_close(test_x, test_z_shops, 5.0f)) {
             std::printf("[buildings] DEBUG: Placing shop at FIXED position (%.1f, %.1f)\n", test_x, test_z_shops);
-            std::printf("[buildings] DEBUG: Checking if on building lot: ");
-            if (!on_building_lot(test_x, test_z_shops)) {
-                std::printf("NO - position is on road/sidewalk!\n");
-            } else {
-                std::printf("YES\n");
-                const float yaw = 0.f;
-                const float sc = glb_fit_scale(&shop_glb[0], 4.0f);
-                std::printf("[buildings] DEBUG: Shop scale=%.3f, height target=4.0m\n", sc);
-                const float y0 = shop_glb[0].z_up ? shop_glb[0].zmin : shop_glb[0].ymin;
-                const float y = kCityPlateauY + 0.05f - y0 * sc;
-                std::printf("[buildings] DEBUG: Shop Y position=%.2f (ymin=%.2f, sc=%.3f)\n", y, y0, sc);
-                tree_yaw_mat(&shop_mats[shop_count * 16], test_x, y, test_z_shops, yaw, sc, shop_glb[0].z_up);
-                ++shop_count;
-                new_bld_xz[n_new_bld_xz * 2u] = test_x;
-                new_bld_xz[n_new_bld_xz * 2u + 1] = test_z_shops;
-                ++n_new_bld_xz;
-                ++shops_placed;
-                std::printf("[buildings] DEBUG: Shop placed successfully!\n");
-            }
+            std::printf("[buildings] DEBUG: DRAWING TEST BUILDING at X=%.1f, Y=%.1f, Z=%.1f with scale=1.0\n", test_x, force_y, test_z_shops);
+            std::printf("[buildings] DEBUG:   Shop - %u verts, %u prims\n", shop_glb[0].nverts, shop_glb[0].nprims);
+            const float yaw = 0.f;
+            tree_yaw_mat(&shop_mats[shop_count * 16], test_x, force_y, test_z_shops, yaw, force_scale, shop_glb[0].z_up);
+            ++shop_count;
+            new_bld_xz[n_new_bld_xz * 2u] = test_x;
+            new_bld_xz[n_new_bld_xz * 2u + 1] = test_z_shops;
+            ++n_new_bld_xz;
+            ++shops_placed;
+            std::printf("[buildings] DEBUG: Shop placed successfully!\n");
         } else {
             std::printf("[buildings] DEBUG: Could not place shop at fixed position\n");
         }
 
         // Try apartment at fixed position
         if (apartment_glb[0].nprims > 0 && !bld_xz_too_close(test_x, test_z_apts, 5.0f)) {
-            std::printf("[buildings] DEBUG: Placing apartment at FIXED position (%.1f, %.1f)\n", test_x, test_z_apts);
-            if (on_building_lot(test_x, test_z_apts)) {
-                const float yaw = 0.f;
-                const float sc = glb_fit_scale(&apartment_glb[0], 18.0f);
-                std::printf("[buildings] DEBUG: Apartment scale=%.3f, height target=18.0m\n", sc);
-                const float y0 = apartment_glb[0].z_up ? apartment_glb[0].zmin : apartment_glb[0].ymin;
-                const float y = kCityPlateauY + 0.05f - y0 * sc;
-                std::printf("[buildings] DEBUG: Apartment Y position=%.2f (ymin=%.2f, sc=%.3f)\n", y, y0, sc);
-                tree_yaw_mat(&apartment_mats[apartment_count * 16], test_x, y, test_z_apts, yaw, sc, apartment_glb[0].z_up);
-                ++apartment_count;
-                new_bld_xz[n_new_bld_xz * 2u] = test_x;
-                new_bld_xz[n_new_bld_xz * 2u + 1] = test_z_apts;
-                ++n_new_bld_xz;
-                ++apts_placed;
-                std::printf("[buildings] DEBUG: Apartment placed successfully!\n");
+            std::printf("[buildings] DEBUG: DRAWING TEST BUILDING at X=%.1f, Y=%.1f, Z=%.1f with scale=1.0\n", test_x, force_y, test_z_apts);
+            std::printf("[buildings] DEBUG:   Apartment - %u verts, %u prims\n", apartment_glb[0].nverts, apartment_glb[0].nprims);
+            const float yaw = 0.f;
+            tree_yaw_mat(&apartment_mats[apartment_count * 16], test_x, force_y, test_z_apts, yaw, force_scale, apartment_glb[0].z_up);
+            ++apartment_count;
+            new_bld_xz[n_new_bld_xz * 2u] = test_x;
+            new_bld_xz[n_new_bld_xz * 2u + 1] = test_z_apts;
+            ++n_new_bld_xz;
+            ++apts_placed;
+            std::printf("[buildings] DEBUG: Apartment placed successfully!\n");
             } else {
                 std::printf("[buildings] DEBUG: Position not on building lot!\n");
             }
@@ -1586,24 +1584,16 @@ void BuildingGlPass::buildMesh(World& world) {
 
         // Try warehouse at fixed position
         if (warehouse_glb[0].nprims > 0 && !bld_xz_too_close(test_x, test_z_whses, 5.0f)) {
-            std::printf("[buildings] DEBUG: Placing warehouse at FIXED position (%.1f, %.1f)\n", test_x, test_z_whses);
-            if (on_building_lot(test_x, test_z_whses)) {
-                const float yaw = 0.f;
-                const float sc = glb_fit_scale(&warehouse_glb[0], 10.0f);
-                std::printf("[buildings] DEBUG: Warehouse scale=%.3f, height target=10.0m\n", sc);
-                const float y0 = warehouse_glb[0].z_up ? warehouse_glb[0].zmin : warehouse_glb[0].ymin;
-                const float y = kCityPlateauY + 0.05f - y0 * sc;
-                std::printf("[buildings] DEBUG: Warehouse Y position=%.2f (ymin=%.2f, sc=%.3f)\n", y, y0, sc);
-                tree_yaw_mat(&warehouse_mats[warehouse_count * 16], test_x, y, test_z_whses, yaw, sc, warehouse_glb[0].z_up);
-                ++warehouse_count;
-                new_bld_xz[n_new_bld_xz * 2u] = test_x;
-                new_bld_xz[n_new_bld_xz * 2u + 1] = test_z_whses;
-                ++n_new_bld_xz;
-                ++whses_placed;
-                std::printf("[buildings] DEBUG: Warehouse placed successfully!\n");
-            } else {
-                std::printf("[buildings] DEBUG: Position not on building lot!\n");
-            }
+            std::printf("[buildings] DEBUG: DRAWING TEST BUILDING at X=%.1f, Y=%.1f, Z=%.1f with scale=1.0\n", test_x, force_y, test_z_whses);
+            std::printf("[buildings] DEBUG:   Warehouse - %u verts, %u prims\n", warehouse_glb[0].nverts, warehouse_glb[0].nprims);
+            const float yaw = 0.f;
+            tree_yaw_mat(&warehouse_mats[warehouse_count * 16], test_x, force_y, test_z_whses, yaw, force_scale, warehouse_glb[0].z_up);
+            ++warehouse_count;
+            new_bld_xz[n_new_bld_xz * 2u] = test_x;
+            new_bld_xz[n_new_bld_xz * 2u + 1] = test_z_whses;
+            ++n_new_bld_xz;
+            ++whses_placed;
+            std::printf("[buildings] DEBUG: Warehouse placed successfully!\n");
         } else {
             std::printf("[buildings] DEBUG: Could not place warehouse at fixed position\n");
         }
