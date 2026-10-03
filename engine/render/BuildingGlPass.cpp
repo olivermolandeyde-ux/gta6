@@ -1037,59 +1037,61 @@ bool BuildingGlPass::init() {
     log_glb_textures("moderne", &lamp_glb[1]);
 
     // Load 9 new building GLB models (3 types × 3 variants each)
-    std::printf("[buildings] Loading new GLB building models...\n");
-    if (load_city_tree("assets/models/buildings/shop_small_variant_a.glb", &shop_glb[0])) {
-        std::printf("[buildings] Loaded shop_small_variant_a.glb (%u verts)\n", shop_glb[0].nverts);
-    } else {
-        std::printf("[buildings] shop_small_variant_a.glb not found\n");
-    }
-    if (load_city_tree("assets/models/buildings/shop_small_variant_b.glb", &shop_glb[1])) {
-        std::printf("[buildings] Loaded shop_small_variant_b.glb (%u verts)\n", shop_glb[1].nverts);
-    } else {
-        std::printf("[buildings] shop_small_variant_b.glb not found\n");
-    }
-    if (load_city_tree("assets/models/buildings/shop_small_variant_c.glb", &shop_glb[2])) {
-        std::printf("[buildings] Loaded shop_small_variant_c.glb (%u verts)\n", shop_glb[2].nverts);
-    } else {
-        std::printf("[buildings] shop_small_variant_c.glb not found\n");
-    }
-    if (load_city_tree("assets/models/buildings/apartment_5story_variant_a.glb", &apartment_glb[0])) {
-        std::printf("[buildings] Loaded apartment_5story_variant_a.glb (%u verts)\n", apartment_glb[0].nverts);
-    } else {
-        std::printf("[buildings] apartment_5story_variant_a.glb not found\n");
-    }
-    if (load_city_tree("assets/models/buildings/apartment_5story_variant_b.glb", &apartment_glb[1])) {
-        std::printf("[buildings] Loaded apartment_5story_variant_b.glb (%u verts)\n", apartment_glb[1].nverts);
-    } else {
-        std::printf("[buildings] apartment_5story_variant_b.glb not found\n");
-    }
-    if (load_city_tree("assets/models/buildings/apartment_5story_variant_c.glb", &apartment_glb[2])) {
-        std::printf("[buildings] Loaded apartment_5story_variant_c.glb (%u verts)\n", apartment_glb[2].nverts);
-    } else {
-        std::printf("[buildings] apartment_5story_variant_c.glb not found\n");
-    }
-    if (load_city_tree("assets/models/buildings/warehouse_industrial_variant_a.glb", &warehouse_glb[0])) {
-        std::printf("[buildings] Loaded warehouse_industrial_variant_a.glb (%u verts)\n", warehouse_glb[0].nverts);
-    } else {
-        std::printf("[buildings] warehouse_industrial_variant_a.glb not found\n");
-    }
-    if (load_city_tree("assets/models/buildings/warehouse_industrial_variant_b.glb", &warehouse_glb[1])) {
-        std::printf("[buildings] Loaded warehouse_industrial_variant_b.glb (%u verts)\n", warehouse_glb[1].nverts);
-    } else {
-        std::printf("[buildings] warehouse_industrial_variant_b.glb not found\n");
-    }
-    if (load_city_tree("assets/models/buildings/warehouse_industrial_variant_c.glb", &warehouse_glb[2])) {
-        std::printf("[buildings] Loaded warehouse_industrial_variant_c.glb (%u verts)\n", warehouse_glb[2].nverts);
-    } else {
-        std::printf("[buildings] warehouse_industrial_variant_c.glb not found\n");
-    }
-    u32 loaded_buildings = 0;
+    std::printf("\n=== [buildings] LOADING NEW BUILDING MODELS ===\n");
+    std::printf("[buildings] Looking for models in: assets/models/buildings/\n");
+
+    auto load_building_model = [&](const char* name, TreeGlb* dst, const char* type) -> bool {
+        std::printf("[buildings] Attempting to load: %s\n", name);
+        if (load_city_tree(name, dst)) {
+            std::printf("[buildings] SUCCESS: %s loaded (%u verts, %u prims, z_up=%d)\n",
+                        type, dst->nverts, dst->nprims, dst->z_up);
+            std::printf("[buildings]   Bounds: x=[%.2f, %.2f] y=[%.2f, %.2f] z=[%.2f, %.2f]\n",
+                        dst->xmin, dst->xmax, dst->ymin, dst->ymax, dst->zmin, dst->zmax);
+            if (dst->nprims > 0) {
+                std::printf("[buildings]   First prim: %u verts, has_alpha=%d\n",
+                            dst->prims[0].nidx, dst->prims[0].has_alpha);
+            }
+            return true;
+        } else {
+            std::printf("[buildings] FAILED: %s not found or invalid\n", name);
+            return false;
+        }
+    };
+
+    // Shop variants
+    std::printf("[buildings] --- SHOP MODELS ---\n");
+    load_building_model("assets/models/buildings/shop_small_variant_a.glb", &shop_glb[0], "shop_small_variant_a");
+    load_building_model("assets/models/buildings/shop_small_variant_b.glb", &shop_glb[1], "shop_small_variant_b");
+    load_building_model("assets/models/buildings/shop_small_variant_c.glb", &shop_glb[2], "shop_small_variant_c");
+
+    // Apartment variants
+    std::printf("[buildings] --- APARTMENT MODELS ---\n");
+    load_building_model("assets/models/buildings/apartment_5story_variant_a.glb", &apartment_glb[0], "apartment_5story_variant_a");
+    load_building_model("assets/models/buildings/apartment_5story_variant_b.glb", &apartment_glb[1], "apartment_5story_variant_b");
+    load_building_model("assets/models/buildings/apartment_5story_variant_c.glb", &apartment_glb[2], "apartment_5story_variant_c");
+
+    // Warehouse variants
+    std::printf("[buildings] --- WAREHOUSE MODELS ---\n");
+    load_building_model("assets/models/buildings/warehouse_industrial_variant_a.glb", &warehouse_glb[0], "warehouse_industrial_variant_a");
+    load_building_model("assets/models/buildings/warehouse_industrial_variant_b.glb", &warehouse_glb[1], "warehouse_industrial_variant_b");
+    load_building_model("assets/models/buildings/warehouse_industrial_variant_c.glb", &warehouse_glb[2], "warehouse_industrial_variant_c");
+
+    // Summary
+    u32 shops_loaded = 0, apts_loaded = 0, whses_loaded = 0;
     for (u32 i = 0; i < 3; ++i) {
-        if (shop_glb[i].nprims > 0) ++loaded_buildings;
-        if (apartment_glb[i].nprims > 0) ++loaded_buildings;
-        if (warehouse_glb[i].nprims > 0) ++loaded_buildings;
+        if (shop_glb[i].nprims > 0) ++shops_loaded;
+        if (apartment_glb[i].nprims > 0) ++apts_loaded;
+        if (warehouse_glb[i].nprims > 0) ++whses_loaded;
     }
-    std::printf("[buildings] Loaded %u new building GLB models (of 9)\n", loaded_buildings);
+    std::printf("\n[buildings] === LOAD SUMMARY ===\n");
+    std::printf("[buildings] Loaded %u/3 shop variants, %u/3 apartment variants, %u/3 warehouse variants\n",
+                shops_loaded, apts_loaded, whses_loaded);
+    std::printf("[buildings] Total: %u/9 building models have valid mesh data\n",
+                shops_loaded + apts_loaded + whses_loaded);
+    if (shops_loaded == 0 && apts_loaded == 0 && whses_loaded == 0) {
+        std::printf("[buildings] WARNING: No building models loaded! Check file paths and GLB validity.\n");
+    }
+    std::printf("[buildings] =======================================\n\n");
     std::fflush(stdout);
     constexpr const char* kGlowFbVs =
         "#version 330 core\nlayout(location=0) in vec3 aPos; layout(location=3) in vec4 iM0;\n"
@@ -1398,14 +1400,10 @@ void BuildingGlPass::buildMesh(World& world) {
 #endif
 
     // === NEW GLB BUILDING PLACEMENT ===
-    // 9 building types: 3 variants each for shop, apartment, warehouse
-    // Placement rules:
-    // - Shops (4m tall): near intersections/corners, commercial/retail districts
-    // - Apartments (18m tall): residential blocks
-    // - Warehouses (10m tall): industrial zones at map edges
-    // Replace ~30-40% of procedural buildings with GLB models
-    // Keep 5m minimum spacing, don't overlap roads/sidewalks/trees/lamps
+    // DEBUGGING: Verbose logging + simplified fixed positions for verification
     {
+        std::printf("\n=== [buildings] PLACEMENT START ===\n");
+
         static float new_bld_xz[kTreeSpawnCap * 2];
         u32 n_new_bld_xz = 0;
         auto bld_xz_too_close = [&](float x, float z, float min_d) -> bool {
@@ -1435,46 +1433,119 @@ void BuildingGlPass::buildMesh(World& world) {
         };
 
         // Collect building positions by district
-        struct BldPos { float x, z; u32 district; };
+        struct BldPos { float x, z; u32 district; u32 building_id; };
         static BldPos bld_positions[kTreeSpawnCap];
         u32 n_bld_positions = 0;
 
         for (Entity e : world.query<BuildingComponent>()) {
             BuildingComponent* b = world.get<BuildingComponent>(e);
             if (!b) continue;
-            // Skip downtown skyscrapers (keep custom skyscraper GLB)
             if (custom_sky_lot(b)) continue;
-            // Only consider replacing procedural buildings
-            bld_positions[n_bld_positions++] = {b->position.x, b->position.z, b->district};
+            bld_positions[n_bld_positions++] = {b->position.x, b->position.z, b->district, b->building_id};
         }
+
+        std::printf("[buildings] Found %u procedural buildings to potentially replace\n", n_bld_positions);
 
         // Decide how many buildings to replace: ~35% of total
         const u32 replace_count = static_cast<u32>(n_bld_positions * 0.35f);
         u32 shops_placed = 0, apts_placed = 0, whses_placed = 0;
-        const u32 target_shops = static_cast<u32>(replace_count * 0.12f);   // 12% shops
-        const u32 target_apts  = static_cast<u32>(replace_count * 0.45f);   // 45% apartments
-        const u32 target_whses = replace_count - target_shops - target_apts; // rest warehouses
+        const u32 target_shops = static_cast<u32>(replace_count * 0.12f);
+        const u32 target_apts  = static_cast<u32>(replace_count * 0.45f);
+        const u32 target_whses = replace_count - target_shops - target_apts;
 
-        std::printf("[buildings] Placement: replacing %u of %u procedural buildings\n", replace_count, n_bld_positions);
-        std::printf("[buildings] Targets: %u shops, %u apartments, %u warehouses\n", target_shops, target_apts, target_whses);
+        std::printf("[buildings] Attempting to place %u new buildings (targets: %u shops, %u apts, %u warehouses)\n",
+                    replace_count, target_shops, target_apts, target_whses);
+
+        // === DEBUG: First try fixed positions to verify rendering works ===
+        std::printf("[buildings] === DEBUG: Testing fixed positions ===\n");
+
+        // Fixed test positions
+        const float test_x = 1200.f;
+        const float test_z_shops = 60.f;    // Near intersection
+        const float test_z_apts = 200.f;    // Residential area
+        const float test_z_whses = 400.f;   // Industrial edge
+
+        // Try shop at fixed position
+        if (shop_glb[0].nprims > 0 && !bld_xz_too_close(test_x, test_z_shops, 5.0f)) {
+            std::printf("[buildings] DEBUG: Placing shop at FIXED position (%.1f, %.1f)\n", test_x, test_z_shops);
+            const float yaw = 0.f;
+            const float sc = glb_fit_scale(&shop_glb[0], 4.0f);
+            std::printf("[buildings] DEBUG: Shop scale=%.3f, height target=4.0m\n", sc);
+            const float y0 = shop_glb[0].z_up ? shop_glb[0].zmin : shop_glb[0].ymin;
+            const float y = kCityPlateauY + 0.05f - y0 * sc;
+            std::printf("[buildings] DEBUG: Shop Y position=%.2f (ymin=%.2f, sc=%.3f)\n", y, y0, sc);
+            tree_yaw_mat(&shop_mats[shop_count * 16], test_x, y, test_z_shops, yaw, sc, shop_glb[0].z_up);
+            ++shop_count;
+            new_bld_xz[n_new_bld_xz * 2u] = test_x;
+            new_bld_xz[n_new_bld_xz * 2u + 1] = test_z_shops;
+            ++n_new_bld_xz;
+            ++shops_placed;
+            std::printf("[buildings] DEBUG: Shop placed successfully!\n");
+        } else {
+            std::printf("[buildings] DEBUG: Could not place shop at fixed position\n");
+        }
+
+        // Try apartment at fixed position
+        if (apartment_glb[0].nprims > 0 && !bld_xz_too_close(test_x, test_z_apts, 5.0f)) {
+            std::printf("[buildings] DEBUG: Placing apartment at FIXED position (%.1f, %.1f)\n", test_x, test_z_apts);
+            const float yaw = 0.f;
+            const float sc = glb_fit_scale(&apartment_glb[0], 18.0f);
+            std::printf("[buildings] DEBUG: Apartment scale=%.3f, height target=18.0m\n", sc);
+            const float y0 = apartment_glb[0].z_up ? apartment_glb[0].zmin : apartment_glb[0].ymin;
+            const float y = kCityPlateauY + 0.05f - y0 * sc;
+            std::printf("[buildings] DEBUG: Apartment Y position=%.2f (ymin=%.2f, sc=%.3f)\n", y, y0, sc);
+            tree_yaw_mat(&apartment_mats[apartment_count * 16], test_x, y, test_z_apts, yaw, sc, apartment_glb[0].z_up);
+            ++apartment_count;
+            new_bld_xz[n_new_bld_xz * 2u] = test_x;
+            new_bld_xz[n_new_bld_xz * 2u + 1] = test_z_apts;
+            ++n_new_bld_xz;
+            ++apts_placed;
+            std::printf("[buildings] DEBUG: Apartment placed successfully!\n");
+        } else {
+            std::printf("[buildings] DEBUG: Could not place apartment at fixed position\n");
+        }
+
+        // Try warehouse at fixed position
+        if (warehouse_glb[0].nprims > 0 && !bld_xz_too_close(test_x, test_z_whses, 5.0f)) {
+            std::printf("[buildings] DEBUG: Placing warehouse at FIXED position (%.1f, %.1f)\n", test_x, test_z_whses);
+            const float yaw = 0.f;
+            const float sc = glb_fit_scale(&warehouse_glb[0], 10.0f);
+            std::printf("[buildings] DEBUG: Warehouse scale=%.3f, height target=10.0m\n", sc);
+            const float y0 = warehouse_glb[0].z_up ? warehouse_glb[0].zmin : warehouse_glb[0].ymin;
+            const float y = kCityPlateauY + 0.05f - y0 * sc;
+            std::printf("[buildings] DEBUG: Warehouse Y position=%.2f (ymin=%.2f, sc=%.3f)\n", y, y0, sc);
+            tree_yaw_mat(&warehouse_mats[warehouse_count * 16], test_x, y, test_z_whses, yaw, sc, warehouse_glb[0].z_up);
+            ++warehouse_count;
+            new_bld_xz[n_new_bld_xz * 2u] = test_x;
+            new_bld_xz[n_new_bld_xz * 2u + 1] = test_z_whses;
+            ++n_new_bld_xz;
+            ++whses_placed;
+            std::printf("[buildings] DEBUG: Warehouse placed successfully!\n");
+        } else {
+            std::printf("[buildings] DEBUG: Could not place warehouse at fixed position\n");
+        }
+
+        std::printf("[buildings] === DEBUG: Fixed position test complete ===\n\n");
+
+        // === Now try random placement from existing building positions ===
+        std::printf("[buildings] === Random placement from existing buildings ===\n");
 
         // Place shops near intersections (commercial/retail districts)
+        u32 shop_attempts = 0;
         for (u32 i = 0; i < n_bld_positions && shops_placed < target_shops; ++i) {
             const BldPos& bp = bld_positions[i];
-            // Shops go in commercial (1) or retail (5) districts, near intersections
             if (bp.district != kDistrictCommercial && bp.district != kDistrictRetail) continue;
-            // Check proximity to intersection (within 20m of grid point)
             const float nx = std::round(bp.x / kCityBlockPitch) * kCityBlockPitch;
             const float nz = std::round(bp.z / kCityBlockPitch) * kCityBlockPitch;
             const float dx = std::fabs(bp.x - nx);
             const float dz = std::fabs(bp.z - nz);
-            if (dx > 20.f && dz > 20.f) continue; // not near intersection
+            if (dx > 20.f && dz > 20.f) continue;
+            shop_attempts++;
 
             if (bld_xz_too_close(bp.x, bp.z, 5.0f)) continue;
             if (!bld_on_sidewalk(bp.x, bp.z)) continue;
             if (dist_to_any_lamp(bp.x, bp.z) < 4.0f) continue;
 
-            // Random variant selection
             u32 variant = static_cast<u32>(bp.x * 73u + bp.z * 131u) % 3u;
             if (shop_glb[variant].nprims == 0) continue;
             if (shop_count >= kTreeInstanceCap) break;
@@ -1490,13 +1561,14 @@ void BuildingGlPass::buildMesh(World& world) {
             ++n_new_bld_xz;
             ++shops_placed;
         }
-        std::printf("[buildings] Placed %u shops\n", shops_placed);
+        std::printf("[buildings] Shops: attempted %u positions, placed %u\n", shop_attempts, shops_placed);
 
         // Place apartments in residential blocks
+        u32 apt_attempts = 0;
         for (u32 i = 0; i < n_bld_positions && apts_placed < target_apts; ++i) {
             const BldPos& bp = bld_positions[i];
-            // Apartments go in residential (2) or suburban (3) districts
             if (bp.district != kDistrictResidential && bp.district != kDistrictSuburban) continue;
+            apt_attempts++;
 
             if (bld_xz_too_close(bp.x, bp.z, 5.0f)) continue;
             if (!bld_on_sidewalk(bp.x, bp.z)) continue;
@@ -1517,16 +1589,16 @@ void BuildingGlPass::buildMesh(World& world) {
             ++n_new_bld_xz;
             ++apts_placed;
         }
-        std::printf("[buildings] Placed %u apartments\n", apts_placed);
+        std::printf("[buildings] Apartments: attempted %u positions, placed %u\n", apt_attempts, apts_placed);
 
         // Place warehouses at industrial zones (map edges)
+        u32 whse_attempts = 0;
         for (u32 i = 0; i < n_bld_positions && whses_placed < target_whses; ++i) {
             const BldPos& bp = bld_positions[i];
-            // Warehouses go in industrial (4) district, prefer edges
             if (bp.district != kDistrictIndustrial) continue;
-            // Prefer buildings at map edges
             const float edge_dist = std::min({bp.x, bp.z, kCityExtentM - bp.x, kCityExtentM - bp.z});
-            if (edge_dist > 200.f) continue; // not at edge
+            if (edge_dist > 200.f) continue;
+            whse_attempts++;
 
             if (bld_xz_too_close(bp.x, bp.z, 5.0f)) continue;
             if (!bld_on_sidewalk(bp.x, bp.z)) continue;
@@ -1547,15 +1619,35 @@ void BuildingGlPass::buildMesh(World& world) {
             ++n_new_bld_xz;
             ++whses_placed;
         }
-        std::printf("[buildings] Placed %u warehouses\n", whses_placed);
+        std::printf("[buildings] Warehouses: attempted %u positions, placed %u\n", whse_attempts, whses_placed);
 
         // Set instances for all new building types
-        if (shop_count > 0) tree_glb_set_instances(&shop_glb[0], shop_mats, shop_count);
-        if (apartment_count > 0) tree_glb_set_instances(&apartment_glb[0], apartment_mats, apartment_count);
-        if (warehouse_count > 0) tree_glb_set_instances(&warehouse_glb[0], warehouse_mats, warehouse_count);
+        std::printf("\n[buildings] === Setting up instanced rendering ===\n");
+        if (shop_count > 0) {
+            std::printf("[buildings] Uploading %u shop instances to GPU\n", shop_count);
+            tree_glb_set_instances(&shop_glb[0], shop_mats, shop_count);
+        } else {
+            std::printf("[buildings] No shops to render\n");
+        }
+        if (apartment_count > 0) {
+            std::printf("[buildings] Uploading %u apartment instances to GPU\n", apartment_count);
+            tree_glb_set_instances(&apartment_glb[0], apartment_mats, apartment_count);
+        } else {
+            std::printf("[buildings] No apartments to render\n");
+        }
+        if (warehouse_count > 0) {
+            std::printf("[buildings] Uploading %u warehouse instances to GPU\n", warehouse_count);
+            tree_glb_set_instances(&warehouse_glb[0], warehouse_mats, warehouse_count);
+        } else {
+            std::printf("[buildings] No warehouses to render\n");
+        }
 
-        std::printf("[buildings] Total GLB buildings: shops=%u, apartments=%u, warehouses=%u\n",
+        std::printf("\n[buildings] === PLACEMENT SUMMARY ===\n");
+        std::printf("[buildings] Final counts: shops=%u, apartments=%u, warehouses=%u\n",
                     shop_count, apartment_count, warehouse_count);
+        std::printf("[buildings] Total new GLB buildings: %u\n",
+                    shop_count + apartment_count + warehouse_count);
+        std::printf("[buildings] =======================================\n\n");
         std::fflush(stdout);
     }
     // === END NEW GLB BUILDING PLACEMENT ===
