@@ -1620,7 +1620,7 @@ void BuildingGlPass::buildMesh(World& world) {
         // This ensures we're inside building lots, not on roads
 
         auto try_place_at_block_center = [&](u32 block_i, u32 block_j, u32& placed_count, u32& attempts,
-                                               u32& skipped_road, TreeGlb* glb_array[3], u32& count,
+                                               u32& skipped_road, TreeGlb* glb_array, u32& count,
                                                const char* type_name, u32 target_district,
                                                float* mats_array) -> bool {
             // placed_count and count are the same variable - use placed_count for checks
