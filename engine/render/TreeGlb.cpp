@@ -2744,17 +2744,18 @@ bool find_and_load_tree_glb(const char* filename, TreeGlb* out) {
         dir_of(exe, exe_dir, sizeof(exe_dir));
     }
 #endif
-    const char* cands[12];
-    char buf[12][768];
+    const char* cands[20];
+    char buf[20][768];
     u32 n = 0;
     auto add = [&](const char* fmt, const char* a) {
-        if (n >= 12) {
+        if (n >= 20) {
             return;
         }
         std::snprintf(buf[n], sizeof(buf[n]), fmt, a, filename);
         cands[n] = buf[n];
         ++n;
     };
+    // Standard paths (assets/models/filename)
     add("%s/assets/models/%s", LEONIDA_SOURCE_DIR);
     add("%s/assets/models/%s", cwd);
     add("%s/../assets/models/%s", cwd);
@@ -2766,10 +2767,43 @@ bool find_and_load_tree_glb(const char* filename, TreeGlb* out) {
         add("%s/../../assets/models/%s", exe_dir);
     }
     add("%s/build/assets/models/%s", LEONIDA_SOURCE_DIR);
+
+    // NEW: Also check assets/models/buildings/ subfolder
+    add("%s/assets/models/buildings/%s", LEONIDA_SOURCE_DIR);
+    add("%s/assets/models/buildings/%s", cwd);
+    add("%s/../assets/models/buildings/%s", cwd);
+    add("%s/assets/models/buildings/%s", ".");
+    add("%s/assets/models/buildings/%s", "..");
+    if (exe_dir[0]) {
+        add("%s/assets/models/buildings/%s", exe_dir);
+        add("%s/../assets/models/buildings/%s", exe_dir);
+        add("%s/../../assets/models/buildings/%s", exe_dir);
+    }
+    add("%s/build/assets/models/buildings/%s", LEONIDA_SOURCE_DIR);
+
+    // DEBUG: Print all paths we're checking
+    std::printf("[buildings] DEBUG: Searching for: %s\n", filename);
+    std::printf("[buildings] DEBUG: Current working directory: %s\n", cwd);
+    std::printf("[buildings] DEBUG: LEONIDA_SOURCE_DIR: %s\n", LEONIDA_SOURCE_DIR);
+    if (exe_dir[0]) {
+        std::printf("[buildings] DEBUG: Executable directory: %s\n", exe_dir);
+    }
+    std::printf("[buildings] DEBUG: Checking %u paths:\n", n);
     for (u32 i = 0; i < n; ++i) {
+        std::printf("[buildings] DEBUG:   Path %u: %s\n", i, cands[i]);
+    }
+    std::fflush(stdout);
+
+    for (u32 i = 0; i < n; ++i) {
+        std::printf("[buildings] DEBUG: Trying path %u: %s - ", i, cands[i]);
         if (try_load_path(cands[i], out)) {
+            std::printf("SUCCESS\n");
+            std::printf("[buildings] DEBUG: Loaded from: %s\n", cands[i]);
+            std::fflush(stdout);
             return true;
         }
+        std::printf("NOT FOUND\n");
+        std::fflush(stdout);
     }
     std::printf("[gl] tree glb not found: %s (drop it in assets/models/)\n", filename);
     std::fflush(stdout);
