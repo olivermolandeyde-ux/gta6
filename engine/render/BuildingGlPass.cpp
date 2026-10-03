@@ -630,20 +630,38 @@ void draw_instanced_glb(TreeGlb* g, unsigned prog) {
         return;
     }
     glUseProgram(prog);
-    glDisable(GL_CULL_FACE);
+    glDisable(GL_CULL_FACE);  // Disable backface culling - fixes invisible walls
     glUniform1i(glGetUniformLocation(prog, "uAlbedo"), 0);
     glUniform1i(glGetUniformLocation(prog, "uEmissive"), 1);
     glUniform1i(glGetUniformLocation(prog, "uShadow"), 2);
     for (u32 p = 0; p < g->nprims; ++p) {
         TreePrim& pr = g->prims[p];
         glBindVertexArray(pr.vao);
+
+        // Check if texture is valid
+        bool has_texture = (pr.tex != 0);
+        if (!has_texture) {
+            std::printf("[buildings] WARNING: Primitive %u has NO texture (tex=0), using fallback color\n", p);
+        }
+
         glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, pr.tex);
+        if (has_texture) {
+            glBindTexture(GL_TEXTURE_2D, pr.tex);
+        } else {
+            // Bind a 1x1 fallback texture or leave unbound (shader should handle this)
+            // For now, we'll just leave it unbound and hope the shader has a fallback
+        }
         glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, pr.tex_emit ? pr.tex_emit : pr.tex);
+        if (pr.tex_emit && has_texture) {
+            glBindTexture(GL_TEXTURE_2D, pr.tex_emit);
+        } else if (has_texture) {
+            glBindTexture(GL_TEXTURE_2D, pr.tex);
+        }
+
         glUniform1i(glGetUniformLocation(prog, "uAlphaMask"), pr.alpha_mask);
         glUniform1f(glGetUniformLocation(prog, "uAlphaCut"), pr.cutoff);
-        glUniform1i(glGetUniformLocation(prog, "uUseTexture"), 1);
+        glUniform1i(glGetUniformLocation(prog, "uUseTexture"), has_texture ? 1 : 0);  // Disable texture if missing
+
         // Wheel spin uniforms: harmless on trees and lamps, which read uWheelCount == 0.
         glUniform1i(glGetUniformLocation(prog, "uWheelCount"), pr.wheel_count);
         if (pr.wheel_count > 0) {
@@ -1502,28 +1520,42 @@ void BuildingGlPass::buildMesh(World& world) {
         // === DEBUG: First try fixed positions to verify rendering works ===
         std::printf("[buildings] === DEBUG: Testing fixed positions ===\n");
 
-        // Fixed test positions
-        const float test_x = 1200.f;
-        const float test_z_shops = 60.f;    // Near intersection
-        const float test_z_apts = 200.f;    // Residential area
-        const float test_z_whses = 400.f;   // Industrial edge
+        // Fixed test positions - INSIDE building lots (not on roads)
+        // Roads are at multiples of 120m (kCityBlockPitch)
+        // Building lots are centered at 60m, 180m, 300m, etc. (60 + 120*n)
+        // First block centers: x=60, z=60 (between roads at 0 and 120)
+        const float test_x = 60.f;  // Center of first block (NOT on road at 0 or 120)
+        const float test_z_shops = 60.f;    // Center of first block
+        const float test_z_apts = 180.f;    // Center of second block (z=60+120)
+        const float test_z_whses = 300.f;   // Center of third block (z=60+240)
+
+        std::printf("[buildings] DEBUG: Test positions are INSIDE blocks:\n");
+        std::printf("[buildings] DEBUG:   Shop at (%.1f, %.1f) - block center between roads 0-120\n", test_x, test_z_shops);
+        std::printf("[buildings] DEBUG:   Apartment at (%.1f, %.1f) - block center between roads 120-240\n", test_x, test_z_apts);
+        std::printf("[buildings] DEBUG:   Warehouse at (%.1f, %.1f) - block center between roads 240-360\n", test_x, test_z_whses);
 
         // Try shop at fixed position
         if (shop_glb[0].nprims > 0 && !bld_xz_too_close(test_x, test_z_shops, 5.0f)) {
             std::printf("[buildings] DEBUG: Placing shop at FIXED position (%.1f, %.1f)\n", test_x, test_z_shops);
-            const float yaw = 0.f;
-            const float sc = glb_fit_scale(&shop_glb[0], 4.0f);
-            std::printf("[buildings] DEBUG: Shop scale=%.3f, height target=4.0m\n", sc);
-            const float y0 = shop_glb[0].z_up ? shop_glb[0].zmin : shop_glb[0].ymin;
-            const float y = kCityPlateauY + 0.05f - y0 * sc;
-            std::printf("[buildings] DEBUG: Shop Y position=%.2f (ymin=%.2f, sc=%.3f)\n", y, y0, sc);
-            tree_yaw_mat(&shop_mats[shop_count * 16], test_x, y, test_z_shops, yaw, sc, shop_glb[0].z_up);
-            ++shop_count;
-            new_bld_xz[n_new_bld_xz * 2u] = test_x;
-            new_bld_xz[n_new_bld_xz * 2u + 1] = test_z_shops;
-            ++n_new_bld_xz;
-            ++shops_placed;
-            std::printf("[buildings] DEBUG: Shop placed successfully!\n");
+            std::printf("[buildings] DEBUG: Checking if on building lot: ");
+            if (!on_building_lot(test_x, test_z_shops)) {
+                std::printf("NO - position is on road/sidewalk!\n");
+            } else {
+                std::printf("YES\n");
+                const float yaw = 0.f;
+                const float sc = glb_fit_scale(&shop_glb[0], 4.0f);
+                std::printf("[buildings] DEBUG: Shop scale=%.3f, height target=4.0m\n", sc);
+                const float y0 = shop_glb[0].z_up ? shop_glb[0].zmin : shop_glb[0].ymin;
+                const float y = kCityPlateauY + 0.05f - y0 * sc;
+                std::printf("[buildings] DEBUG: Shop Y position=%.2f (ymin=%.2f, sc=%.3f)\n", y, y0, sc);
+                tree_yaw_mat(&shop_mats[shop_count * 16], test_x, y, test_z_shops, yaw, sc, shop_glb[0].z_up);
+                ++shop_count;
+                new_bld_xz[n_new_bld_xz * 2u] = test_x;
+                new_bld_xz[n_new_bld_xz * 2u + 1] = test_z_shops;
+                ++n_new_bld_xz;
+                ++shops_placed;
+                std::printf("[buildings] DEBUG: Shop placed successfully!\n");
+            }
         } else {
             std::printf("[buildings] DEBUG: Could not place shop at fixed position\n");
         }
@@ -1531,19 +1563,23 @@ void BuildingGlPass::buildMesh(World& world) {
         // Try apartment at fixed position
         if (apartment_glb[0].nprims > 0 && !bld_xz_too_close(test_x, test_z_apts, 5.0f)) {
             std::printf("[buildings] DEBUG: Placing apartment at FIXED position (%.1f, %.1f)\n", test_x, test_z_apts);
-            const float yaw = 0.f;
-            const float sc = glb_fit_scale(&apartment_glb[0], 18.0f);
-            std::printf("[buildings] DEBUG: Apartment scale=%.3f, height target=18.0m\n", sc);
-            const float y0 = apartment_glb[0].z_up ? apartment_glb[0].zmin : apartment_glb[0].ymin;
-            const float y = kCityPlateauY + 0.05f - y0 * sc;
-            std::printf("[buildings] DEBUG: Apartment Y position=%.2f (ymin=%.2f, sc=%.3f)\n", y, y0, sc);
-            tree_yaw_mat(&apartment_mats[apartment_count * 16], test_x, y, test_z_apts, yaw, sc, apartment_glb[0].z_up);
-            ++apartment_count;
-            new_bld_xz[n_new_bld_xz * 2u] = test_x;
-            new_bld_xz[n_new_bld_xz * 2u + 1] = test_z_apts;
-            ++n_new_bld_xz;
-            ++apts_placed;
-            std::printf("[buildings] DEBUG: Apartment placed successfully!\n");
+            if (on_building_lot(test_x, test_z_apts)) {
+                const float yaw = 0.f;
+                const float sc = glb_fit_scale(&apartment_glb[0], 18.0f);
+                std::printf("[buildings] DEBUG: Apartment scale=%.3f, height target=18.0m\n", sc);
+                const float y0 = apartment_glb[0].z_up ? apartment_glb[0].zmin : apartment_glb[0].ymin;
+                const float y = kCityPlateauY + 0.05f - y0 * sc;
+                std::printf("[buildings] DEBUG: Apartment Y position=%.2f (ymin=%.2f, sc=%.3f)\n", y, y0, sc);
+                tree_yaw_mat(&apartment_mats[apartment_count * 16], test_x, y, test_z_apts, yaw, sc, apartment_glb[0].z_up);
+                ++apartment_count;
+                new_bld_xz[n_new_bld_xz * 2u] = test_x;
+                new_bld_xz[n_new_bld_xz * 2u + 1] = test_z_apts;
+                ++n_new_bld_xz;
+                ++apts_placed;
+                std::printf("[buildings] DEBUG: Apartment placed successfully!\n");
+            } else {
+                std::printf("[buildings] DEBUG: Position not on building lot!\n");
+            }
         } else {
             std::printf("[buildings] DEBUG: Could not place apartment at fixed position\n");
         }
@@ -1551,142 +1587,150 @@ void BuildingGlPass::buildMesh(World& world) {
         // Try warehouse at fixed position
         if (warehouse_glb[0].nprims > 0 && !bld_xz_too_close(test_x, test_z_whses, 5.0f)) {
             std::printf("[buildings] DEBUG: Placing warehouse at FIXED position (%.1f, %.1f)\n", test_x, test_z_whses);
-            const float yaw = 0.f;
-            const float sc = glb_fit_scale(&warehouse_glb[0], 10.0f);
-            std::printf("[buildings] DEBUG: Warehouse scale=%.3f, height target=10.0m\n", sc);
-            const float y0 = warehouse_glb[0].z_up ? warehouse_glb[0].zmin : warehouse_glb[0].ymin;
-            const float y = kCityPlateauY + 0.05f - y0 * sc;
-            std::printf("[buildings] DEBUG: Warehouse Y position=%.2f (ymin=%.2f, sc=%.3f)\n", y, y0, sc);
-            tree_yaw_mat(&warehouse_mats[warehouse_count * 16], test_x, y, test_z_whses, yaw, sc, warehouse_glb[0].z_up);
-            ++warehouse_count;
-            new_bld_xz[n_new_bld_xz * 2u] = test_x;
-            new_bld_xz[n_new_bld_xz * 2u + 1] = test_z_whses;
-            ++n_new_bld_xz;
-            ++whses_placed;
-            std::printf("[buildings] DEBUG: Warehouse placed successfully!\n");
+            if (on_building_lot(test_x, test_z_whses)) {
+                const float yaw = 0.f;
+                const float sc = glb_fit_scale(&warehouse_glb[0], 10.0f);
+                std::printf("[buildings] DEBUG: Warehouse scale=%.3f, height target=10.0m\n", sc);
+                const float y0 = warehouse_glb[0].z_up ? warehouse_glb[0].zmin : warehouse_glb[0].ymin;
+                const float y = kCityPlateauY + 0.05f - y0 * sc;
+                std::printf("[buildings] DEBUG: Warehouse Y position=%.2f (ymin=%.2f, sc=%.3f)\n", y, y0, sc);
+                tree_yaw_mat(&warehouse_mats[warehouse_count * 16], test_x, y, test_z_whses, yaw, sc, warehouse_glb[0].z_up);
+                ++warehouse_count;
+                new_bld_xz[n_new_bld_xz * 2u] = test_x;
+                new_bld_xz[n_new_bld_xz * 2u + 1] = test_z_whses;
+                ++n_new_bld_xz;
+                ++whses_placed;
+                std::printf("[buildings] DEBUG: Warehouse placed successfully!\n");
+            } else {
+                std::printf("[buildings] DEBUG: Position not on building lot!\n");
+            }
         } else {
             std::printf("[buildings] DEBUG: Could not place warehouse at fixed position\n");
         }
 
         std::printf("[buildings] === DEBUG: Fixed position test complete ===\n\n");
 
-        // === Now try random placement from existing building positions ===
-        std::printf("[buildings] === Random placement from existing buildings ===\n");
+        // === Now generate NEW positions inside building lots ===
+        std::printf("[buildings] === Generating positions inside building lots ===\n");
+        std::printf("[buildings] City layout: blocks are %u m, roads are %u m wide\n", (u32)kCityBlockPitch, (u32)kCityStreetWidth);
+        std::printf("[buildings] Building lots are centered at 60, 180, 300... (60 + 120*n)\n");
 
-        // Place shops near intersections (commercial/retail districts)
-        u32 shop_attempts = 0;
-        u32 shop_skipped_road = 0;
-        for (u32 i = 0; i < n_bld_positions && shops_placed < target_shops; ++i) {
-            const BldPos& bp = bld_positions[i];
-            if (bp.district != kDistrictCommercial && bp.district != kDistrictRetail) continue;
-            const float nx = std::round(bp.x / kCityBlockPitch) * kCityBlockPitch;
-            const float nz = std::round(bp.z / kCityBlockPitch) * kCityBlockPitch;
-            const float dx = std::fabs(bp.x - nx);
-            const float dz = std::fabs(bp.z - nz);
-            if (dx > 20.f && dz > 20.f) continue;
-            shop_attempts++;
+        // Generate positions at block centers (not using existing building positions)
+        // Block centers are at (60 + 120*i, 60 + 120*j) for i,j = 0,1,2,...
+        // This ensures we're inside building lots, not on roads
 
-            if (bld_xz_too_close(bp.x, bp.z, 5.0f)) continue;
-            // Check if on building lot (not road/sidewalk)
-            if (!on_building_lot(bp.x, bp.z)) {
-                ++shop_skipped_road;
-                if (shop_skipped_road <= 5) {
-                    std::printf("[buildings] Skipped shop position (%.1f, %.1f) - not on building lot\n", bp.x, bp.z);
+        auto try_place_at_block_center = [&](u32 block_i, u32 block_j, float& placed_count, u32& attempts,
+                                               u32& skipped_road, TreeGlb* glb_array[3], u32& count,
+                                               const char* type_name, u32 target_district) -> bool {
+            if (placed_count >= target_shops && type_name == "shop") return false;
+            if (placed_count >= target_apts && type_name == "apartment") return false;
+            if (placed_count >= target_whses && type_name == "warehouse") return false;
+
+            // Calculate block center position
+            const float cx = 60.f + block_i * kCityBlockPitch;
+            const float cz = 60.f + block_j * kCityBlockPitch;
+
+            // Check bounds
+            if (cx >= kCityExtentM || cz >= kCityExtentM) return false;
+
+            attempts++;
+
+            // Check if on building lot
+            if (!on_building_lot(cx, cz)) {
+                ++skipped_road;
+                if (skipped_road <= 3) {
+                    std::printf("[buildings] Skipped %s position (%.1f, %.1f) - not on building lot\n", type_name, cx, cz);
                 }
-                continue;
+                return false;
             }
-            if (dist_to_any_lamp(bp.x, bp.z) < 4.0f) continue;
 
-            u32 variant = static_cast<u32>(bp.x * 73u + bp.z * 131u) % 3u;
-            if (shop_glb[variant].nprims == 0) continue;
-            if (shop_count >= kTreeInstanceCap) break;
+            // Check spacing
+            if (bld_xz_too_close(cx, cz, 5.0f)) return false;
 
-            const float yaw = std::fmod(bp.x * 0.137f + bp.z * 0.097f, 6.2831853f);
-            const float sc = glb_fit_scale(&shop_glb[variant], 4.0f);
-            const float y0 = shop_glb[variant].z_up ? shop_glb[variant].zmin : shop_glb[variant].ymin;
+            // Check lamp distance
+            if (dist_to_any_lamp(cx, cz) < 4.0f) return false;
+
+            // Select variant
+            u32 variant = (block_i * 73u + block_j * 131u) % 3u;
+            if (glb_array[variant]->nprims == 0) return false;
+            if (count >= kTreeInstanceCap) return false;
+
+            // Place building
+            const float yaw = std::fmod(cx * 0.137f + cz * 0.097f, 6.2831853f);
+            const float target_h = (type_name == "shop") ? 4.0f : (type_name == "apartment") ? 18.0f : 10.0f;
+            const float sc = glb_fit_scale(glb_array[variant], target_h);
+            const float y0 = glb_array[variant]->z_up ? glb_array[variant]->zmin : glb_array[variant]->ymin;
             const float y = kCityPlateauY + 0.05f - y0 * sc;
-            tree_yaw_mat(&shop_mats[shop_count * 16], bp.x, y, bp.z, yaw, sc, shop_glb[variant].z_up);
-            ++shop_count;
-            new_bld_xz[n_new_bld_xz * 2u] = bp.x;
-            new_bld_xz[n_new_bld_xz * 2u + 1] = bp.z;
+
+            tree_yaw_mat(&glb_array[variant == 0 ? 0 : (variant == 1 ? 1 : 2)][count * 16],
+                         cx, y, cz, yaw, sc, glb_array[variant]->z_up);
+            ++count;
+            new_bld_xz[n_new_bld_xz * 2u] = cx;
+            new_bld_xz[n_new_bld_xz * 2u + 1] = cz;
             ++n_new_bld_xz;
-            ++shops_placed;
-        }
-        std::printf("[buildings] Shops: attempted %u positions, placed %u, skipped (not on lot): %u\n", shop_attempts, shops_placed, shop_skipped_road);
+            ++placed_count;
 
-        // Place apartments in residential blocks
-        u32 apt_attempts = 0;
-        u32 apt_skipped_road = 0;
-        for (u32 i = 0; i < n_bld_positions && apts_placed < target_apts; ++i) {
-            const BldPos& bp = bld_positions[i];
-            if (bp.district != kDistrictResidential && bp.district != kDistrictSuburban) continue;
-            apt_attempts++;
+            if (placed_count <= 3) {
+                std::printf("[buildings] Placed %s #%u at block center (%.1f, %.1f), variant=%u, scale=%.3f\n",
+                            type_name, placed_count, cx, cz, variant, sc);
+            }
+            return true;
+        };
 
-            if (bld_xz_too_close(bp.x, bp.z, 5.0f)) continue;
-            // Check if on building lot (not road/sidewalk)
-            if (!on_building_lot(bp.x, bp.z)) {
-                ++apt_skipped_road;
-                if (apt_skipped_road <= 5) {
-                    std::printf("[buildings] Skipped apartment position (%.1f, %.1f) - not on building lot\n", bp.x, bp.z);
+        // Iterate through all blocks and place buildings
+        u32 shop_attempts = 0, shop_skipped_road = 0;
+        u32 apt_attempts = 0, apt_skipped_road = 0;
+        u32 whse_attempts = 0, whse_skipped_road = 0;
+
+        for (u32 bi = 0; bi < 20 && (shop_count < target_shops || apartment_count < target_apts || warehouse_count < target_whses); ++bi) {
+            for (u32 bj = 0; bj < 20 && (shop_count < target_shops || apartment_count < target_apts || warehouse_count < target_whses); ++bj) {
+                const float cx = 60.f + bi * kCityBlockPitch;
+                const float cz = 60.f + bj * kCityBlockPitch;
+                if (cx >= kCityExtentM || cz >= kCityExtentM) continue;
+
+                // Determine district type for this block (simplified mapping)
+                // Downtown: center blocks, Commercial: near downtown, Residential: most blocks,
+                // Industrial: edges, Retail: commercial areas
+                u32 block_district = kDistrictResidential; // default
+                const float dist_from_center = std::sqrt((cx - kCityCenterM) * (cx - kCityCenterM) +
+                                                         (cz - kCityCenterM) * (cz - kCityCenterM));
+                if (dist_from_center < 200.f) {
+                    block_district = kDistrictDowntown;
+                } else if (dist_from_center < 400.f) {
+                    block_district = kDistrictCommercial;
+                } else if (cx < 200.f || cz < 200.f || cx > kCityExtentM - 200.f || cz > kCityExtentM - 200.f) {
+                    block_district = kDistrictIndustrial;
                 }
-                continue;
-            }
-            if (dist_to_any_lamp(bp.x, bp.z) < 4.0f) continue;
 
-            u32 variant = static_cast<u32>(bp.x * 101u + bp.z * 197u) % 3u;
-            if (apartment_glb[variant].nprims == 0) continue;
-            if (apartment_count >= kTreeInstanceCap) break;
-
-            const float yaw = std::fmod(bp.x * 0.113f + bp.z * 0.071f, 6.2831853f);
-            const float sc = glb_fit_scale(&apartment_glb[variant], 18.0f);
-            const float y0 = apartment_glb[variant].z_up ? apartment_glb[variant].zmin : apartment_glb[variant].ymin;
-            const float y = kCityPlateauY + 0.05f - y0 * sc;
-            tree_yaw_mat(&apartment_mats[apartment_count * 16], bp.x, y, bp.z, yaw, sc, apartment_glb[variant].z_up);
-            ++apartment_count;
-            new_bld_xz[n_new_bld_xz * 2u] = bp.x;
-            new_bld_xz[n_new_bld_xz * 2u + 1] = bp.z;
-            ++n_new_bld_xz;
-            ++apts_placed;
-        }
-        std::printf("[buildings] Apartments: attempted %u positions, placed %u, skipped (not on lot): %u\n", apt_attempts, apts_placed, apt_skipped_road);
-
-        // Place warehouses at industrial zones (map edges)
-        u32 whse_attempts = 0;
-        u32 whse_skipped_road = 0;
-        for (u32 i = 0; i < n_bld_positions && whses_placed < target_whses; ++i) {
-            const BldPos& bp = bld_positions[i];
-            if (bp.district != kDistrictIndustrial) continue;
-            const float edge_dist = std::min({bp.x, bp.z, kCityExtentM - bp.x, kCityExtentM - bp.z});
-            if (edge_dist > 200.f) continue;
-            whse_attempts++;
-
-            if (bld_xz_too_close(bp.x, bp.z, 5.0f)) continue;
-            // Check if on building lot (not road/sidewalk)
-            if (!on_building_lot(bp.x, bp.z)) {
-                ++whse_skipped_road;
-                if (whse_skipped_road <= 5) {
-                    std::printf("[buildings] Skipped warehouse position (%.1f, %.1f) - not on building lot\n", bp.x, bp.z);
+                // Place shops in commercial/retail areas
+                if (shop_count < target_shops && (block_district == kDistrictCommercial || block_district == kDistrictRetail || block_district == kDistrictDowntown)) {
+                    shop_attempts++;
+                    try_place_at_block_center(bi, bj, shop_count, shop_attempts, shop_skipped_road,
+                                              shop_glb, shop_count, "shop", block_district);
                 }
-                continue;
+
+                // Place apartments in residential areas
+                if (apartment_count < target_apts && (block_district == kDistrictResidential || block_district == kDistrictSuburban || block_district == kDistrictDowntown)) {
+                    apt_attempts++;
+                    try_place_at_block_center(bi, bj, apartment_count, apt_attempts, apt_skipped_road,
+                                              apartment_glb, apartment_count, "apartment", block_district);
+                }
+
+                // Place warehouses in industrial areas or edges
+                if (warehouse_count < target_whses && (block_district == kDistrictIndustrial || bi < 2 || bj < 2 || bi > 17 || bj > 17)) {
+                    whse_attempts++;
+                    try_place_at_block_center(bi, bj, warehouse_count, whse_attempts, whse_skipped_road,
+                                              warehouse_glb, warehouse_count, "warehouse", block_district);
+                }
             }
-            if (dist_to_any_lamp(bp.x, bp.z) < 4.0f) continue;
-
-            u32 variant = static_cast<u32>(bp.x * 53u + bp.z * 97u) % 3u;
-            if (warehouse_glb[variant].nprims == 0) continue;
-            if (warehouse_count >= kTreeInstanceCap) break;
-
-            const float yaw = std::fmod(bp.x * 0.097f + bp.z * 0.127f, 6.2831853f);
-            const float sc = glb_fit_scale(&warehouse_glb[variant], 10.0f);
-            const float y0 = warehouse_glb[variant].z_up ? warehouse_glb[variant].zmin : warehouse_glb[variant].ymin;
-            const float y = kCityPlateauY + 0.05f - y0 * sc;
-            tree_yaw_mat(&warehouse_mats[warehouse_count * 16], bp.x, y, bp.z, yaw, sc, warehouse_glb[variant].z_up);
-            ++warehouse_count;
-            new_bld_xz[n_new_bld_xz * 2u] = bp.x;
-            new_bld_xz[n_new_bld_xz * 2u + 1] = bp.z;
-            ++n_new_bld_xz;
-            ++whses_placed;
         }
-        std::printf("[buildings] Warehouses: attempted %u positions, placed %u, skipped (not on lot): %u\n", whse_attempts, whses_placed, whse_skipped_road);
+
+        std::printf("[buildings] Shops: attempted %u positions, placed %u, skipped (not on lot): %u\n",
+                    shop_attempts, shop_count, shop_skipped_road);
+        std::printf("[buildings] Apartments: attempted %u positions, placed %u, skipped (not on lot): %u\n",
+                    apt_attempts, apartment_count, apt_skipped_road);
+        std::printf("[buildings] Warehouses: attempted %u positions, placed %u, skipped (not on lot): %u\n",
+                    whse_attempts, warehouse_count, whse_skipped_road);
 
         // Set instances for all new building types
         std::printf("\n[buildings] === Setting up instanced rendering ===\n");
