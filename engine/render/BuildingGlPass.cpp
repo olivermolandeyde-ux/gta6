@@ -1620,7 +1620,7 @@ void BuildingGlPass::buildMesh(World& world) {
         // This ensures we're inside building lots, not on roads
 
         auto try_place_at_block_center = [&](u32 block_i, u32 block_j, u32& placed_count, u32& attempts,
-                                               u32& skipped_road, TreeGlb* glb_array, u32& count,
+                                               u32& skipped_road, TreeGlb (&glb_array)[3], u32& count,
                                                const char* type_name, u32 target_district,
                                                float* mats_array) -> bool {
             // placed_count and count are the same variable - use placed_count for checks
@@ -1654,17 +1654,17 @@ void BuildingGlPass::buildMesh(World& world) {
 
             // Select variant
             u32 variant = (block_i * 73u + block_j * 131u) % 3u;
-            if (glb_array[variant]->nprims == 0) return false;
+            if (glb_array[variant].nprims == 0) return false;
             if (count >= kTreeInstanceCap) return false;
 
             // Place building
             const float yaw = std::fmod(cx * 0.137f + cz * 0.097f, 6.2831853f);
             const float target_h = (strcmp(type_name, "shop") == 0) ? 4.0f : (strcmp(type_name, "apartment") == 0) ? 18.0f : 10.0f;
-            const float sc = glb_fit_scale(glb_array[variant], target_h);
-            const float y0 = glb_array[variant]->z_up ? glb_array[variant]->zmin : glb_array[variant]->ymin;
+            const float sc = glb_fit_scale(&glb_array[variant], target_h);
+            const float y0 = glb_array[variant].z_up ? glb_array[variant].zmin : glb_array[variant].ymin;
             const float y = kCityPlateauY + 0.05f - y0 * sc;
 
-            tree_yaw_mat(&mats_array[count * 16], cx, y, cz, yaw, sc, glb_array[variant]->z_up);
+            tree_yaw_mat(&mats_array[count * 16], cx, y, cz, yaw, sc, glb_array[variant].z_up);
             ++count;
             new_bld_xz[n_new_bld_xz * 2u] = cx;
             new_bld_xz[n_new_bld_xz * 2u + 1] = cz;
