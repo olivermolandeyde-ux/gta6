@@ -1060,21 +1060,21 @@ bool BuildingGlPass::init() {
 
     // Shop variants
     std::printf("[buildings] --- SHOP MODELS ---\n");
-    load_building_model("assets/models/buildings/shop_small_variant_a.glb", &shop_glb[0], "shop_small_variant_a");
-    load_building_model("assets/models/buildings/shop_small_variant_b.glb", &shop_glb[1], "shop_small_variant_b");
-    load_building_model("assets/models/buildings/shop_small_variant_c.glb", &shop_glb[2], "shop_small_variant_c");
+    load_building_model("buildings/shop_small_variant_a.glb", &shop_glb[0], "shop_small_variant_a");
+    load_building_model("buildings/shop_small_variant_b.glb", &shop_glb[1], "shop_small_variant_b");
+    load_building_model("buildings/shop_small_variant_c.glb", &shop_glb[2], "shop_small_variant_c");
 
     // Apartment variants
     std::printf("[buildings] --- APARTMENT MODELS ---\n");
-    load_building_model("assets/models/buildings/apartment_5story_variant_a.glb", &apartment_glb[0], "apartment_5story_variant_a");
-    load_building_model("assets/models/buildings/apartment_5story_variant_b.glb", &apartment_glb[1], "apartment_5story_variant_b");
-    load_building_model("assets/models/buildings/apartment_5story_variant_c.glb", &apartment_glb[2], "apartment_5story_variant_c");
+    load_building_model("buildings/apartment_5story_variant_a.glb", &apartment_glb[0], "apartment_5story_variant_a");
+    load_building_model("buildings/apartment_5story_variant_b.glb", &apartment_glb[1], "apartment_5story_variant_b");
+    load_building_model("buildings/apartment_5story_variant_c.glb", &apartment_glb[2], "apartment_5story_variant_c");
 
     // Warehouse variants
     std::printf("[buildings] --- WAREHOUSE MODELS ---\n");
-    load_building_model("assets/models/buildings/warehouse_industrial_variant_a.glb", &warehouse_glb[0], "warehouse_industrial_variant_a");
-    load_building_model("assets/models/buildings/warehouse_industrial_variant_b.glb", &warehouse_glb[1], "warehouse_industrial_variant_b");
-    load_building_model("assets/models/buildings/warehouse_industrial_variant_c.glb", &warehouse_glb[2], "warehouse_industrial_variant_c");
+    load_building_model("buildings/warehouse_industrial_variant_a.glb", &warehouse_glb[0], "warehouse_industrial_variant_a");
+    load_building_model("buildings/warehouse_industrial_variant_b.glb", &warehouse_glb[1], "warehouse_industrial_variant_b");
+    load_building_model("buildings/warehouse_industrial_variant_c.glb", &warehouse_glb[2], "warehouse_industrial_variant_c");
 
     // Summary
     u32 shops_loaded = 0, apts_loaded = 0, whses_loaded = 0;
