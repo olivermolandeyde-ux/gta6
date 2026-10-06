@@ -279,11 +279,11 @@ void mat_mul16(float* o, const float* a, const float* b) {
 // Zebra style (photo ground truth): bars run PARALLEL to traffic.
 // N/S arms: bars LONG in Z (crossing depth), NARROW in X, spaced in X.
 // E/W arms: bars LONG in X, NARROW in Z, spaced in Z.
-constexpr float kXwalkLen = 3.5f;   // bar length along traffic (crossing depth)
-constexpr float kXwalkThick = 0.5f; // bar width across the road
-constexpr float kXwalkPitch = 1.1f; // 0.5 stripe + 0.6 asphalt gap
+constexpr float kXwalkLen = 4.5f;   // bar length along traffic (crossing depth)
+constexpr float kXwalkThick = 0.9f; // bar width across the road
+constexpr float kXwalkPitch = 1.8f; // 0.9 stripe + 0.9 asphalt gap
 constexpr u32 kXwalkCount =
-    static_cast<u32>((kCityStreetWidth - 2.0f) / 1.1f); // 16 bars, centred
+    static_cast<u32>((kCityStreetWidth - 2.0f) / 1.8f); // 10 bars, centred
 constexpr float kXwalkStart = kCityStreetWidth * 0.5f + 1.0f; // 11: outside junction
 
 void upload_solid(unsigned* vao, unsigned* ibo, unsigned* count, SolidVert* verts, u32 vn, u32* idx, u32 in) {
