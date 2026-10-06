@@ -48,12 +48,16 @@ int main(int argc, char** argv) {
     setvbuf(stdout, nullptr, _IOLBF, 0);
     bool forever = true;
     bool bldg_row = false;
+    bool xwalk = false;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--once") == 0) {
             forever = false;
         }
         if (std::strcmp(argv[i], "--bldg-row") == 0) {
             bldg_row = true;
+        }
+        if (std::strcmp(argv[i], "--xwalk") == 0) {
+            xwalk = true;
         }
     }
 
@@ -210,6 +214,16 @@ int main(int argc, char** argv) {
         }
         terrain.cameraPos    = cam;
         terrain.cameraTarget = float3_add(cam, fwd);
+        if (xwalk) {
+            // Scripted intersection inspection: street-level first, then top-down.
+            if (frames < 9) {
+                terrain.cameraPos    = float3{1200.f, 7.f, 80.f};
+                terrain.cameraTarget = float3{1200.f, 7.f, 140.f};
+            } else {
+                terrain.cameraPos    = float3{1200.f, 250.f, 121.f};
+                terrain.cameraTarget = float3{1200.f, 5.f, 120.f};
+            }
+        }
 
         world.begin_frame(frames);
         UpdateSkySystem(world, dt, world.frame_commands());
@@ -245,6 +259,18 @@ int main(int argc, char** argv) {
                         frames);
             std::fflush(stdout);
         }
+        if (xwalk && frames == 6) {
+            save_screenshot_ppm("build/xwalk_street.ppm", terrain.width, terrain.height);
+            std::printf("[city] screenshot: build/xwalk_street.ppm (street level, frame %u)\n",
+                        frames);
+            std::fflush(stdout);
+        }
+        if (xwalk && frames == 12) {
+            save_screenshot_ppm("build/xwalk_top.ppm", terrain.width, terrain.height);
+            std::printf("[city] screenshot: build/xwalk_top.ppm (top-down, frame %u)\n",
+                        frames);
+            std::fflush(stdout);
+        }
         window.swap();
         ++frames;
 
@@ -270,6 +296,9 @@ int main(int argc, char** argv) {
         }
         if (frames > 60u * 60u * 8u) {
             break;
+        }
+        if (xwalk && frames > 14) {
+            break; // scripted shots done
         }
     }
 

@@ -52,6 +52,16 @@ void main() {
     float along_m = UV.y * 10.0;
     float dash = step(0.0, 3.0 - mod(along_m, 6.0));
     float centerDash = (1.0 - step(0.012, abs(UV.x - 0.5))) * dash * (1.0 - sidewalkMask);
+    // Suppress the centre dash inside the junction box and the crosswalk bands
+    // (bars span +-9 m across, stacked 11..16.5 m out on every approach), so no
+    // yellow pokes through the white stripes. Geometry contract: pitch 120,
+    // road half-width 10.
+    vec2 gmod = mod(FragPos.xz, 120.0);
+    vec2 dd = min(gmod, vec2(120.0) - gmod);
+    float inBox = (1.0 - step(11.0, dd.x)) * (1.0 - step(11.0, dd.y));
+    float bandZ = (1.0 - step(9.5, dd.x)) * step(10.5, dd.y) * (1.0 - step(17.0, dd.y));
+    float bandX = (1.0 - step(9.5, dd.y)) * step(10.5, dd.x) * (1.0 - step(17.0, dd.x));
+    centerDash *= (1.0 - max(inBox, max(bandZ, bandX)));
     float edgeLine = (1.0 - step(0.008, abs(ax - 0.355))) * (1.0 - sidewalkMask);
 
     vec3 c = mix(asphalt, curb, curbMask);
