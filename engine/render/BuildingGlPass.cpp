@@ -2582,6 +2582,199 @@ void BuildingGlPass::buildMesh(World& world) {
             }
             try_place_candidate(ci, type);
         }
+        // === DENSITY PARCELS (fill blocks wall-to-wall with fitted GLBs) ===
+        // Startup only. Subdivides each block interior into district-sized parcels
+        // and places fitted GLBs (existing 2x landmarks untouched). Footprints fit
+        // parcels, so 2 m gaps + 3 m setbacks hold with zero overlaps; an explicit
+        // neighbour check enforces it. Appends to the same per-variant instance
+        // arrays (same draw calls, same 60 FPS profile). Ground = current lot
+        // level (plateau+0.05; the slab levels are a later task, one-line change).
+        {
+            struct FullB {
+                float x, z, hw, hd;
+                u32 district, id;
+            };
+            static FullB fb[4096];
+            u32 n_fb = 0;
+            for (Entity e : world.query<BuildingComponent>()) {
+                BuildingComponent* b = world.get<BuildingComponent>(e);
+                if (!b || n_fb >= 4096) {
+                    continue;
+                }
+                fb[n_fb++] = {b->position.x, b->position.z, b->width * 0.5f, b->depth * 0.5f,
+                              b->district, b->building_id};
+            }
+            struct Placed {
+                float x, z, hx, hz;
+            };
+            static Placed pd[4096];
+            u32 n_pd = 0;
+            auto h3 = [](u32 a, u32 b, u32 c) -> u32 {
+                u32 h = (a * 73856093u) ^ (b * 19349663u) ^ (c * 83492791u);
+                h ^= h >> 15;
+                h *= 2246822519u;
+                h ^= h >> 13;
+                return h;
+            };
+            u32 den_shop = 0, den_apt = 0, den_whs = 0;
+            u32 den_skip_occ = 0, den_skip_gap = 0, den_skip_mesh = 0, den_skip_cap = 0;
+            for (u32 bz = 0; bz < kCityBlocks; ++bz) {
+                for (u32 bx = 0; bx < kCityBlocks; ++bx) {
+                    // District = majority vote of procedural buildings in this block.
+                    u32 votes[6] = {0, 0, 0, 0, 0, 0};
+                    for (u32 i = 0; i < n_fb; ++i) {
+                        if (fb[i].x >= bx * 120.f && fb[i].x < (bx + 1u) * 120.f &&
+                            fb[i].z >= bz * 120.f && fb[i].z < (bz + 1u) * 120.f &&
+                            fb[i].district < 6u) {
+                            ++votes[fb[i].district];
+                        }
+                    }
+                    u32 district = 3u; // empty blocks read as suburban
+                    u32 best = 0;
+                    for (u32 d = 0; d < 6u; ++d) {
+                        if (votes[d] > best) {
+                            best = votes[d];
+                            district = d;
+                        }
+                    }
+                    float pw = 18.f, pdpt = 18.f, prob = 0.85f;
+                    int type = 1;
+                    if (district == 5u) {
+                        pw = 14.f;
+                        pdpt = 18.f;
+                        prob = 0.90f;
+                        type = 0;
+                    } else if (district == 4u) {
+                        pw = 30.f;
+                        pdpt = 30.f;
+                        prob = 0.80f;
+                        type = 2;
+                    } else if (district == 3u) {
+                        pw = 24.f;
+                        pdpt = 24.f;
+                        prob = 0.60f;
+                        type = 1;
+                    } else if (district == 0u) {
+                        pw = 18.f;
+                        pdpt = 18.f;
+                        prob = 0.90f;
+                        type = 1;
+                    } else if (district == 1u) {
+                        pw = 18.f;
+                        pdpt = 18.f;
+                        prob = 0.85f;
+                        type = 0;
+                    } else {
+                        pw = 18.f;
+                        pdpt = 18.f;
+                        prob = 0.85f;
+                        type = 1;
+                    }
+                    TreeGlb* arr = (type == 0) ? shop_glb
+                                   : ((type == 2) ? warehouse_glb : apartment_glb);
+                    u32* var_n = (type == 0) ? shop_var_n
+                                 : ((type == 2) ? whs_var_n : apt_var_n);
+                    float (*var_mats)[kTreeInstanceCap * 16] = (type == 0) ? shop_var_mats
+                                                               : ((type == 2) ? whs_var_mats
+                                                                              : apt_var_mats);
+                    // Parcel grid over [16,104]^2 (3 m setback inside the ring).
+                    const u32 nx = static_cast<u32>(88.f / pw);
+                    const u32 nz = static_cast<u32>(88.f / pdpt);
+                    if (!nx || !nz) {
+                        continue;
+                    }
+                    const float ox = bx * 120.f + 16.f + (88.f - nx * pw) * 0.5f;
+                    const float oz = bz * 120.f + 16.f + (88.f - nz * pdpt) * 0.5f;
+                    for (u32 j = 0; j < nz; ++j) {
+                        for (u32 i = 0; i < nx; ++i) {
+                            const u32 hh = h3(bx * 64u + i, bz * 64u + j, 99u);
+                            if (hh % 100u >= static_cast<u32>(prob * 100.f)) {
+                                continue; // courtyard / park
+                            }
+                            const float cx = ox + (i + 0.5f) * pw;
+                            const float cz = oz + (j + 0.5f) * pdpt;
+                            // Skip parcels occupied by any procedural footprint.
+                            bool occ = false;
+                            for (u32 f = 0; f < n_fb; ++f) {
+                                if (std::fabs(cx - fb[f].x) < fb[f].hw + 1.f &&
+                                    std::fabs(cz - fb[f].z) < fb[f].hd + 1.f) {
+                                    occ = true;
+                                    break;
+                                }
+                            }
+                            if (occ) {
+                                ++den_skip_occ;
+                                continue;
+                            }
+                            u32 variant = hh % 3u;
+                            if (arr[variant].nprims == 0) {
+                                u32 alt = 3u;
+                                for (u32 v = 0; v < 3u; ++v) {
+                                    if (arr[v].nprims > 0) {
+                                        alt = v;
+                                        break;
+                                    }
+                                }
+                                if (alt >= 3u) {
+                                    ++den_skip_mesh;
+                                    continue;
+                                }
+                                variant = alt;
+                            }
+                            const TreeGlb* g = &arr[variant];
+                            const float fw = pw * (0.68f + 0.17f * ((hh >> 8) % 100u) / 100.f);
+                            const float fd = pdpt * (0.68f + 0.17f * ((hh >> 16) % 100u) / 100.f);
+                            const float sc = building_footprint_scale(g, fw, fd);
+                            const float yaw = street_facing_yaw(cx, cz);
+                            const bool swapped = std::fabs(std::sin(yaw)) > 0.707f;
+                            const float mw = g->xmax - g->xmin;
+                            const float md = (g->z_up ? g->ymax - g->ymin : g->zmax - g->zmin);
+                            const float hx = (swapped ? md : mw) * sc * 0.5f;
+                            const float hz = (swapped ? mw : md) * sc * 0.5f;
+                            // >=2 m gap to every placed neighbour.
+                            bool tight = false;
+                            for (u32 p = 0; p < n_pd; ++p) {
+                                const float need =
+                                    (hx > pd[p].hx ? hx : pd[p].hx) +
+                                    (hz > pd[p].hz ? hz : pd[p].hz);
+                                if (std::fabs(cx - pd[p].x) < (hx + pd[p].hx + 2.f) &&
+                                    std::fabs(cz - pd[p].z) < (hz + pd[p].hz + 2.f)) {
+                                    tight = true;
+                                    break;
+                                }
+                                (void)need;
+                            }
+                            if (tight) {
+                                ++den_skip_gap;
+                                continue;
+                            }
+                            if (var_n[variant] >= kTreeInstanceCap || n_pd >= 4096) {
+                                ++den_skip_cap;
+                                continue;
+                            }
+                            const float y0 = tree_up_min(g);
+                            const float y = kCityPlateauY + 0.05f - y0 * sc;
+                            tree_yaw_mat(&var_mats[variant][var_n[variant] * 16], cx, y, cz,
+                                         yaw, sc, g->z_up);
+                            ++var_n[variant];
+                            pd[n_pd++] = {cx, cz, hx, hz};
+                            if (type == 0) {
+                                ++den_shop;
+                            } else if (type == 2) {
+                                ++den_whs;
+                            } else {
+                                ++den_apt;
+                            }
+                        }
+                    }
+                }
+            }
+            std::printf("[buildings] density: +%u shops +%u apartments +%u warehouses "
+                        "(skipped %u occupied, %u gap, %u nomesh, %u cap)\n",
+                        den_shop, den_apt, den_whs, den_skip_occ, den_skip_gap, den_skip_mesh,
+                        den_skip_cap);
+            std::fflush(stdout);
+        }
         // Upload once via the existing instanced pipeline (same as trees/cars).
         for (u32 v = 0; v < 3u; ++v) {
             if (shop_glb[v].nprims > 0) {

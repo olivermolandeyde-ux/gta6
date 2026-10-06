@@ -229,7 +229,8 @@ int main(int argc, char** argv) {
                 terrain.cameraPos    = float3{1352.f, 6.7f, 100.f};
                 terrain.cameraTarget = float3{1332.f, 5.2f, 119.f};
             } else {
-                terrain.cameraPos    = float3{1200.f, 250.f, 121.f};
+                // Aerial survey framing (~5 blocks across for density review).
+                terrain.cameraPos    = float3{1200.f, 420.f, 121.f};
                 terrain.cameraTarget = float3{1200.f, 5.f, 120.f};
             }
         }
@@ -315,6 +316,16 @@ int main(int argc, char** argv) {
         if (xwalk && frames > 16) {
             break; // scripted shots done
         }
+    }
+
+    // Short-run perf summary (headless/verification runs never reach frame 60).
+    {
+        const u32 now = SDL_GetTicks();
+        const u32 dt_ms = now > fps_t0 ? now - fps_t0 : 1u;
+        const float fps = 1000.f * static_cast<float>(frames) / static_cast<float>(dt_ms);
+        std::printf("[perf] run: %u frames in %u ms = %.1f fps (note: headless/software GL)\n",
+                    frames, dt_ms, fps);
+        std::fflush(stdout);
     }
 
     buildings.shutdown();
