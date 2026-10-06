@@ -2375,16 +2375,15 @@ void BuildingGlPass::buildMesh(World& world) {
                 ++lot_fail;
             }
             const TreeGlb* g = &arr[variant];
-            // Natural size first: the GLBs are authored at real-world scale.
-            // Doubled city-wide (2x), capped by lot fit so buildings never
-            // overflow their lots: roomy lots get exactly 2x, tight lots less.
-            // Lots that would force dollhouse scale (<0.75) keep procedural.
+            // Doubled city-wide: every placed GLB renders at exactly 2x natural
+            // size (all variants a/b/c, all types). Lots far smaller than the
+            // model (<0.75 fit) still keep their procedural building.
             const float fit = building_footprint_scale(g, w, d);
             if (fit < 0.75f) {
                 ++skipped_fit; // lot far smaller than the model — keep procedural
                 return false;
             }
-            const float sc = fit < 2.f ? fit : 2.f;
+            const float sc = 2.f;
             const float y = kCityPlateauY + 0.05f - tree_up_min(g) * sc;
             if (var_n[variant] >= kTreeInstanceCap) {
                 ++skipped_cap;
