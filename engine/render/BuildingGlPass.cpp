@@ -1024,6 +1024,8 @@ u32 report_glb_node_rotations(const char* base, const char* label) {
 // near-white, so scale them to medium concrete gray. Zebra bars stay the
 // brightest white in the street scene.
 const float3 kSidewalkTint{0.52f, 0.52f, 0.50f};
+// Lot grass brightness (one-line knob like the sidewalk tint).
+const float3 kGrassTint{1.0f, 1.0f, 1.0f};
 
 // Shared prop spacing + sidewalk helpers (all prop placement loops).
 // Logic mirrors the original per-block lambdas exactly; hoisted so every prop
@@ -1122,6 +1124,7 @@ bool BuildingGlPass::init() {
     lot_vao = lot_ibo = lot_count = 0;
     ring_vao = ring_ibo = ring_count = 0;
     tex_sidewalk = 0;
+    tex_grass = 0;
     tex_flat_n = 0;
     street_count = 0;
     num_buildings = 0;
@@ -1240,6 +1243,70 @@ bool BuildingGlPass::init() {
             tex_sidewalk = 0;
             std::printf("[city] sidewalk texture missing: flat light-gray fallback\n");
         }
+        if (file) {
+            std::free(file);
+        }
+        std::fflush(stdout);
+    }
+    // Lot grass texture (world-space tiled, see the lot mesh). Same rules as the
+    // sidewalk PNG; plus anisotropic filtering (clamped to the reported max) so
+    // the big ground planes don't shimmer at grazing angles and distance.
+    {
+        const char* cands[3] = {"assets/textures/grass.png", "./assets/textures/grass.png",
+                                "build/assets/textures/grass.png"};
+        u8* file = nullptr;
+        u32 flen = 0;
+        for (u32 i = 0; i < 3 && !file; ++i) {
+            FILE* f = std::fopen(cands[i], "rb");
+            if (!f) {
+                continue;
+            }
+            std::fseek(f, 0, SEEK_END);
+            const long sz = std::ftell(f);
+            std::fseek(f, 0, SEEK_SET);
+            if (sz > 20 && sz < 16L * 1024L * 1024L) {
+                file = static_cast<u8*>(std::malloc(static_cast<usize>(sz)));
+                if (file && std::fread(file, 1, static_cast<usize>(sz), f) == static_cast<usize>(sz)) {
+                    flen = static_cast<u32>(sz);
+                } else {
+                    std::free(file);
+                    file = nullptr;
+                }
+            }
+            std::fclose(f);
+        }
+        u8* rgba = nullptr;
+        u32 tw = 0, th = 0;
+        if (file && decode_png_file_rgba(file, flen, &rgba, &tw, &th) && rgba && tw && th) {
+            GLfloat max_aniso = 0.f;
+            glGetFloatv(0x84FF /*GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT*/, &max_aniso);
+            GLfloat aniso = max_aniso;
+            if (aniso > 8.f) {
+                aniso = 8.f;
+            }
+            if (aniso < 1.f) {
+                aniso = 1.f;
+            }
+            glGenTextures(1, &tex_grass);
+            glBindTexture(GL_TEXTURE_2D, tex_grass);
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+            glTexParameterf(GL_TEXTURE_2D, 0x84FE /*GL_TEXTURE_MAX_ANISOTROPY_EXT*/, aniso);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, static_cast<int>(tw), static_cast<int>(th),
+                         0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+            glGenerateMipmap(GL_TEXTURE_2D);
+            std::printf("[city] grass texture: %ux%u from PNG (tiled world/3.5 m, aniso %.1f of max %.1f)\n",
+                        tw, th, static_cast<double>(aniso), static_cast<double>(max_aniso));
+            std::free(rgba);
+        } else {
+            tex_grass = 0;
+            std::printf("[city] grass texture missing, using flat green\n");
+        }
+        std::printf("[city] grass tint=(%.2f,%.2f,%.2f)\n", static_cast<double>(kGrassTint.x),
+                    static_cast<double>(kGrassTint.y), static_cast<double>(kGrassTint.z));
         if (file) {
             std::free(file);
         }
@@ -1818,10 +1885,16 @@ void BuildingGlPass::buildMesh(World& world) {
                 const float z0 = static_cast<float>(bz) * kCityBlockPitch + inset;
                 const float z1 = static_cast<float>(bz + 1) * kCityBlockPitch - inset;
                 const u32 base = lot_vn;
-                solid_push(lot_verts, &lot_vn, x0, lot_y, z0, 0.f, 1.f, 0.f, 0.f, 0.f);
-                solid_push(lot_verts, &lot_vn, x1, lot_y, z0, 0.f, 1.f, 0.f, 1.f, 0.f);
-                solid_push(lot_verts, &lot_vn, x1, lot_y, z1, 0.f, 1.f, 0.f, 1.f, 1.f);
-                solid_push(lot_verts, &lot_vn, x0, lot_y, z1, 0.f, 1.f, 0.f, 0.f, 1.f);
+                // World-space tiling (world/3.5 m): identical grass scale on every
+                // block, seamless across neighbours.
+                solid_push(lot_verts, &lot_vn, x0, lot_y, z0, 0.f, 1.f, 0.f, x0 * (1.f / 3.5f),
+                           z0 * (1.f / 3.5f));
+                solid_push(lot_verts, &lot_vn, x1, lot_y, z0, 0.f, 1.f, 0.f, x1 * (1.f / 3.5f),
+                           z0 * (1.f / 3.5f));
+                solid_push(lot_verts, &lot_vn, x1, lot_y, z1, 0.f, 1.f, 0.f, x1 * (1.f / 3.5f),
+                           z1 * (1.f / 3.5f));
+                solid_push(lot_verts, &lot_vn, x0, lot_y, z1, 0.f, 1.f, 0.f, x0 * (1.f / 3.5f),
+                           z1 * (1.f / 3.5f));
                 lot_idx[lot_in++] = base + 0;
                 lot_idx[lot_in++] = base + 1;
                 lot_idx[lot_in++] = base + 2;
@@ -3484,15 +3557,29 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
         mat_ident(ident);
         glUniformMatrix4fv(glGetUniformLocation(building_prog, "model"), 1, GL_FALSE, ident);
         bind_inv_scale(building_prog, 1.f, 1.f, 1.f);
-        glUniform1i(glGetUniformLocation(building_prog, "uUseTex"), 0);
         glUniform1i(glGetUniformLocation(building_prog, "uAlphaLeaf"), 0);
         glUniform1i(glGetUniformLocation(building_prog, "uFacade"), 0);
-        glUniform3f(glGetUniformLocation(building_prog, "albedo"), 0.16f, 0.30f, 0.14f);
         glUniform1f(glGetUniformLocation(building_prog, "roughness"), 0.9f);
         glUniform1f(glGetUniformLocation(building_prog, "emissionBoost"), 0.f);
-        glUniform1f(glGetUniformLocation(building_prog, "floors"), 1.f);
         glUniform1i(glGetUniformLocation(building_prog, "district"), 2);
         glUniform1i(glGetUniformLocation(building_prog, "windowStyle"), 0);
+        // building.frag scales albedo UV by (1.6, floors*0.28): floors=6 keeps the
+        // world/3.5 m tiles ~square, like the ring mesh.
+        glUniform1f(glGetUniformLocation(building_prog, "floors"), 6.f);
+        if (tex_grass) {
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, tex_grass);
+            glUniform1i(glGetUniformLocation(building_prog, "uAlbedo"), 0);
+            glActiveTexture(GL_TEXTURE1);
+            glBindTexture(GL_TEXTURE_2D, tex_flat_n);
+            glUniform1i(glGetUniformLocation(building_prog, "uNormalTex"), 1);
+            glUniform1i(glGetUniformLocation(building_prog, "uUseTex"), 1);
+            glUniform3f(glGetUniformLocation(building_prog, "albedo"), kGrassTint.x,
+                        kGrassTint.y, kGrassTint.z);
+        } else {
+            glUniform1i(glGetUniformLocation(building_prog, "uUseTex"), 0);
+            glUniform3f(glGetUniformLocation(building_prog, "albedo"), 0.16f, 0.30f, 0.14f);
+        }
         if (lot_count > 0) {
             glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(lot_count), GL_UNSIGNED_INT,
                            nullptr);
@@ -3816,6 +3903,10 @@ void BuildingGlPass::shutdown() {
     if (tex_sidewalk) {
         glDeleteTextures(1, &tex_sidewalk);
         tex_sidewalk = 0;
+    }
+    if (tex_grass) {
+        glDeleteTextures(1, &tex_grass);
+        tex_grass = 0;
     }
     if (tex_flat_n) {
         glDeleteTextures(1, &tex_flat_n);
