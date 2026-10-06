@@ -625,12 +625,32 @@ void tree_yaw_mat(float* m, float x, float y, float z, float yaw, float sc, int 
     m[15] = 1.f;
 }
 
+// 1x1 white fallback so texture-less prims sample a safe solid color instead of
+// an unbound texture unit (which renders pink). Created lazily on first use;
+// after that it is just a bind call — no per-frame overhead.
+unsigned g_fallback_white_tex = 0;
+
+unsigned fallback_white_tex() {
+    if (g_fallback_white_tex) {
+        return g_fallback_white_tex;
+    }
+    const u8 px[4] = {255, 255, 255, 255};
+    glGenTextures(1, &g_fallback_white_tex);
+    glBindTexture(GL_TEXTURE_2D, g_fallback_white_tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, px);
+    return g_fallback_white_tex;
+}
+
 void draw_instanced_glb(TreeGlb* g, unsigned prog) {
     if (!prog || !g || g->instance_count == 0) {
         return;
     }
     glUseProgram(prog);
-    glDisable(GL_CULL_FACE);  // Disable backface culling - fixes invisible walls
+    glDisable(GL_CULL_FACE); // FIX invisible walls: some GLBs have inside-out winding
     glUniform1i(glGetUniformLocation(prog, "uAlbedo"), 0);
     glUniform1i(glGetUniformLocation(prog, "uEmissive"), 1);
     glUniform1i(glGetUniformLocation(prog, "uShadow"), 2);
@@ -638,29 +658,25 @@ void draw_instanced_glb(TreeGlb* g, unsigned prog) {
         TreePrim& pr = g->prims[p];
         glBindVertexArray(pr.vao);
 
-        // Check if texture is valid
-        bool has_texture = (pr.tex != 0);
-        if (!has_texture) {
-            std::printf("[buildings] WARNING: Primitive %u has NO texture (tex=0), using fallback color\n", p);
-        }
+        // FIX pink textures: always bind a valid texture. Primitives whose GLB had
+        // no image get the 1x1 white fallback (solid color) instead of sampling an
+        // unbound unit. uUseTexture tells supporting shaders to skip detail lookup.
+        const bool has_texture = (pr.tex != 0);
+        const unsigned alb_tex = has_texture ? pr.tex : fallback_white_tex();
 
         glActiveTexture(GL_TEXTURE0);
-        if (has_texture) {
-            glBindTexture(GL_TEXTURE_2D, pr.tex);
-        } else {
-            // Bind a 1x1 fallback texture or leave unbound (shader should handle this)
-            // For now, we'll just leave it unbound and hope the shader has a fallback
-        }
+        glBindTexture(GL_TEXTURE_2D, alb_tex);
         glActiveTexture(GL_TEXTURE1);
-        if (pr.tex_emit && has_texture) {
+        if (pr.tex_emit) {
             glBindTexture(GL_TEXTURE_2D, pr.tex_emit);
-        } else if (has_texture) {
-            glBindTexture(GL_TEXTURE_2D, pr.tex);
+        } else {
+            glBindTexture(GL_TEXTURE_2D, alb_tex);
         }
 
         glUniform1i(glGetUniformLocation(prog, "uAlphaMask"), pr.alpha_mask);
         glUniform1f(glGetUniformLocation(prog, "uAlphaCut"), pr.cutoff);
-        glUniform1i(glGetUniformLocation(prog, "uUseTexture"), has_texture ? 1 : 0);  // Disable texture if missing
+        glUniform1i(glGetUniformLocation(prog, "uUseTexture"), has_texture ? 1 : 0);
+        glUniform3f(glGetUniformLocation(prog, "uSolidColor"), 1.f, 1.f, 1.f);
 
         // Wheel spin uniforms: harmless on trees and lamps, which read uWheelCount == 0.
         glUniform1i(glGetUniformLocation(prog, "uWheelCount"), pr.wheel_count);
@@ -706,6 +722,7 @@ void draw_instanced_glb(TreeGlb* g, unsigned prog) {
         glDrawElementsInstanced(md, static_cast<GLsizei>(pr.nidx), GL_UNSIGNED_INT, nullptr,
                                 static_cast<GLsizei>(g->instance_count));
     }
+    glEnable(GL_CULL_FACE); // restore culling for the procedural-box passes
     glDisable(GL_BLEND);
     glDepthMask(GL_TRUE);
     glBindVertexArray(0);
@@ -750,6 +767,64 @@ void draw_tree_glbs(TreeGlb* trees, unsigned prog) {
 
 bool load_city_tree(const char* file, TreeGlb* dst) {
     return find_and_load_tree_glb(file, dst);
+}
+
+// --- GLB building replacement bookkeeping (startup only, no per-frame cost) ---
+// Procedural boxes that get a GLB replacement are skipped in draw() + shadow pass.
+constexpr u32 kReplacedBldCap = 4096;
+u32 g_replaced_n = 0;
+u8 g_replaced_flag[kReplacedBldCap] = {0};
+
+bool is_replaced_building(u32 id) {
+    return id < kReplacedBldCap && g_replaced_flag[id] != 0;
+}
+
+void mark_replaced_building(u32 id) {
+    if (id < kReplacedBldCap && !g_replaced_flag[id]) {
+        g_replaced_flag[id] = 1;
+        ++g_replaced_n;
+    }
+}
+
+void clear_replaced_buildings() {
+    std::memset(g_replaced_flag, 0, sizeof(g_replaced_flag));
+    g_replaced_n = 0;
+}
+
+// Uniform scale so the GLB footprint matches the procedural lot it replaces.
+// Square-fit (shortest target side / longest model side) is yaw-safe for the
+// quantized 0/90/180/270 placements below and preserves aspect ratio.
+float building_footprint_scale(const TreeGlb* t, float target_w, float target_d) {
+    if (!t || t->nprims == 0) {
+        return 1.f;
+    }
+    const float hx = t->xmax - t->xmin;
+    const float hy = t->ymax - t->ymin;
+    const float hz = t->zmax - t->zmin;
+    float mw, md;
+    if (t->z_up) {
+        mw = hx;
+        md = hy;
+    } else {
+        mw = hx;
+        md = hz;
+    }
+    if (mw < 0.001f || md < 0.001f) {
+        return 1.f;
+    }
+    const float longest = mw > md ? mw : md;
+    const float shortest_target = target_w < target_d ? target_w : target_d;
+    if (longest < 0.001f || shortest_target < 0.001f) {
+        return 1.f;
+    }
+    float s = shortest_target / longest;
+    if (s < 0.05f) {
+        s = 0.05f;
+    }
+    if (s > 8.f) {
+        s = 8.f;
+    }
+    return s;
 }
 
 } // namespace
@@ -1447,289 +1522,1060 @@ void BuildingGlPass::buildMesh(World& world) {
     (void)skip_tree;
 #endif
 
-    // === NEW GLB BUILDING PLACEMENT ===
-    // DEBUGGING: Verbose logging + simplified fixed positions for verification
+    // === NEW GLB BUILDING PLACEMENT (replacement of procedural lots) ===
+    // Strategy (startup only, zero per-frame cost):
+    //   0. Three DEBUG GLBs at fixed valid lots (1140,1140 / 1260,1260 / 1980,300).
+    //   1. Iterate the existing ~572 procedural BuildingComponents (shuffled order).
+    //   2. District picks the type (retail/commercial->shop, industrial->warehouse,
+    //      else apartment); 35% chance gate per building.
+    //   3. building hash picks the variant so all 9 GLBs get used.
+    //   4. The EXISTING building's X/Z/footprint is the base (uniform fit keeps the
+    //      GLB on its lot — zero overlap, zero lot errors); yaw stays axis-aligned.
+    //   5. Quotas (24 shops, 90 apartments, 86 warehouses) backfill from fitting
+    //      lots so the targets are hit; replaced ids go in g_replaced_flag so the
+    //      procedural box is skipped in draw() + shadow.
+    //   6. Matrices are uploaded once via tree_glb_set_instances (same pipeline as trees/cars).
     {
         std::printf("\n=== [buildings] PLACEMENT START ===\n");
 
-        static float new_bld_xz[kTreeSpawnCap * 2];
-        u32 n_new_bld_xz = 0;
-        auto bld_xz_too_close = [&](float x, float z, float min_d) -> bool {
-            const float m2 = min_d * min_d;
-            for (u32 i = 0; i < n_new_bld_xz; ++i) {
-                const float dx = x - new_bld_xz[i * 2u];
-                const float dz = z - new_bld_xz[i * 2u + 1u];
-                if (dx * dx + dz * dz < m2) {
-                    return true;
-                }
+        // Reset per-build state (buildMesh runs once at startup).
+        shop_count = apartment_count = warehouse_count = 0;
+        clear_replaced_buildings();
+
+        // Per-variant instance matrices. Static: ~57KB per array, too big for the stack.
+        // The GPU upload copies them, so locals are sufficient (no persistent CPU copy needed).
+        static float shop_var_mats[3][kTreeInstanceCap * 16];
+        static float apt_var_mats[3][kTreeInstanceCap * 16];
+        static float whs_var_mats[3][kTreeInstanceCap * 16];
+        u32 shop_var_n[3] = {0u, 0u, 0u};
+        u32 apt_var_n[3] = {0u, 0u, 0u};
+        u32 whs_var_n[3] = {0u, 0u, 0u};
+
+        // FIXED lot test.
+        // Roads are lines at multiples of kCityBlockPitch (0, 120, 240, ... 2400).
+        // Block centers are at 60 + 120*n (60, 180, 300, ...).
+        // A position is a valid lot iff it is at least 14m (10m road half + 3m
+        // sidewalk + 1m margin) away from EVERY road line.
+        // The OLD code used round(x/pitch)*pitch (= nearest ROAD) then treated that
+        // distance as "distance from block center" and required it to be <= 45m,
+        // which rejects the true centers (60m from any road). Fixed with fmod below.
+        auto on_building_lot_fixed = [&](float x, float z) -> bool {
+            if (x < 0.f || x > kCityExtentM || z < 0.f || z > kCityExtentM) {
+                return false;
             }
-            return false;
-        };
-        auto bld_on_sidewalk = [&](float x, float z) -> bool {
-            const float droad = dist_to_road_edge(x, z);
-            return (droad >= 0.4f && droad <= 3.2f);
-        };
-        // Check if position is on a building lot (inside a block, not on road/sidewalk)
-        auto on_building_lot = [&](float x, float z) -> bool {
-            // A building lot is inside a city block, away from roads and sidewalks
-            // Block size = kCityBlockPitch (120m), road = kCityStreetWidth (20m), sidewalk = 3m
-            const float road_half = kCityStreetWidth * 0.5f;  // 10m
-            const float sidewalk = 3.0f;
-            const float block_inner = road_half + sidewalk + 2.0f; // 15m from block center
-
-            // Find nearest block center
-            const float bx = std::round(x / kCityBlockPitch) * kCityBlockPitch;
-            const float bz = std::round(z / kCityBlockPitch) * kCityBlockPitch;
-
-            // Distance from block center
-            const float dx = std::fabs(x - bx);
-            const float dz = std::fabs(z - bz);
-
-            // Must be inside the block (not in road/intersection)
-            // Block half-size = kCityBlockPitch/2 = 60m
-            // Road takes 10m from edge, sidewalk 3m more = 13m from edge
-            const float max_dist_from_center = kCityBlockPitch * 0.5f - block_inner;
-            if (dx > max_dist_from_center || dz > max_dist_from_center) {
-                return false; // On road, sidewalk, or intersection
+            float fx = std::fmod(x, kCityBlockPitch);
+            if (fx < 0.f) {
+                fx += kCityBlockPitch;
             }
-
-            // Also check we're not too close to block edges (for building placement)
-            const float min_dist_from_edge = 5.0f; // 5m from block edge for building spacing
-            if (dx < min_dist_from_edge || dz < min_dist_from_edge) {
-                return false; // Too close to edge
+            float fz = std::fmod(z, kCityBlockPitch);
+            if (fz < 0.f) {
+                fz += kCityBlockPitch;
             }
-
-            return true;
-        };
-        auto dist_to_any_lamp = [&](float x, float z) -> float {
-            float best = 1.0e9f;
-            for (u32 i = 0; i < n_lamp_xz; ++i) {
-                const float dx = x - lamp_xz[i * 2u];
-                const float dz = z - lamp_xz[i * 2u + 1u];
-                const float d2 = dx * dx + dz * dz;
-                if (d2 < best) best = d2;
+            const float dx_road = fx < kCityBlockPitch - fx ? fx : kCityBlockPitch - fx;
+            const float dz_road = fz < kCityBlockPitch - fz ? fz : kCityBlockPitch - fz;
+            const float keep = kCityStreetWidth * 0.5f + 3.0f + 1.0f; // 14m
+            if (dx_road < keep || dz_road < keep) {
+                return false; // on road / sidewalk / intersection
             }
-            return std::sqrt(best);
-        };
-
-        // Collect building positions by district
-        struct BldPos { float x, z; u32 district; u32 building_id; };
-        static BldPos bld_positions[kTreeSpawnCap];
-        u32 n_bld_positions = 0;
-
-        for (Entity e : world.query<BuildingComponent>()) {
-            BuildingComponent* b = world.get<BuildingComponent>(e);
-            if (!b) continue;
-            if (custom_sky_lot(b)) continue;
-            bld_positions[n_bld_positions++] = {b->position.x, b->position.z, b->district, b->building_id};
-        }
-
-        std::printf("[buildings] Found %u procedural buildings to potentially replace\n", n_bld_positions);
-
-        // Decide how many buildings to place: target counts
-        const u32 target_shops = 24;
-        const u32 target_apts = 90;
-        const u32 target_whses = 86;
-        u32 shops_placed = 0, apts_placed = 0, whses_placed = 0;
-
-        std::printf("[buildings] === PLACEMENT ===\n");
-        std::printf("[buildings] Target: %u shops, %u apartments, %u warehouses\n", target_shops, target_apts, target_whses);
-        std::printf("[buildings] City layout: %u m blocks, %u m roads\n", (u32)kCityBlockPitch, (u32)kCityStreetWidth);
-        std::printf("[buildings] Block centers at: 60, 180, 300... (60 + 120*n)\n");
-        std::printf("[buildings] Strategy: Place at block center + random offset (-30 to +30m)\n");
-
-        // Get existing building positions for overlap check
-        struct ExistingBld { float x, z; };
-        static ExistingBld existing_bdls[kTreeSpawnCap];
-        u32 n_existing = 0;
-        for (Entity e : world.query<BuildingComponent>()) {
-            BuildingComponent* b = world.get<BuildingComponent>(e);
-            if (!b) continue;
-            if (custom_sky_lot(b)) continue;
-            existing_bdls[n_existing++] = {b->position.x, b->position.z};
-        }
-        std::printf("[buildings] Found %u existing buildings for overlap check\n", n_existing);
-        auto on_road = [&](float x, float z) -> bool {
-            const float road_half = kCityStreetWidth * 0.5f;  // 10m
-            // Check if near a road line (multiples of 120)
-            const float dx_road = std::fmod(x, kCityBlockPitch);
-            const float dz_road = std::fmod(z, kCityBlockPitch);
-            // On road if within 10m of a road line
-            const bool on_x_road = (dx_road < road_half || dx_road > kCityBlockPitch - road_half);
-            const bool on_z_road = (dz_road < road_half || dz_road > kCityBlockPitch - road_half);
-            return on_x_road || on_z_road;
-        };
-
-        // Helper: check spacing between new buildings
-        auto too_close_new = [&](float x, float z) -> bool {
-            const float min_dist = 15.0f;
-            const float m2 = min_dist * min_dist;
-            for (u32 i = 0; i < n_new_bld_xz; ++i) {
-                const float dx = x - new_bld_xz[i * 2u];
-                const float dz = z - new_bld_xz[i * 2u + 1u];
-                if (dx * dx + dz * dz < m2) {
-                    return true;
-                }
-            }
-            return false;
-        };
-
-        // Random number generator (simple LCG)
-        auto rand_float = [&](float min, float max) -> float {
-            static u32 seed = 12345;
-            seed = seed * 1664525u + 1013904223u;
-            const float r = static_cast<float>(seed) / static_cast<float>(0xFFFFFFFFu);
-            return min + r * (max - min);
-        };
-
-        // Place buildings at block centers with random offsets
-        auto try_place = [&](u32 block_i, u32 block_j, u32& placed, u32 target, u32& attempts,
-                            TreeGlb (&glb_array)[3], u32& count, const char* type_name, float* mats_array,
-                            u32 district_pref) -> bool {
-            if (placed >= target) return false;
-
-            // Calculate block center
-            const float center_x = 60.f + block_i * kCityBlockPitch;
-            const float center_z = 60.f + block_j * kCityBlockPitch;
-
-            // Check bounds
-            if (center_x >= kCityExtentM || center_z >= kCityExtentM) return false;
-            if (center_x < 60.f || center_z < 60.f) return false;
-
-            attempts++;
-
-            // Add random offset within the lot (-30 to +30m from center)
-            const float offset_x = rand_float(-25.f, 25.f);
-            const float offset_z = rand_float(-25.f, 25.f);
-            const float pos_x = center_x + offset_x;
-            const float pos_z = center_z + offset_z;
-
-            // Check if on road
-            if (on_road(pos_x, pos_z)) return false;
-
-            // Check overlap with existing buildings
-            if (overlaps_existing(pos_x, pos_z)) return false;
-
-            // Check spacing with other new buildings
-            if (too_close_new(pos_x, pos_z)) return false;
-
-            // Select variant
-            u32 variant = (block_i * 73u + block_j * 131u + placed * 37u) % 3u;
-            if (glb_array[variant].nprims == 0) return false;
-            if (count >= kTreeInstanceCap) return false;
-
-            // Place building
-            const float yaw = rand_float(0.f, 6.2831853f);
-            const float target_h = (strcmp(type_name, "shop") == 0) ? 4.0f :
-                                   (strcmp(type_name, "apartment") == 0) ? 18.0f : 10.0f;
-            const float sc = glb_fit_scale(&glb_array[variant], target_h);
-            const float y0 = glb_array[variant].z_up ? glb_array[variant].zmin : glb_array[variant].ymin;
-            const float y = kCityPlateauY + 0.05f - y0 * sc;
-
-            tree_yaw_mat(&mats_array[count * 16], pos_x, y, pos_z, yaw, sc, glb_array[variant].z_up);
-            ++count;
-            new_bld_xz[n_new_bld_xz * 2u] = pos_x;
-            new_bld_xz[n_new_bld_xz * 2u + 1] = pos_z;
-            ++n_new_bld_xz;
-            ++placed;
-
             return true;
         };
 
-        // Iterate through all blocks and place buildings
-        u32 shop_attempts = 0, apt_attempts = 0, whse_attempts = 0;
-        u32 shop_skipped = 0, apt_skipped = 0, whse_skipped = 0;
+        // Replacement candidates: every procedural lot we may swap a GLB onto.
+        // Position + footprint come from the generator, so the GLB always sits on
+        // a valid lot with a matching footprint (no random XZ, no overlaps).
+        struct Candidate {
+            float x, z, w, d, h;
+            u32 district, id;
+        };
+        static Candidate cands[4096];
+        u32 n_cands = 0;
+        u32 skipped_sky = 0, skipped_tall = 0;
+        for (Entity e : world.query<BuildingComponent>()) {
+            BuildingComponent* b = world.get<BuildingComponent>(e);
+            if (!b) {
+                continue;
+            }
+            if (custom_sky_lot(b)) {
+                ++skipped_sky;
+                continue;
+            }
+            // Never replace supertalls with a 1-5 story GLB (would look sunken).
+            if (b->height > 55.f) {
+                ++skipped_tall;
+                continue;
+            }
+            if (n_cands < 4096) {
+                cands[n_cands++] = {b->position.x, b->position.z, b->width, b->depth,
+                                    b->height, b->district, b->building_id};
+            }
+        }
+        static u8 taken[4096] = {0};
+        for (u32 i = 0; i < n_cands; ++i) {
+            taken[i] = 0;
+        }
 
-        // Place shops in commercial/retail/downtown blocks
-        for (u32 bi = 0; bi < 20 && shops_placed < target_shops; ++bi) {
-            for (u32 bj = 0; bj < 20 && shops_placed < target_shops; ++bj) {
-                const float cx = 60.f + bi * kCityBlockPitch;
-                const float cz = 60.f + bj * kCityBlockPitch;
-                if (cx >= kCityExtentM || cz >= kCityExtentM) continue;
-                if (cx < 60.f || cz < 60.f) continue;
+        // --- 3 DEBUG placements (fixed positions, proof the loader/render path works) ---
+        // Fixed valid-lot coordinates (block centers: 60 + 120*n). Any procedural
+        // box within 25 m is hidden via g_replaced_flag so there is zero overlap.
+        struct DebugSpot {
+            float x, z, w, d;
+            int type; // 0 shop, 1 apartment, 2 warehouse
+            const char* label;
+        };
+        constexpr DebugSpot kDebugSpots[3] = {
+            {1140.f, 1140.f, 20.f, 14.f, 0, "shop"},
+            {1260.f, 1260.f, 40.f, 30.f, 1, "apartment"},
+            {1980.f, 300.f, 60.f, 40.f, 2, "warehouse"},
+        };
+        u32 skipped_nomesh = 0, skipped_cap = 0;
+        u32 lot_ok = 0, lot_fail = 0;
+        u32 placed_shop = 0, placed_apt = 0, placed_whs = 0;
+        u32 attempted_shop = 0, attempted_apt = 0, attempted_whse = 0;
 
-                // Determine district
-                const float dist_from_center = std::sqrt((cx - kCityCenterM) * (cx - kCityCenterM) +
-                                                         (cz - kCityCenterM) * (cz - kCityCenterM));
-                u32 district = kDistrictResidential;
-                if (dist_from_center < 200.f) district = kDistrictDowntown;
-                else if (dist_from_center < 400.f) district = kDistrictCommercial;
+        auto place_variant_at = [&](float x, float z, float w, float d, u32 id_for_seed,
+                                    TreeGlb (&arr)[3], u32* var_n,
+                                    float (*var_mats)[kTreeInstanceCap * 16], float yaw,
+                                    const char* what) -> bool {
+            u32 variant = id_for_seed % 3u;
+            if (arr[variant].nprims == 0) {
+                u32 alt = 3u;
+                for (u32 v = 0; v < 3u; ++v) {
+                    if (arr[v].nprims > 0) {
+                        alt = v;
+                        break;
+                    }
+                }
+                if (alt >= 3u) {
+                    ++skipped_nomesh;
+                    std::printf("[buildings] DEBUG: %s NOT placed (no mesh loaded)\n", what);
+                    return false;
+                }
+                variant = alt;
+            }
+            if (on_building_lot_fixed(x, z)) {
+                ++lot_ok;
+            } else {
+                ++lot_fail;
+            }
+            const TreeGlb* g = &arr[variant];
+            // Existing lot footprint is the base; uniform fit keeps the GLB on the lot.
+            const float sc = building_footprint_scale(g, w, d);
+            const float y = kCityPlateauY + 0.05f - tree_up_min(g) * sc;
+            if (var_n[variant] >= kTreeInstanceCap) {
+                ++skipped_cap;
+                return false;
+            }
+            tree_yaw_mat(&var_mats[variant][var_n[variant] * 16], x, y, z, yaw, sc,
+                         g->z_up);
+            ++var_n[variant];
+            return true;
+        };
 
-                // Shops go in commercial/retail/downtown
-                if (district == kDistrictCommercial || district == kDistrictRetail || district == kDistrictDowntown) {
-                    if (try_place(bi, bj, shops_placed, target_shops, shop_attempts,
-                                  shop_glb, shop_count, "shop", shop_mats, district)) {
-                        std::printf("[buildings] Placed shop #%u at (%.1f, %.1f), variant=%u\n",
-                                    shops_placed, new_bld_xz[(n_new_bld_xz-1)*2u], new_bld_xz[(n_new_bld_xz-1)*2u+1],
-                                    (bi * 73u + bj * 131u + shops_placed * 37u) % 3u);
-                    } else {
-                        ++shop_skipped;
+        for (u32 di = 0; di < 3u; ++di) {
+            const DebugSpot& s = kDebugSpots[di];
+            std::printf("[buildings] DEBUG: Placing %s at FIXED position (%.1f, %.1f)\n", s.label,
+                        static_cast<double>(s.x), static_cast<double>(s.z));
+            TreeGlb (&arr)[3] =
+                (s.type == 0) ? shop_glb : ((s.type == 2) ? warehouse_glb : apartment_glb);
+            u32* var_n = (s.type == 0) ? shop_var_n : ((s.type == 2) ? whs_var_n : apt_var_n);
+            float (*var_mats)[kTreeInstanceCap * 16] =
+                (s.type == 0) ? shop_var_mats : ((s.type == 2) ? whs_var_mats : apt_var_mats);
+            if (place_variant_at(s.x, s.z, s.w, s.d, 1000u + di, arr, var_n, var_mats, 0.f,
+                                 s.label)) {
+                std::printf("[buildings] DEBUG: %s placed successfully!\n", s.label);
+                if (s.type == 0) {
+                    ++placed_shop;
+                    ++attempted_shop;
+                } else if (s.type == 2) {
+                    ++placed_whs;
+                    ++attempted_whse;
+                } else {
+                    ++placed_apt;
+                    ++attempted_apt;
+                }
+                // Hide nearby procedural boxes so the fixed GLB never overlaps one.
+                for (u32 i = 0; i < n_cands; ++i) {
+                    if (taken[i]) {
+                        continue;
+                    }
+                    const float dx = cands[i].x - s.x;
+                    const float dz = cands[i].z - s.z;
+                    if (dx * dx + dz * dz < 25.f * 25.f) {
+                        taken[i] = 1;
+                        mark_replaced_building(cands[i].id);
                     }
                 }
             }
         }
 
-        // Place apartments in residential/suburban/downtown blocks
-        for (u32 bi = 0; bi < 20 && apartment_count < target_apts; ++bi) {
-            for (u32 bj = 0; bj < 20 && apartment_count < target_apts; ++bj) {
-                const float cx = 60.f + bi * kCityBlockPitch;
-                const float cz = 60.f + bj * kCityBlockPitch;
-                if (cx >= kCityExtentM || cz >= kCityExtentM) continue;
-                if (cx < 60.f || cz < 60.f) continue;
+        std::printf("[buildings] === Mass replacement from existing buildings ===\n");
 
-                const float dist_from_center = std::sqrt((cx - kCityCenterM) * (cx - kCityCenterM) +
-                                                         (cz - kCityCenterM) * (cz - kCityCenterM));
-                u32 district = kDistrictResidential;
-                if (dist_from_center < 200.f) district = kDistrictDowntown;
-                else if (dist_from_center > 600.f) district = kDistrictSuburban;
+        // Deterministic 30-40% gate: hash of building_id, stable across runs.
+        auto chance35 = [](u32 id) -> bool {
+            u32 h = id * 2654435761u;
+            h ^= h >> 15;
+            h *= 2246822519u;
+            h ^= h >> 13;
+            return (h % 100u) < 35u;
+        };
+        // Deterministic shuffle: order candidates by hash so replacements spread
+        // across the city instead of filling id order.
+        static u32 order[4096];
+        for (u32 i = 0; i < n_cands; ++i) {
+            order[i] = i;
+        }
+        for (u32 i = 0; i < n_cands; ++i) {
+            u32 h = cands[i].id * 40503u + 12345u;
+            h ^= h >> 15;
+            h *= 2246822519u;
+            h ^= h >> 13;
+            const u32 j = i + (h % (n_cands - i));
+            const u32 t = order[i];
+            order[i] = order[j];
+            order[j] = t;
+        }
 
-                if (district == kDistrictResidential || district == kDistrictSuburban || district == kDistrictDowntown) {
-                    if (try_place(bi, bj, apartment_count, target_apts, apt_attempts,
-                                  apartment_glb, apartment_count, "apartment", apartment_mats, district)) {
-                        std::printf("[buildings] Placed apartment #%u at (%.1f, %.1f), variant=%u\n",
-                                    apartment_count, new_bld_xz[(n_new_bld_xz-1)*2u], new_bld_xz[(n_new_bld_xz-1)*2u+1],
-                                    (bi * 73u + bj * 131u + apartment_count * 37u) % 3u);
-                    } else {
-                        ++apt_skipped;
-                    }
+        // District -> type: shop/commercial, apartment/residential, warehouse/industrial.
+        auto district_type = [](u32 district) -> int {
+            if (district == kDistrictRetail || district == kDistrictCommercial) {
+                return 0;
+            }
+            if (district == kDistrictIndustrial) {
+                return 2;
+            }
+            return 1;
+        };
+        // Loose fit used only by the quota backfill (phase 2).
+        auto fits_loose = [](const Candidate& c, int type) -> bool {
+            if (type == 0) {
+                return c.h < 12.f;
+            }
+            if (type == 1) {
+                return c.h >= 10.f;
+            }
+            return c.h < 18.f && (c.w >= 20.f || c.d >= 20.f);
+        };
+
+        auto try_place_candidate = [&](u32 ci, int type) -> bool {
+            Candidate& c = cands[ci];
+            if (type == 0) {
+                ++attempted_shop;
+            } else if (type == 2) {
+                ++attempted_whse;
+            } else {
+                ++attempted_apt;
+            }
+            TreeGlb (&arr)[3] =
+                (type == 0) ? shop_glb : ((type == 2) ? warehouse_glb : apartment_glb);
+            u32* var_n = (type == 0) ? shop_var_n : ((type == 2) ? whs_var_n : apt_var_n);
+            float (*var_mats)[kTreeInstanceCap * 16] =
+                (type == 0) ? shop_var_mats : ((type == 2) ? whs_var_mats : apt_var_mats);
+            // Existing building's X/Z/scale are the base; yaw stays axis-aligned.
+            const float yaw = static_cast<float>(c.id % 4u) * 1.5707963f;
+            if (!place_variant_at(c.x, c.z, c.w, c.d, c.id + static_cast<u32>(type) * 7919u,
+                                  arr, var_n, var_mats, yaw, "mass")) {
+                return false;
+            }
+            taken[ci] = 1;
+            mark_replaced_building(c.id);
+            if (type == 0) {
+                ++placed_shop;
+            } else if (type == 2) {
+                ++placed_whs;
+            } else {
+                ++placed_apt;
+            }
+            return true;
+        };
+
+        constexpr u32 kTargetShops = 24;
+        constexpr u32 kTargetApts = 90;
+        constexpr u32 kTargetWhse = 86;
+
+        // Phase 1: strict district match with the 35% chance gate.
+        for (u32 oi = 0; oi < n_cands; ++oi) {
+            const u32 ci = order[oi];
+            if (taken[ci]) {
+                continue;
+            }
+            const int type = district_type(cands[ci].district);
+            if ((type == 0 && placed_shop >= kTargetShops) ||
+                (type == 1 && placed_apt >= kTargetApts) ||
+                (type == 2 && placed_whs >= kTargetWhse)) {
+                continue;
+            }
+            if (!chance35(cands[ci].id)) {
+                continue;
+            }
+            try_place_candidate(ci, type);
+            if (placed_shop >= kTargetShops && placed_apt >= kTargetApts &&
+                placed_whs >= kTargetWhse) {
+                break;
+            }
+        }
+        // Phase 2: backfill remaining quotas from any fitting untaken lot (still
+        // gated by the 35% chance, so the 30-40% replacement rate holds).
+        for (u32 oi = 0; oi < n_cands; ++oi) {
+            const u32 ci = order[oi];
+            if (taken[ci]) {
+                continue;
+            }
+            int type = -1;
+            if (placed_whs < kTargetWhse && fits_loose(cands[ci], 2)) {
+                type = 2;
+            } else if (placed_shop < kTargetShops && fits_loose(cands[ci], 0)) {
+                type = 0;
+            } else if (placed_apt < kTargetApts && fits_loose(cands[ci], 1)) {
+                type = 1;
+            }
+            if (type < 0) {
+                continue;
+            }
+            if (!chance35(cands[ci].id ^ 0x9e3779b9u)) {
+                continue;
+            }
+            try_place_candidate(ci, type);
+            if (placed_shop >= kTargetShops && placed_apt >= kTargetApts &&
+                placed_whs >= kTargetWhse) {
+                break;
+            }
+        }
+        // Phase 3: guarantee the targets — first-fit over anything left, no gate.
+        for (u32 oi = 0; oi < n_cands; ++oi) {
+            const u32 ci = order[oi];
+            if (taken[ci]) {
+                continue;
+            }
+            int type = -1;
+            if (placed_whs < kTargetWhse) {
+                type = 2;
+            } else if (placed_shop < kTargetShops) {
+                type = 0;
+            } else if (placed_apt < kTargetApts) {
+                type = 1;
+            } else {
+                break;
+            }
+            try_place_candidate(ci, type);
+        }
+        // Upload once via the existing instanced pipeline (same as trees/cars).
+        for (u32 v = 0; v < 3u; ++v) {
+            if (shop_glb[v].nprims > 0) {
+                tree_glb_set_instances(&shop_glb[v], shop_var_mats[v], shop_var_n[v]);
+            }
+            if (apartment_glb[v].nprims > 0) {
+                tree_glb_set_instances(&apartment_glb[v], apt_var_mats[v], apt_var_n[v]);
+            }
+            if (warehouse_glb[v].nprims > 0) {
+                tree_glb_set_instances(&warehouse_glb[v], whs_var_mats[v], whs_var_n[v]);
+            }
+        }
+        // Member totals stay in sync; member mats hold the concatenated set for inspection.
+        shop_count = shop_var_n[0] + shop_var_n[1] + shop_var_n[2];
+        apartment_count = apt_var_n[0] + apt_var_n[1] + apt_var_n[2];
+        warehouse_count = whs_var_n[0] + whs_var_n[1] + whs_var_n[2];
+        {
+            u32 off = 0;
+            for (u32 v = 0; v < 3u && off < kTreeInstanceCap; ++v) {
+                u32 n = shop_var_n[v];
+                if (off + n > kTreeInstanceCap) {
+                    n = kTreeInstanceCap - off;
+                }
+                if (n) {
+                    std::memcpy(&shop_mats[off * 16], shop_var_mats[v],
+                                static_cast<usize>(n) * 16 * sizeof(float));
+                    off += n;
+                }
+            }
+            off = 0;
+            for (u32 v = 0; v < 3u && off < kTreeInstanceCap; ++v) {
+                u32 n = apt_var_n[v];
+                if (off + n > kTreeInstanceCap) {
+                    n = kTreeInstanceCap - off;
+                }
+                if (n) {
+                    std::memcpy(&apartment_mats[off * 16], apt_var_mats[v],
+                                static_cast<usize>(n) * 16 * sizeof(float));
+                    off += n;
+                }
+            }
+            off = 0;
+            for (u32 v = 0; v < 3u && off < kTreeInstanceCap; ++v) {
+                u32 n = whs_var_n[v];
+                if (off + n > kTreeInstanceCap) {
+                    n = kTreeInstanceCap - off;
+                }
+                if (n) {
+                    std::memcpy(&warehouse_mats[off * 16], whs_var_mats[v],
+                                static_cast<usize>(n) * 16 * sizeof(float));
+                    off += n;
                 }
             }
         }
 
-        // Place warehouses in industrial blocks or at edges
-        for (u32 bi = 0; bi < 20 && warehouse_count < target_whses; ++bi) {
-            for (u32 bj = 0; bj < 20 && warehouse_count < target_whses; ++bj) {
-                const float cx = 60.f + bi * kCityBlockPitch;
-                const float cz = 60.f + bj * kCityBlockPitch;
-                if (cx >= kCityExtentM || cz >= kCityExtentM) continue;
-                if (cx < 60.f || cz < 60.f) continue;
-
-                // Warehouses go at edges or industrial zones
-                const bool at_edge = (bi < 2 || bj < 2 || bi > 17 || bj > 17);
-                const float dist_from_center = std::sqrt((cx - kCityCenterM) * (cx - kCityCenterM) +
-                                                         (cz - kCityCenterM) * (cz - kCityCenterM));
-                const bool industrial = dist_from_center > 500.f;
-
-                if (at_edge || industrial) {
-                    if (try_place(bi, bj, warehouse_count, target_whses, whse_attempts,
-                                  warehouse_glb, warehouse_count, "warehouse", warehouse_mats, kDistrictIndustrial)) {
-                        std::printf("[buildings] Placed warehouse #%u at (%.1f, %.1f), variant=%u\n",
-                                    warehouse_count, new_bld_xz[(n_new_bld_xz-1)*2u], new_bld_xz[(n_new_bld_xz-1)*2u+1],
-                                    (bi * 73u + bj * 131u + warehouse_count * 37u) % 3u);
-                    } else {
-                        ++whse_skipped;
-                    }
-                }
-            }
+        std::printf("[buildings] === Random placement from existing buildings ===\n");
+        std::printf("[buildings] Candidates: %u procedural lots (skipped %u sky, %u tall)\n",
+                    n_cands, skipped_sky, skipped_tall);
+        std::printf("[buildings] Lot validation (fixed math): %u on-lot, %u flagged off-lot\n",
+                    lot_ok, lot_fail);
+        std::printf("[buildings] Shops: attempted %u positions, placed %u (target %u)\n",
+                    attempted_shop, placed_shop, kTargetShops);
+        std::printf("[buildings] Apartments: attempted %u positions, placed %u (target %u)\n",
+                    attempted_apt, placed_apt, kTargetApts);
+        std::printf("[buildings] Warehouses: attempted %u positions, placed %u (target %u)\n",
+                    attempted_whse, placed_whs, kTargetWhse);
+        std::printf("[buildings] Per-variant instances: shops [%u %u %u], apartments [%u %u %u], "
+                    "warehouses [%u %u %u]\n",
+                    shop_var_n[0], shop_var_n[1], shop_var_n[2], apt_var_n[0], apt_var_n[1],
+                    apt_var_n[2], whs_var_n[0], whs_var_n[1], whs_var_n[2]);
+        if (skipped_nomesh) {
+            std::printf("[buildings] Skipped %u (no mesh loaded for that type)\n", skipped_nomesh);
         }
-
-        std::printf("\n[buildings] === PLACEMENT SUMMARY ===\n");
-        std::printf("[buildings] Shops: placed %u (attempted %u, skipped %u)\n", shops_placed, shop_attempts, shop_skipped);
-        std::printf("[buildings] Apartments: placed %u (attempted %u, skipped %u)\n", apartment_count, apt_attempts, apt_skipped);
-        std::printf("[buildings] Warehouses: placed %u (attempted %u, skipped %u)\n", warehouse_count, whse_attempts, whse_skipped);
-        std::printf("[buildings] Total new buildings: %u\n", shop_count + apartment_count + warehouse_count);
+        if (skipped_cap) {
+            std::printf("[buildings] Skipped %u (instance cap %u reached)\n", skipped_cap,
+                        kTreeInstanceCap);
+        }
+        std::printf("[buildings] Total new GLB building instances: %u\n",
+                    shop_count + apartment_count + warehouse_count);
         std::printf("[buildings] ==========================\n\n");
         std::fflush(stdout);
+    }
+
+    // === CAR TRAFFIC (restored verbatim — untouched behavior) ===
+    if (corolla_glb.nprims > 0 || sports_glb.nprims > 0 || suv_glb.nprims > 0) {
+        // The models keep their accepted scale/orientation; the traffic plan only hands
+        // out a lane position and a heading, which are turned into matrices every frame.
+        TreeGlb*    car_glb[kCarMeshCount]  = {&corolla_glb, &sports_glb, &suv_glb};
+        const char* car_name[kCarMeshCount] = {"Corolla E80", "sports car", "SUV"};
+        u32         car_avail[kCarMeshCount];
+        for (u32 m = 0; m < kCarMeshCount; ++m) {
+            car_avail[m] = car_glb[m]->nprims > 0 ? 1u : 0u;
+            if (car_avail[m] == 0u) {
+                continue;
+            }
+            corolla_basis(car_glb[m], car_basis[m], &car_fwd_axis[m], &car_up_axis[m]);
+            car_scale[m] = corolla_fit_scale(car_glb[m]);
+            car_y[m] = kCityPlateauY + 0.30f -
+                       corolla_model_ymin(car_glb[m], car_basis[m]) * car_scale[m];
+        }
+
+        // Body yaw offset: 0 means the model's nose already points along the length axis
+        // that the basis maps onto the ring heading, 180 deg means it points the other way.
+        // The Corolla and the sports car are settled on the Mac. The SUV is new, so its
+        // nose is read from where its front wheels sit; if its names never said which end
+        // is which, it falls back to the Corolla's answer, and G in the sandbox flips it.
+        car_yaw_off[0] = kCarPi;       // confirmed on the Mac
+        car_yaw_off[1] = 2.f * kCarPi; // confirmed on the Mac
+        car_yaw_off[2] = (suv_glb.nose_sign < 0) ? kCarPi : 0.f;
+        if (car_avail[2] && suv_glb.nose_sign == 0) {
+            car_yaw_off[2] = kCarPi;
+        }
+        for (u32 m = 0; m < kCarMeshCount; ++m) {
+            if (car_avail[m] == 0u) {
+                continue;
+            }
+            const bool  read_it = (m == 2u && car_glb[m]->nose_sign != 0);
+            const float deg     = static_cast<double>(car_yaw_off[m] * 180.f / kCarPi);
+            std::printf("[cars] %s: nose faces %c%c along the length axis (%s), body yaw offset "
+                        "%.0f deg\n",
+                        car_name[m], car_glb[m]->nose_sign >= 0 ? '+' : '-', "XYZ"[car_fwd_axis[m]],
+                        read_it ? "read from where the front wheels sit" : "confirmed on the Mac",
+                        deg);
+        }
+
+        // Wheels: the loader found the wheel meshes, so give each the axle it spins about
+        // and work out the spin rate in world metres.
+        for (u32 m = 0; m < kCarMeshCount; ++m) {
+            TreeGlb* g = car_glb[m];
+            if (car_avail[m] == 0u || car_scale[m] <= 0.f) {
+                continue;
+            }
+            car_wheel_radius[m] = g->wheel_radius * car_scale[m];
+            int   wheel_axis_log = -1;
+            float wheel_roll_log = 0.f;
+            for (u32 p = 0; p < g->nprims; ++p) {
+                TreePrim& pr = g->prims[p];
+                if (pr.wheel_count > 0) {
+                    pr.wheel_roll = car_wheel_roll_dir(car_fwd_axis[m], car_up_axis[m],
+                                                       pr.wheel_axis);
+                    if (wheel_axis_log < 0) {
+                        wheel_axis_log = pr.wheel_axis; // the tyre primitive, not prim 0
+                        wheel_roll_log = pr.wheel_roll;
+                    }
+                }
+            }
+            if (g->wheel_prim_count == 0u) {
+                std::printf("[cars] %s: no wheel meshes found — the body drives but the wheels stay "
+                            "static. See the [glb] primitive lines above; if the wheel materials have "
+                            "other names, those names are what j_looks_like_wheel needs.\n",
+                            car_name[m]);
+            } else {
+                std::printf("[cars] %s: %u wheel part(s) in %u primitive(s) spin about %c, tyre "
+                            "radius %.3f m world, roll %+.0f\n",
+                            car_name[m], g->wheel_count, g->wheel_prim_count, "XYZ"[wheel_axis_log & 3],
+                            static_cast<double>(car_wheel_radius[m]),
+                            static_cast<double>(wheel_roll_log));
+            }
+            std::fflush(stdout);
+        }
+        car_traffic_build(&car_traffic, kCityBlockPitch, car_avail);
+        if (car_traffic.agent_count > 0) {
+            car_traffic_live = true;
+            car_clock        = 0.f;
+            update_car_instances(0.f); // the first frame already has traffic on the streets
+            float cls_min[kCarMeshCount];
+            float cls_max[kCarMeshCount];
+            for (u32 m = 0; m < kCarMeshCount; ++m) {
+                cls_min[m] = 1.0e9f;
+                cls_max[m] = 0.f;
+            }
+            for (u32 r = 0; r < car_traffic.ring_count; ++r) {
+                const CarRing& ring = car_traffic.rings[r];
+                const u32      c    = static_cast<u32>(ring.cls) < kCarMeshCount
+                                          ? static_cast<u32>(ring.cls)
+                                          : 0u;
+                cls_min[c] = min_of(cls_min[c], ring.speed);
+                cls_max[c] = max_of(cls_max[c], ring.speed);
+            }
+            std::printf("[cars] Traffic: %u disjoint loops over the 2.4 km grid, %u vehicles driving\n",
+                        car_traffic.ring_count, car_traffic.agent_count);
+            std::printf("[cars] Traffic: Corolla %.1f-%.1f m/s (%u), sports %.1f-%.1f m/s (%u), "
+                        "SUV %.1f-%.1f m/s (%u)\n",
+                        static_cast<double>(cls_min[0]), static_cast<double>(cls_max[0]),
+                        car_traffic.mesh_count[0], static_cast<double>(cls_min[1]),
+                        static_cast<double>(cls_max[1]), car_traffic.mesh_count[1],
+                        static_cast<double>(cls_min[2]), static_cast<double>(cls_max[2]),
+                        car_traffic.mesh_count[2]);
+            float spacing_min = 1.0e9f;
+            for (u32 r = 0; r < car_traffic.ring_count; ++r) {
+                const CarRing& ring = car_traffic.rings[r];
+                if (ring.cars > 0u) {
+                    spacing_min = min_of(spacing_min, ring.perimeter / static_cast<float>(ring.cars));
+                }
+            }
+            std::printf("[cars] Traffic: one speed per loop and at least %.0f m spacing, and the loops "
+                        "share no asphalt, so no collision is possible without any per-frame physics\n",
+                        static_cast<double>(spacing_min));
+            std::printf("[cars] Traffic: loop 0 runs beside the sandbox camera x = 1200..1320 m, "
+                        "z = 0..240 m; press F to flip the car bodies, G to flip the SUV alone\n");
+            std::fflush(stdout);
+        }
+    }
+} // end buildMesh
+
+void BuildingGlPass::update_car_instances(float clock_s) {
+    if (!car_traffic_live) {
+        return;
+    }
+    float dt = clock_s - car_clock;
+    if (dt < 0.f || dt > 0.25f) {
+        dt = 0.f; // first frame, or a long stall: never teleport the fleet
+    }
+    car_clock = clock_s;
+    car_traffic_step(&car_traffic, dt);
+
+    u32 n[kCarMeshCount] = {0u, 0u, 0u};
+    for (u32 i = 0; i < car_traffic.agent_count; ++i) {
+        const CarAgent& a = car_traffic.agents[i];
+        float x = 0.f, z = 0.f, yaw = 0.f;
+        car_agent_pose(&car_traffic, i, &x, &z, &yaw);
+        const u32 m = a.mesh < kCarMeshCount ? a.mesh : 0u;
+        if (car_glb_model(*this, m) == nullptr) {
+            continue;
+        }
+        if (n[m] >= kCarAgentCap) {
+            continue;
+        }
+        // Wheel spin: arc length / tyre radius, wrapped so a long session keeps precision.
+        // One angle serves every wheel primitive of the car, because they are one axle.
+        const float wrad = car_wheel_radius[m];
+        if (wrad > 1.0e-4f) {
+            const float ang = car_agent_s(&car_traffic, i) / wrad;
+            car_wheel_angles[m][n[m]] = std::fmod(ang, 2.f * kCarPi);
+        } else {
+            car_wheel_angles[m][n[m]] = 0.f;
+        }
+        // The AABB basis maps each model's longest axis onto the ring heading, and on a
+        // car that axis is its length, so the body needs a yaw offset to face along the
+        // direction of travel. Those offsets are set at build time (the Corolla's and the
+        // sports car's are confirmed on the Mac, the SUV's is read from its front wheels);
+        // car_body_flip and car_suv_flip stay as debug aids, on F and G in the sandbox.
+        float mesh_yaw = yaw + car_yaw_off[m] + car_body_flip;
+        if (m == 2u) {
+            mesh_yaw += car_suv_flip;
+        }
+        corolla_yaw_mat(&car_mats[m][n[m] * 16u], x, car_y[m], z, mesh_yaw, car_scale[m],
+                        car_basis[m]);
+        ++n[m];
+    }
+    for (u32 m = 0; m < kCarMeshCount; ++m) {
+        car_traffic.mesh_count[m] = n[m];
+        TreeGlb* g = car_glb_model(*this, m);
+        if (g != nullptr && g->nprims > 0 && n[m] > 0) {
+            tree_glb_set_instances(g, car_mats[m], n[m]);
+            tree_glb_set_wheel_angles(g, car_wheel_angles[m], n[m]);
+        }
+    }
+}
+
+void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target, int width, int height,
+                          float time_of_day, float3 sun_dir, float clock_s) {
+    if (!ok) {
+        return;
+    }
+    update_car_instances(clock_s); // before the shadow pass, so car shadows match the cars
+    float view[16], proj[16];
+    mat_look(view, camera_pos, camera_target, float3{0.f, 1.f, 0.f});
+    mat_persp(proj, 1.22173047f, static_cast<float>(width) / max_of(1, height), 0.15f, 8000.f);
+    (void)sun_dir;
+    const float3 sun = float3{0.35f, 0.88f, 0.32f};
+
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_MULTISAMPLE);
+    if (cloud_prog) {
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glDepthMask(GL_FALSE);
+        glBindVertexArray(cube_vao);
+        glUseProgram(cloud_prog);
+        glUniformMatrix4fv(glGetUniformLocation(cloud_prog, "view"), 1, GL_FALSE, view);
+        glUniformMatrix4fv(glGetUniformLocation(cloud_prog, "projection"), 1, GL_FALSE, proj);
+        float3 look = float3_normalize_or(float3_sub(camera_target, camera_pos), float3{0.f, 0.f, 1.f});
+        float3 right = float3_normalize_or(float3_cross(look, float3{0.f, 1.f, 0.f}), float3{1.f, 0.f, 0.f});
+        float3 upv{0.f, 1.f, 0.f};
+        glUniform3f(glGetUniformLocation(cloud_prog, "uRight"), right.x, right.y, right.z);
+        glUniform3f(glGetUniformLocation(cloud_prog, "uUp"), upv.x, upv.y, upv.z);
+        for (u32 i = 0; i < 28; ++i) {
+            const float seed = static_cast<float>(i) * 17.13f;
+            float x = std::fmod(120.f + seed * 73.f + clock_s * 0.3f, 2800.f);
+            float z = 80.f + std::fmod(seed * 91.f, 2300.f);
+            float y = 420.f + std::fmod(seed * 37.f, 380.f);
+            float sx = 140.f + std::fmod(seed * 11.f, 160.f);
+            float sy = 40.f + std::fmod(seed * 7.f, 50.f);
+            glUniform3f(glGetUniformLocation(cloud_prog, "uCenter"), x, y, z);
+            glUniform2f(glGetUniformLocation(cloud_prog, "uSize"), sx, sy);
+            glDrawArrays(GL_TRIANGLES, 0, 6);
+        }
+        glDepthMask(GL_TRUE);
+        glDisable(GL_BLEND);
+    }
+
+    set_building_uniforms(building_prog, view, proj, sun, time_of_day, camera_pos);
+    float lview[16], lproj[16], light_vp[16];
+    float3 lpos = float3_add(camera_pos, float3_scale(sun, 70.f));
+    mat_look(lview, lpos, camera_pos, float3{0.f, 1.f, 0.f});
+    mat_ortho(lproj, 95.f, 1.f, 220.f);
+    mat_mul16(light_vp, lproj, lview);
+    if (shadow_fbo && shadow_prog) {
+        glBindFramebuffer(GL_FRAMEBUFFER, shadow_fbo);
+        glViewport(0, 0, 1024, 1024);
+        glClear(GL_DEPTH_BUFFER_BIT);
+        glEnable(GL_POLYGON_OFFSET_FILL);
+        glPolygonOffset(2.5f, 4.f);
+        glUseProgram(shadow_prog);
+        glUniformMatrix4fv(glGetUniformLocation(shadow_prog, "uLightVP"), 1, GL_FALSE, light_vp);
+        glBindVertexArray(cube_vao);
+        float sm[16];
+        u32 sc = 0;
+        for (Entity e : world.query<BuildingComponent>()) {
+            BuildingComponent* b = world.get<BuildingComponent>(e);
+            if (!b || !near_xz(b->position, camera_pos, 140.f) || custom_sky_lot(b)) {
+                continue;
+            }
+            if (is_replaced_building(b->building_id)) {
+                continue; // GLB replaces this box; no double shadow
+            }
+            model_trs(sm, b->position, b->width, b->height, b->depth);
+            glUniformMatrix4fv(glGetUniformLocation(shadow_prog, "model"), 1, GL_FALSE, sm);
+            glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, nullptr);
+            if (++sc > 220) {
+                break;
+            }
+        }
+        if (tree_shadow_prog) {
+            glUseProgram(tree_shadow_prog);
+            glUniformMatrix4fv(glGetUniformLocation(tree_shadow_prog, "uLightVP"), 1, GL_FALSE, light_vp);
+            if (sky_glb.instance_count > 0) {
+                draw_instanced_glb(&sky_glb, tree_shadow_prog);
+            }
+            draw_tree_glbs(tree_glb, tree_shadow_prog);
+            for (u32 m = 0; m < kCarMeshCount; ++m) {
+                TreeGlb* cg = car_glb_model(*this, m);
+                if (cg != nullptr && cg->instance_count > 0) {
+                    draw_instanced_glb(cg, tree_shadow_prog);
+                }
+            }
+            if (sports_glb.instance_count > 0) {
+                draw_instanced_glb(&sports_glb, tree_shadow_prog);
+            }
+            // New GLB buildings cast shadows too.
+            for (u32 v = 0; v < 3u; ++v) {
+                if (shop_glb[v].instance_count > 0) {
+                    draw_instanced_glb(&shop_glb[v], tree_shadow_prog);
+                }
+                if (apartment_glb[v].instance_count > 0) {
+                    draw_instanced_glb(&apartment_glb[v], tree_shadow_prog);
+                }
+                if (warehouse_glb[v].instance_count > 0) {
+                    draw_instanced_glb(&warehouse_glb[v], tree_shadow_prog);
+                }
+            }
+            glUseProgram(shadow_prog);
+        }
+        glDisable(GL_POLYGON_OFFSET_FILL);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glViewport(0, 0, max_of(1, width), max_of(1, height));
+        glUseProgram(building_prog);
+    }
+    glUniformMatrix4fv(glGetUniformLocation(building_prog, "uLightVP"), 1, GL_FALSE, light_vp);
+    glUniform2f(glGetUniformLocation(building_prog, "uRes"), static_cast<float>(width),
+                static_cast<float>(height));
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, shadow_tex);
+    glUniform1i(glGetUniformLocation(building_prog, "uShadow"), 2);
+    glUseProgram(street_prog);
+    glUniformMatrix4fv(glGetUniformLocation(street_prog, "view"), 1, GL_FALSE, view);
+    glUniformMatrix4fv(glGetUniformLocation(street_prog, "projection"), 1, GL_FALSE, proj);
+    glUniformMatrix4fv(glGetUniformLocation(street_prog, "uLightVP"), 1, GL_FALSE, light_vp);
+    glUniform3f(glGetUniformLocation(street_prog, "uCamPos"), camera_pos.x, camera_pos.y, camera_pos.z);
+    glUniform3f(glGetUniformLocation(street_prog, "uFogColor"), 0.690f, 0.769f, 0.871f);
+    glUniform2f(glGetUniformLocation(street_prog, "uRes"), static_cast<float>(width),
+                static_cast<float>(height));
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, shadow_tex);
+    glUniform1i(glGetUniformLocation(street_prog, "uShadow"), 2);
+    glBindVertexArray(street_vao);
+    if (street_count > 0) {
+        glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(street_count));
+    }
+    glUseProgram(building_prog);
+    glBindVertexArray(cube_vao);
+    float model[16];
+    u32 drawn = 0;
+    for (Entity e : world.query<BuildingComponent>()) {
+        BuildingComponent* b = world.get<BuildingComponent>(e);
+        if (!b || custom_sky_lot(b)) {
+            continue;
+        }
+        if (is_replaced_building(b->building_id)) {
+            continue; // replaced by a GLB instance
+        }
+        const float dx = b->position.x - camera_pos.x;
+        const float dz = b->position.z - camera_pos.z;
+        if (dx * dx + dz * dz > 1400.f * 1400.f) {
+            continue;
+        }
+        model_trs(model, b->position, b->width, b->height, b->depth);
+        glUniformMatrix4fv(glGetUniformLocation(building_prog, "model"), 1, GL_FALSE, model);
+        glUniform3f(glGetUniformLocation(building_prog, "albedo"), b->albedo_color.x, b->albedo_color.y,
+                    b->albedo_color.z);
+        glUniform1f(glGetUniformLocation(building_prog, "roughness"), b->roughness);
+        glUniform1f(glGetUniformLocation(building_prog, "emissionBoost"), 0.f);
+        glUniform1f(glGetUniformLocation(building_prog, "floors"), static_cast<float>(b->num_floors));
+        glUniform1i(glGetUniformLocation(building_prog, "district"), static_cast<int>(b->district));
+        glUniform1i(glGetUniformLocation(building_prog, "windowStyle"), static_cast<int>(b->window_style));
+        unsigned alb = tex_brick;
+        unsigned nrm = tex_brick_n;
+        if (b->district == 0) {
+            alb = tex_conc;
+            nrm = tex_conc_n;
+        } else if (b->district == 1 || b->district == 4) {
+            alb = tex_conc;
+            nrm = tex_conc_n;
+        }
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, alb);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, nrm);
+        glUniform1i(glGetUniformLocation(building_prog, "uFacade"), 1);
+        glUniform1i(glGetUniformLocation(building_prog, "uUseTex"), 1);
+        glUniform1i(glGetUniformLocation(building_prog, "uAlbedo"), 0);
+        glUniform1i(glGetUniformLocation(building_prog, "uNormalTex"), 1);
+        bind_inv_scale(building_prog, 1.f, 1.f, 1.f);
+        glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, nullptr);
+        glUniform1i(glGetUniformLocation(building_prog, "uUseTex"), 0);
+        if (b->roof_style == 1) {
+            draw_box(building_prog, float3{b->position.x, b->position.y + b->height, b->position.z},
+                     b->width * 1.02f, 1.6f, b->depth * 0.55f, float3{0.45f, 0.22f, 0.16f}, 0.f);
+            draw_box(building_prog,
+                     float3{b->position.x, b->position.y + b->height + 1.5f, b->position.z}, b->width * 0.7f,
+                     1.4f, b->depth * 0.28f, float3{0.42f, 0.20f, 0.14f}, 0.f);
+            draw_box(building_prog,
+                     float3{b->position.x, b->position.y + b->height + 2.6f, b->position.z}, b->width * 0.35f,
+                     1.1f, b->depth * 0.12f, float3{0.40f, 0.18f, 0.12f}, 0.f);
+        } else if (b->roof_style == 2) {
+            float3 step{b->position.x, b->position.y + b->height, b->position.z};
+            model_trs(model, step, b->width * 0.62f, 10.f, b->depth * 0.62f);
+            glUniformMatrix4fv(glGetUniformLocation(building_prog, "model"), 1, GL_FALSE, model);
+            glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, nullptr);
+        }
+        if (b->district == 2) {
+            for (u32 k = 0; k < 4; ++k) {
+                const float fy = b->position.y + 4.5f + static_cast<float>(k) * 3.6f;
+                if (fy > b->position.y + b->height - 3.f) {
+                    break;
+                }
+                draw_box(building_prog,
+                         float3{b->position.x, fy, b->position.z - b->depth * 0.5f - 0.7f}, b->width * 0.18f,
+                         0.8f, 1.2f, float3{0.55f, 0.55f, 0.52f}, 0.f);
+            }
+        }
+        if (b->district == 5) {
+            draw_box(building_prog,
+                     float3{b->position.x, b->position.y + 3.1f, b->position.z - b->depth * 0.5f - 0.9f},
+                     b->width * 0.9f, 0.18f, 1.6f, float3{0.72f, 0.18f, 0.14f}, 0.f);
+        }
+        if (b->district == 4) {
+            draw_box(building_prog,
+                     float3{b->position.x + b->width * 0.5f + 1.2f, b->position.y, b->position.z}, 2.4f, 1.4f,
+                     6.f, float3{0.28f, 0.28f, 0.26f}, 0.f);
+        }
+        if (b->district == 0) {
+            draw_box(building_prog,
+                     float3{b->position.x, b->position.y + b->height + 6.f, b->position.z}, 0.18f, 8.f, 0.18f,
+                     float3{0.3f, 0.3f, 0.32f}, 0.f);
+        }
+        if (b->height > 14.f) {
+            float3 hvac{b->position.x + b->width * 0.18f, b->position.y + b->height,
+                        b->position.z - b->depth * 0.16f};
+            model_trs(model, hvac, 3.4f, 2.2f, 2.6f);
+            glUniformMatrix4fv(glGetUniformLocation(building_prog, "model"), 1, GL_FALSE, model);
+            glUniform3f(glGetUniformLocation(building_prog, "albedo"), 0.34f, 0.34f, 0.35f);
+            glUniform1f(glGetUniformLocation(building_prog, "floors"), 1.f);
+            glUniform1i(glGetUniformLocation(building_prog, "district"), 2);
+            glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, nullptr);
+        }
+        if (b->district == 0 && (b->building_id % 6u) == 0u) {
+            float3 tower{b->position.x - b->width * 0.2f, b->position.y + b->height,
+                         b->position.z + b->depth * 0.12f};
+            model_trs(model, tower, 2.2f, 4.5f, 2.2f);
+            glUniformMatrix4fv(glGetUniformLocation(building_prog, "model"), 1, GL_FALSE, model);
+            glUniform3f(glGetUniformLocation(building_prog, "albedo"), 0.40f, 0.36f, 0.32f);
+            glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, nullptr);
+        }
+        ++drawn;
+    }
+    const float night = night_glow_amt(time_of_day);
+    const float3 metal{0.18f, 0.18f, 0.20f};
+    if (tree_prog) {
+        glUseProgram(tree_prog);
+        glUniformMatrix4fv(glGetUniformLocation(tree_prog, "view"), 1, GL_FALSE, view);
+        glUniformMatrix4fv(glGetUniformLocation(tree_prog, "projection"), 1, GL_FALSE, proj);
+        glUniformMatrix4fv(glGetUniformLocation(tree_prog, "uLightVP"), 1, GL_FALSE, light_vp);
+        glUniform3f(glGetUniformLocation(tree_prog, "lightDir"), sun.x, sun.y, sun.z);
+        glUniform3f(glGetUniformLocation(tree_prog, "uCamPos"), camera_pos.x, camera_pos.y, camera_pos.z);
+        glUniform3f(glGetUniformLocation(tree_prog, "uFogColor"), 0.690f, 0.769f, 0.871f);
+        glUniform2f(glGetUniformLocation(tree_prog, "uRes"), static_cast<float>(width),
+                    static_cast<float>(height));
+        glUniform1f(glGetUniformLocation(tree_prog, "uNightGlow"), 0.f);
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, shadow_tex);
+        glUniform1f(glGetUniformLocation(tree_prog, "uNightGlow"), night);
+        draw_instanced_glb(&lamp_glb[0], tree_prog);
+        draw_instanced_glb(&lamp_glb[1], tree_prog);
+        glUniform1f(glGetUniformLocation(tree_prog, "uNightGlow"), 0.f);
+        draw_tree_glbs(tree_glb, tree_prog);
+        draw_instanced_glb(&sky_glb, tree_prog);
+        // New GLB buildings: same instanced pipeline as trees/lamps/cars.
+        for (u32 v = 0; v < 3u; ++v) {
+            if (shop_glb[v].instance_count > 0) {
+                draw_instanced_glb(&shop_glb[v], tree_prog);
+            }
+            if (apartment_glb[v].instance_count > 0) {
+                draw_instanced_glb(&apartment_glb[v], tree_prog);
+            }
+            if (warehouse_glb[v].instance_count > 0) {
+                draw_instanced_glb(&warehouse_glb[v], tree_prog);
+            }
+        }
+        glUniform1f(glGetUniformLocation(tree_prog, "uNightGlow"), 0.f);
+        for (u32 m = 0; m < kCarMeshCount; ++m) {
+            TreeGlb* cg = car_glb_model(*this, m);
+            if (cg != nullptr && cg->nprims > 0) {
+                draw_instanced_glb(cg, tree_prog);
+            }
+        }
+        glUseProgram(building_prog);
+    }
+    if (glow_prog && glow_count > 0 && night > 0.01f) {
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+        glDepthMask(GL_FALSE);
+        glUseProgram(glow_prog);
+        glUniformMatrix4fv(glGetUniformLocation(glow_prog, "view"), 1, GL_FALSE, view);
+        glUniformMatrix4fv(glGetUniformLocation(glow_prog, "projection"), 1, GL_FALSE, proj);
+        glUniform1f(glGetUniformLocation(glow_prog, "uGlow"), night);
+        glBindVertexArray(glow_vao);
+        glDrawElementsInstanced(GL_TRIANGLES, static_cast<GLsizei>(glow_nidx), GL_UNSIGNED_INT, nullptr,
+                                static_cast<GLsizei>(glow_count));
+        glBindVertexArray(0);
+        glDepthMask(GL_TRUE);
+        glDisable(GL_BLEND);
+        glUseProgram(building_prog);
+    }
+    const float sw = kCityStreetWidth * 0.5f + 1.6f;
+    const float gy = kCityPlateauY;
+    glBindVertexArray(cube_vao);
+    glUniform1i(glGetUniformLocation(building_prog, "uUseTex"), 0);
+    glUniform1i(glGetUniformLocation(building_prog, "uAlphaLeaf"), 0);
+    const float stripe_y = kCityPlateauY + 0.27f;
+    for (u32 j = 0; j <= kCityBlocks; ++j) {
+        for (u32 i = 0; i <= kCityBlocks; ++i) {
+            const float cx = static_cast<float>(i) * kCityBlockPitch;
+            const float cz = static_cast<float>(j) * kCityBlockPitch;
+            if (!near_xz(float3{cx, 0.f, cz}, camera_pos, 180.f)) {
+                continue;
+            }
+            const float start = 10.35f;
+            const float3 xw{0.94f, 0.94f, 0.94f};
+            for (u32 s = 0; s < 6; ++s) {
+                const float o = static_cast<float>(s) * 0.72f;
+                draw_box(building_prog, float3{cx, stripe_y, cz + start + o}, 10.f, 0.03f, 0.50f, xw, 0.f);
+                draw_box(building_prog, float3{cx, stripe_y, cz - start - o}, 10.f, 0.03f, 0.50f, xw, 0.f);
+                draw_box(building_prog, float3{cx + start + o, stripe_y, cz}, 0.50f, 0.03f, 10.f, xw, 0.f);
+                draw_box(building_prog, float3{cx - start - o, stripe_y, cz}, 0.50f, 0.03f, 10.f, xw, 0.f);
+            }
+        }
+    }
+    for (u32 bz = 0; bz < kCityBlocks; ++bz) {
+        for (u32 bx = 0; bx < kCityBlocks; ++bx) {
+            const float lx = (static_cast<float>(bx) + 0.5f) * kCityBlockPitch;
+            const float lz = (static_cast<float>(bz) + 0.5f) * kCityBlockPitch;
+            if (!near_xz(float3{lx, 0.f, lz}, camera_pos, 160.f)) {
+                continue;
+            }
+            const float sx = static_cast<float>(bx) * kCityBlockPitch + sw;
+            const float sz = static_cast<float>(bz) * kCityBlockPitch + sw;
+            draw_axis_mesh(building_prog, cyl_vao, cyl_count, float3{sx + 4.f, gy, sz + 6.f}, 0.40f, 0.90f,
+                           0.40f, float3{0.18f, 0.22f, 0.16f}, 0.f, 0, 0);
+            draw_axis_mesh(building_prog, cyl_vao, cyl_count, float3{sx + 9.f, gy, sz + 6.f}, 0.40f, 0.90f,
+                           0.40f, float3{0.20f, 0.20f, 0.20f}, 0.f, 0, 0);
+            draw_axis_mesh(building_prog, cyl_vao, cyl_count, float3{sx + 14.f, gy, sz + 6.f}, 0.38f, 0.85f,
+                           0.38f, float3{0.16f, 0.20f, 0.15f}, 0.f, 0, 0);
+            draw_axis_mesh(building_prog, cyl_vao, cyl_count, float3{sx + 3.f, gy, sz + 2.f}, 0.16f, 0.70f, 0.16f,
+                           float3{0.85f, 0.10f, 0.08f}, 0.f, 0, 0);
+            draw_axis_mesh(building_prog, cyl_vao, cyl_count, float3{sx + 3.f, gy + 0.62f, sz + 2.f}, 0.20f,
+                           0.12f, 0.20f, float3{0.75f, 0.08f, 0.06f}, 0.f, 0, 0);
+            draw_axis_mesh(building_prog, cyl_vao, cyl_count, float3{sx + 2.f, gy, sz + 18.f}, 0.16f, 0.70f,
+                           0.16f, float3{0.85f, 0.10f, 0.08f}, 0.f, 0, 0);
+            draw_axis_mesh(building_prog, cyl_vao, cyl_count, float3{sx + 20.f, gy, sz + 2.f}, 0.16f, 0.70f,
+                           0.16f, float3{0.85f, 0.10f, 0.08f}, 0.f, 0, 0);
+            draw_axis_mesh(building_prog, cyl_vao, cyl_count, float3{sx + 1.5f, gy, sz + 1.5f}, 0.06f, 2.5f,
+                           0.06f, metal, 0.f, 0, 0);
+            glBindVertexArray(cube_vao);
+            draw_box(building_prog, float3{sx + 1.5f, gy + 2.45f, sz + 1.5f}, 0.62f, 0.42f, 0.08f,
+                     float3{0.12f, 0.45f, 0.28f}, 0.f);
+            draw_box(building_prog, float3{sx + 22.f, gy, sz + 8.f}, 0.50f, 1.15f, 0.38f, float3{0.12f, 0.28f, 0.62f},
+                     0.f);
+            if (bx + bz > 14) {
+                draw_box(building_prog, float3{sx + 10.f, gy, sz + 14.f}, 1.55f, 0.42f, 0.48f,
+                         float3{0.45f, 0.28f, 0.14f}, 0.f);
+                draw_box(building_prog, float3{sx + 10.f, gy + 0.38f, sz + 14.f}, 1.50f, 0.06f, 0.44f,
+                         float3{0.22f, 0.22f, 0.22f}, 0.f);
+            }
+        }
+    }
+    static bool logged_detail = false;
+    if (!logged_detail) {
+        std::printf("[city] street kit lamps_instanced=%u+%u trees_instanced=%u+%u+%u "
+                    "shops=%u+%u+%u apts=%u+%u+%u whs=%u+%u+%u\n",
+                    lamp_glb[0].instance_count, lamp_glb[1].instance_count, tree_glb[0].instance_count,
+                    tree_glb[1].instance_count, tree_glb[2].instance_count,
+                    shop_glb[0].instance_count, shop_glb[1].instance_count, shop_glb[2].instance_count,
+                    apartment_glb[0].instance_count, apartment_glb[1].instance_count,
+                    apartment_glb[2].instance_count, warehouse_glb[0].instance_count,
+                    warehouse_glb[1].instance_count, warehouse_glb[2].instance_count);
+        std::fflush(stdout);
+        logged_detail = true;
+    }
+    glBindVertexArray(0);
+    static bool logged = false;
+    if (!logged) {
+        std::printf("[gl] drawing %u buildings (GLSL bound) + %u GLB buildings\n", drawn,
+                    shop_count + apartment_count + warehouse_count);
+        std::fflush(stdout);
+        logged = true;
+    }
+}
+
+void BuildingGlPass::shutdown() {
+    if (cube_vao) {
+        glDeleteVertexArrays(1, &cube_vao);
+    }
+    if (cube_vbo) {
+        glDeleteBuffers(1, &cube_vbo);
+    }
+    if (cube_ibo) {
+        glDeleteBuffers(1, &cube_ibo);
+    }
+    if (street_vao) {
+        glDeleteVertexArrays(1, &street_vao);
+    }
+    if (street_vbo) {
+        glDeleteBuffers(1, &street_vbo);
+    }
+    if (building_prog) {
+        glDeleteProgram(building_prog);
+    }
+    if (cloud_prog) {
+        glDeleteProgram(cloud_prog);
+        cloud_prog = 0;
+    }
+    if (shadow_prog) {
+        glDeleteProgram(shadow_prog);
+        shadow_prog = 0;
+    }
+    if (street_prog) {
+        glDeleteProgram(street_prog);
+    }
+    if (tree_prog) {
+        glDeleteProgram(tree_prog);
+        tree_prog = 0;
+    }
+    if (tree_shadow_prog) {
+        glDeleteProgram(tree_shadow_prog);
+        tree_shadow_prog = 0;
+    }
+    for (u32 k = 0; k < kTreeKindCount; ++k) {
+        tree_glb_shutdown(&tree_glb[k]);
+    }
+    tree_glb_shutdown(&sky_glb);
+    for (u32 k = 0; k < kLampKindCount; ++k) {
+        tree_glb_shutdown(&lamp_glb[k]);
+    }
+    tree_glb_shutdown(&corolla_glb);
+    tree_glb_shutdown(&sports_glb);
+    tree_glb_shutdown(&suv_glb);
+    for (u32 k = 0; k < 3u; ++k) {
+        tree_glb_shutdown(&shop_glb[k]);
+        tree_glb_shutdown(&apartment_glb[k]);
+        tree_glb_shutdown(&warehouse_glb[k]);
+    }
+    if (g_fallback_white_tex) {
+        glDeleteTextures(1, &g_fallback_white_tex);
+        g_fallback_white_tex = 0;
+    }
+    if (glow_prog) {
+        glDeleteProgram(glow_prog);
+        glow_prog = 0;
+    }
+    if (glow_vao) {
+        glDeleteVertexArrays(1, &glow_vao);
+        glow_vao = 0;
+    }
+    if (glow_vbo) {
+        glDeleteBuffers(1, &glow_vbo);
+        glow_vbo = 0;
+    }
+    if (glow_ibo) {
+        glDeleteBuffers(1, &glow_ibo);
+        glow_ibo = 0;
+    }
+    if (glow_ivbo) {
+        glDeleteBuffers(1, &glow_ivbo);
+        glow_ivbo = 0;
+    }
+    building_prog = street_prog = 0;
 }
 
 } // namespace engine
