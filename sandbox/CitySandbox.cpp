@@ -46,6 +46,11 @@ static void save_screenshot_ppm(const char* path, int w, int h) {
 int main(int argc, char** argv) {
     using namespace engine;
     setvbuf(stdout, nullptr, _IOLBF, 0);
+    // BUILD TAG: bump on every commit that changes rendering. Lets us prove
+    // which binary produced a screenshot/log (stale-binary confusion).
+    constexpr const char* kLeonidaBuildTag = "2026-10-06-c-xwalk";
+    std::printf("[city] BUILD %s\n", kLeonidaBuildTag);
+    std::fflush(stdout);
     bool forever = true;
     bool bldg_row = false;
     bool xwalk = false;
