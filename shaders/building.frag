@@ -29,6 +29,18 @@ float hash12(vec2 p) {
     return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
 }
 
+// Smooth deterministic value noise (bilinear, no speckle) for ground mottle.
+float ground_noise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    float a = hash12(i);
+    float b = hash12(i + vec2(1.0, 0.0));
+    float c = hash12(i + vec2(0.0, 1.0));
+    float d = hash12(i + vec2(1.0, 1.0));
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
 float shadow_at() {
     vec3 p = LightPos.xyz / max(LightPos.w, 1e-4);
     p = p * 0.5 + 0.5;
@@ -56,6 +68,18 @@ void main() {
         tex = texture(uAlbedo, UV);
         if (tex.a < 0.28) discard;
         tex.rgb = mix(vec3(0.22, 0.55, 0.18), vec3(0.40, 0.70, 0.28), hash12(UV * 12.0));
+    }
+    // Lot-grass mottle (windowStyle 2 marks the lot draw; dead otherwise):
+    // 2 smooth octaves over world xz (~7 m and ~20 m patches), 0.85..1.10,
+    // plus a darker damp blotch layer, then ~10% desat toward gray-green.
+    if (uFacade == 0 && uUseTex == 1 && windowStyle == 2) {
+        float mottle = ground_noise(FragPos.xz / 7.0) * 0.65 + ground_noise(FragPos.xz / 20.0 + 13.7) * 0.35;
+        mottle = 0.85 + 0.25 * mottle;
+        float damp = smoothstep(0.62, 0.78, ground_noise(FragPos.xz / 23.0 + 7.3));
+        mottle *= (1.0 - 0.12 * damp);
+        tex.rgb *= mottle;
+        float lum = dot(tex.rgb, vec3(0.33));
+        tex.rgb = mix(tex.rgb, vec3(lum) * vec3(0.92, 1.0, 0.92), 0.10);
     }
 
     vec3 N = normalize(Normal);

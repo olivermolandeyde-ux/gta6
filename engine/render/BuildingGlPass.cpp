@@ -1025,7 +1025,7 @@ u32 report_glb_node_rotations(const char* base, const char* label) {
 // brightest white in the street scene.
 const float3 kSidewalkTint{0.52f, 0.52f, 0.50f};
 // Lot grass brightness (one-line knob like the sidewalk tint).
-const float3 kGrassTint{1.0f, 1.0f, 1.0f};
+const float3 kGrassTint{0.55f, 0.65f, 0.50f};
 
 // Shared prop spacing + sidewalk helpers (all prop placement loops).
 // Logic mirrors the original per-block lambdas exactly; hoisted so every prop
@@ -1298,7 +1298,7 @@ bool BuildingGlPass::init() {
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, static_cast<int>(tw), static_cast<int>(th),
                          0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
             glGenerateMipmap(GL_TEXTURE_2D);
-            std::printf("[city] grass texture: %ux%u from PNG (tiled world/3.5 m, aniso %.1f of max %.1f)\n",
+            std::printf("[city] grass texture: %ux%u from PNG (tiled world/5.0 m, aniso %.1f of max %.1f)\n",
                         tw, th, static_cast<double>(aniso), static_cast<double>(max_aniso));
             std::free(rgba);
         } else {
@@ -1885,16 +1885,16 @@ void BuildingGlPass::buildMesh(World& world) {
                 const float z0 = static_cast<float>(bz) * kCityBlockPitch + inset;
                 const float z1 = static_cast<float>(bz + 1) * kCityBlockPitch - inset;
                 const u32 base = lot_vn;
-                // World-space tiling (world/3.5 m): identical grass scale on every
-                // block, seamless across neighbours.
-                solid_push(lot_verts, &lot_vn, x0, lot_y, z0, 0.f, 1.f, 0.f, x0 * (1.f / 3.5f),
-                           z0 * (1.f / 3.5f));
-                solid_push(lot_verts, &lot_vn, x1, lot_y, z0, 0.f, 1.f, 0.f, x1 * (1.f / 3.5f),
-                           z0 * (1.f / 3.5f));
-                solid_push(lot_verts, &lot_vn, x1, lot_y, z1, 0.f, 1.f, 0.f, x1 * (1.f / 3.5f),
-                           z1 * (1.f / 3.5f));
-                solid_push(lot_verts, &lot_vn, x0, lot_y, z1, 0.f, 1.f, 0.f, x0 * (1.f / 3.5f),
-                           z1 * (1.f / 3.5f));
+                // World-space tiling (world/5.0 m): identical grass scale on every
+                // block, seamless across neighbours; blades read up close.
+                solid_push(lot_verts, &lot_vn, x0, lot_y, z0, 0.f, 1.f, 0.f, x0 * (1.f / 5.0f),
+                           z0 * (1.f / 5.0f));
+                solid_push(lot_verts, &lot_vn, x1, lot_y, z0, 0.f, 1.f, 0.f, x1 * (1.f / 5.0f),
+                           z0 * (1.f / 5.0f));
+                solid_push(lot_verts, &lot_vn, x1, lot_y, z1, 0.f, 1.f, 0.f, x1 * (1.f / 5.0f),
+                           z1 * (1.f / 5.0f));
+                solid_push(lot_verts, &lot_vn, x0, lot_y, z1, 0.f, 1.f, 0.f, x0 * (1.f / 5.0f),
+                           z1 * (1.f / 5.0f));
                 lot_idx[lot_in++] = base + 0;
                 lot_idx[lot_in++] = base + 1;
                 lot_idx[lot_in++] = base + 2;
@@ -3562,9 +3562,11 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
         glUniform1f(glGetUniformLocation(building_prog, "roughness"), 0.9f);
         glUniform1f(glGetUniformLocation(building_prog, "emissionBoost"), 0.f);
         glUniform1i(glGetUniformLocation(building_prog, "district"), 2);
-        glUniform1i(glGetUniformLocation(building_prog, "windowStyle"), 0);
+        // windowStyle 2 marks lot grass (dead when uFacade==0): gates the
+        // mottle/desat block in the shader. Ring uses 0.
+        glUniform1i(glGetUniformLocation(building_prog, "windowStyle"), 2);
         // building.frag scales albedo UV by (1.6, floors*0.28): floors=6 keeps the
-        // world/3.5 m tiles ~square, like the ring mesh.
+        // world/5.0 m tiles ~square, like the ring mesh.
         glUniform1f(glGetUniformLocation(building_prog, "floors"), 6.f);
         if (tex_grass) {
             glActiveTexture(GL_TEXTURE0);
