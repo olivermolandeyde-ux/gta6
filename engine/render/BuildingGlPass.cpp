@@ -1950,7 +1950,7 @@ void BuildingGlPass::buildMesh(World& world) {
             {1260.f, 1260.f, 40.f, 30.f, 1, "apartment"},
             {1980.f, 300.f, 60.f, 40.f, 2, "warehouse"},
         };
-        u32 skipped_nomesh = 0, skipped_cap = 0;
+        u32 skipped_nomesh = 0, skipped_cap = 0, skipped_fit = 0;
         u32 lot_ok = 0, lot_fail = 0;
         u32 placed_shop = 0, placed_apt = 0, placed_whs = 0;
         u32 attempted_shop = 0, attempted_apt = 0, attempted_whse = 0;
@@ -1981,8 +1981,16 @@ void BuildingGlPass::buildMesh(World& world) {
                 ++lot_fail;
             }
             const TreeGlb* g = &arr[variant];
-            // Existing lot footprint is the base; uniform fit keeps the GLB on the lot.
-            const float sc = building_footprint_scale(g, w, d);
+            // Natural size first: the GLBs are authored at real-world scale, so
+            // scale 1.0 IS the right size. Only shrink to stay on the lot, never
+            // grow (giants) — and skip lots that would force dollhouse scale.
+            // fit >= 1 means the model fits the lot at authored size, any yaw.
+            const float fit = building_footprint_scale(g, w, d);
+            if (fit < 0.75f) {
+                ++skipped_fit; // lot far smaller than the model — keep procedural
+                return false;
+            }
+            const float sc = fit < 1.f ? fit : 1.f;
             const float y = kCityPlateauY + 0.05f - tree_up_min(g) * sc;
             if (var_n[variant] >= kTreeInstanceCap) {
                 ++skipped_cap;
@@ -2357,6 +2365,10 @@ void BuildingGlPass::buildMesh(World& world) {
         if (skipped_cap) {
             std::printf("[buildings] Skipped %u (instance cap %u reached)\n", skipped_cap,
                         kTreeInstanceCap);
+        }
+        if (skipped_fit) {
+            std::printf("[buildings] Skipped %u (lot too small for natural model size)\n",
+                        skipped_fit);
         }
         std::printf("[buildings] Total new GLB building instances: %u\n",
                     shop_count + apartment_count + warehouse_count);
