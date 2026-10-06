@@ -23,6 +23,9 @@ struct BuildingGlPass {
     unsigned ring_vao;  // static sidewalk ring (textured strips per block)
     unsigned ring_ibo;
     unsigned ring_count; // index count for the ring mesh
+    unsigned skirt_vao;  // solid curb-face walls around each block (STEP 1)
+    unsigned skirt_ibo;
+    unsigned skirt_count;
     unsigned tex_sidewalk; // assets/textures/sidewalk.png, or 0 = flat gray fallback
     unsigned tex_grass;    // assets/textures/grass.png, or 0 = flat green fallback
     unsigned tex_flat_n;   // 1x1 flat normal for textured non-facade draws
