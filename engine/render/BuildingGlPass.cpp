@@ -2847,51 +2847,36 @@ void BuildingGlPass::buildMesh(World& world) {
             return true;
         };
 
-        // Mailboxes ~60: intersection corners (tucked 11.9 diagonal, like bins).
+        // Mailboxes ~105: neat curb rows on every EW road (phase-shifted 240 m
+        // from the hydrant rows so the two never share a slot).
         if (mailbox_glb.nprims > 0) {
-            for (u32 j = 0; j <= kCityBlocks && n_mb < 65u; ++j) {
-                for (u32 i = 0; i <= kCityBlocks && n_mb < 65u; ++i) {
-                    const u32 h = hash3(i, j);
-                    if (h % 100u >= 15u) {
-                        continue;
-                    }
-                    const float x = static_cast<float>(i) * kCityBlockPitch +
-                                    ((h & 64u) ? 11.9f : -11.9f);
-                    const float z = static_cast<float>(j) * kCityBlockPitch +
-                                    ((h & 128u) ? 11.9f : -11.9f);
-                    push_prop2(&mailbox_glb, mb_mats, n_mb, x, z, sc_mb, mailbox_glb.z_up,
-                               2.6f, "mailbox");
+            for (u32 j = 0; j <= kCityBlocks && n_mb < 115u; ++j) {
+                for (u32 k = 0; k < 5u && n_mb < 115u; ++k) {
+                    const float x = 300.f + static_cast<float>(k) * 480.f;
+                    const float side = ((j + k) & 1u) ? 10.8f : -10.8f;
+                    push_prop2(&mailbox_glb, mb_mats, n_mb, x,
+                               static_cast<float>(j) * kCityBlockPitch + side, sc_mb,
+                               mailbox_glb.z_up, 2.6f, "mailbox");
                 }
             }
             tree_glb_set_instances(&mailbox_glb, mb_mats, n_mb);
         }
-        // Kiosks ~40: mid-block sidewalk, quarter points (benches sit at centers).
+        // Kiosks ~60: N/S sidewalk edges at quarter points (benches sit at the
+        // centers, hydrants at +60 mod 120 — quarters never coincide with either).
         if (kiosk_glb.nprims > 0) {
-            for (u32 bz = 0; bz < kCityBlocks && n_ki < 45u; ++bz) {
-                for (u32 bx = 0; bx < kCityBlocks && n_ki < 45u; ++bx) {
+            for (u32 bz = 0; bz < kCityBlocks && n_ki < 65u; ++bz) {
+                for (u32 bx = 0; bx < kCityBlocks && n_ki < 65u; ++bx) {
                     const u32 h = hash3(bx * 5u + 3u, bz * 11u + 5u);
-                    if (h % 100u >= 10u) {
+                    if (h % 100u >= 15u) {
                         continue;
                     }
-                    float x = 0.f, z = 0.f;
                     const float along = (h & 4u) ? 30.f : 90.f;
-                    switch (h & 3u) {
-                    case 0:
-                        x = static_cast<float>(bx) * kCityBlockPitch + along;
-                        z = static_cast<float>(bz) * kCityBlockPitch + 10.8f;
-                        break;
-                    case 1:
-                        x = static_cast<float>(bx) * kCityBlockPitch + along;
+                    float x = static_cast<float>(bx) * kCityBlockPitch + along;
+                    float z;
+                    if ((bx + bz) & 1u) {
                         z = static_cast<float>(bz + 1u) * kCityBlockPitch - 10.8f;
-                        break;
-                    case 2:
-                        x = static_cast<float>(bx) * kCityBlockPitch + 10.8f;
-                        z = static_cast<float>(bz) * kCityBlockPitch + along;
-                        break;
-                    default:
-                        x = static_cast<float>(bx + 1u) * kCityBlockPitch - 10.8f;
-                        z = static_cast<float>(bz) * kCityBlockPitch + along;
-                        break;
+                    } else {
+                        z = static_cast<float>(bz) * kCityBlockPitch + 10.8f;
                     }
                     push_prop2(&kiosk_glb, ki_mats, n_ki, x, z, sc_ki, kiosk_glb.z_up,
                                3.0f, "kiosk");
@@ -2899,33 +2884,23 @@ void BuildingGlPass::buildMesh(World& world) {
             }
             tree_glb_set_instances(&kiosk_glb, ki_mats, n_ki);
         }
-        // ATMs ~30: lot-edge line (12.4, back toward the building), street-facing.
+        // ATMs ~50: E/W lot-edge line (12.4, back toward the building) at quarter
+        // points — clear of benches (centers) and kiosks (N/S edges only).
         if (atm_glb.nprims > 0) {
-            for (u32 bz = 0; bz < kCityBlocks && n_atm < 35u; ++bz) {
-                for (u32 bx = 0; bx < kCityBlocks && n_atm < 35u; ++bx) {
+            for (u32 bz = 0; bz < kCityBlocks && n_atm < 55u; ++bz) {
+                for (u32 bx = 0; bx < kCityBlocks && n_atm < 55u; ++bx) {
                     const u32 h = hash3(bx * 7u + 9u, bz * 13u + 4u);
-                    if (h % 100u >= 10u) {
+                    if (h % 100u >= 15u) {
                         continue;
                     }
-                    float x = 0.f, z = 0.f;
-                    switch (h & 3u) {
-                    case 0:
-                        x = static_cast<float>(bx) * kCityBlockPitch + 60.f;
-                        z = static_cast<float>(bz) * kCityBlockPitch + 12.4f;
-                        break;
-                    case 1:
-                        x = static_cast<float>(bx) * kCityBlockPitch + 60.f;
-                        z = static_cast<float>(bz + 1u) * kCityBlockPitch - 12.4f;
-                        break;
-                    case 2:
-                        x = static_cast<float>(bx) * kCityBlockPitch + 12.4f;
-                        z = static_cast<float>(bz) * kCityBlockPitch + 60.f;
-                        break;
-                    default:
+                    const float along = (h & 4u) ? 30.f : 90.f;
+                    float x, z;
+                    if ((bx + bz) & 1u) {
                         x = static_cast<float>(bx + 1u) * kCityBlockPitch - 12.4f;
-                        z = static_cast<float>(bz) * kCityBlockPitch + 60.f;
-                        break;
+                    } else {
+                        x = static_cast<float>(bx) * kCityBlockPitch + 12.4f;
                     }
+                    z = static_cast<float>(bz) * kCityBlockPitch + along;
                     push_prop2(&atm_glb, atm_mats, n_atm, x, z, sc_atm, atm_glb.z_up,
                                2.8f, "atm");
                 }
