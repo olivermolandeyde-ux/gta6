@@ -1675,12 +1675,39 @@ void BuildingGlPass::buildMesh(World& world) {
     const float pitch  = kCityBlockPitch;
     const u32   nline  = kCityBlocks + 1;
 
+    // Intersections as 9 quads: asphalt center box + 4 asphalt arm boxes (the
+    // roads run straight through) + 4 sidewalk corner quads that close the
+    // pedestrian ring. Corner/arm UVs continue the adjoining spans' u-mapping
+    // exactly (u across the road, v const: dash is shader-suppressed here), so
+    // shared edges never show a colour step, gap or overlap.
     for (u32 j = 0; j < nline; ++j) {
         for (u32 i = 0; i < nline; ++i) {
             const float cx = static_cast<float>(i) * pitch;
             const float cz = static_cast<float>(j) * pitch;
-            emit_aabb_quad(verts, &n, cx - half_w, cz - half_w, cx + half_w, cz + half_w, y, 0.22f, 0.f,
-                           0.22f, 0.f, 0.22f, 0.f, 0.22f, 0.f);
+            const float u_in0 = 3.f / 26.f;  // u at 10 m from centre (asphalt edge)
+            const float u_in1 = 23.f / 26.f; // u at 10 m, far side
+            // Asphalt centre box +-10.
+            emit_aabb_quad(verts, &n, cx - 10.f, cz - 10.f, cx + 10.f, cz + 10.f, y, 0.5f, 0.f,
+                           0.5f, 0.f, 0.5f, 0.f, 0.5f, 0.f);
+            // Asphalt arms N/S (x +-10, z 10..13): u continues the EW spans.
+            emit_aabb_quad(verts, &n, cx - 10.f, cz + 10.f, cx + 10.f, cz + 13.f, y, u_in1, 0.f,
+                           u_in1, 0.f, 1.f, 0.f, 1.f, 0.f);
+            emit_aabb_quad(verts, &n, cx - 10.f, cz - 13.f, cx + 10.f, cz - 10.f, y, 0.f, 0.f,
+                           0.f, 0.f, u_in0, 0.f, u_in0, 0.f);
+            // Asphalt arms E/W (x 10..13, z +-10): u continues the NS spans.
+            emit_aabb_quad(verts, &n, cx + 10.f, cz - 10.f, cx + 13.f, cz + 10.f, y, u_in0, 0.f,
+                           u_in0, 0.f, u_in1, 0.f, u_in1, 0.f);
+            emit_aabb_quad(verts, &n, cx - 13.f, cz - 10.f, cx - 10.f, cz + 10.f, y, u_in0, 0.f,
+                           u_in0, 0.f, u_in1, 0.f, u_in1, 0.f);
+            // Sidewalk corners 3x3: ring the junction seamlessly.
+            emit_aabb_quad(verts, &n, cx + 10.f, cz + 10.f, cx + 13.f, cz + 13.f, y, u_in1, 0.f,
+                           u_in1, 0.f, 1.f, 0.f, 1.f, 0.f);
+            emit_aabb_quad(verts, &n, cx + 10.f, cz - 13.f, cx + 13.f, cz - 10.f, y, 0.f, 0.f,
+                           0.f, 0.f, u_in0, 0.f, u_in0, 0.f);
+            emit_aabb_quad(verts, &n, cx - 13.f, cz + 10.f, cx - 10.f, cz + 13.f, y, u_in1, 0.f,
+                           u_in1, 0.f, 1.f, 0.f, 1.f, 0.f);
+            emit_aabb_quad(verts, &n, cx - 13.f, cz - 13.f, cx - 10.f, cz - 10.f, y, 0.f, 0.f,
+                           0.f, 0.f, u_in0, 0.f, u_in0, 0.f);
         }
     }
     for (u32 j = 0; j < nline; ++j) {

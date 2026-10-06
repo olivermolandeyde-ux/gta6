@@ -62,6 +62,12 @@ void main() {
     float bandZ = (1.0 - step(9.5, dd.x)) * step(10.5, dd.y) * (1.0 - step(15.5, dd.y));
     float bandX = (1.0 - step(9.5, dd.y)) * step(10.5, dd.x) * (1.0 - step(15.5, dd.x));
     centerDash *= (1.0 - max(inBox, max(bandZ, bandX)));
+    // Gap the dark curb/gutter ring where pedestrians cross (same zebra zones),
+    // so the crossing reads sidewalk-to-sidewalk instead of over a gutter slash.
+    // Asphalt shows through the gap; the white bars sit on top of it.
+    float crossZ = (1.0 - step(10.0, dd.x)) * step(10.5, dd.y) * (1.0 - step(15.5, dd.y));
+    float crossX = (1.0 - step(10.0, dd.y)) * step(10.5, dd.x) * (1.0 - step(15.5, dd.x));
+    curbMask *= (1.0 - max(crossZ, crossX));
     float edgeLine = (1.0 - step(0.008, abs(ax - 0.355))) * (1.0 - sidewalkMask);
 
     vec3 c = mix(asphalt, curb, curbMask);
