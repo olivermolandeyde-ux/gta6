@@ -2317,8 +2317,8 @@ void BuildingGlPass::buildMesh(World& world) {
         }
 
         // Shared occupied-footprint list: every placed GLB registers its world
-        // half extents here (2x scale baked in). Mass + density + debug all
-        // check it with a 2 m gap, so no two GLB buildings ever interpenetrate.
+        // half extents here. Mass + density + debug all check it with a 2 m
+        // gap, so no two GLB buildings ever interpenetrate.
         struct Occ {
             float x, z, hx, hz;
         };
@@ -2338,7 +2338,7 @@ void BuildingGlPass::buildMesh(World& world) {
                 occ[n_occ++] = {x, z, hx, hz};
             }
         };
-        // Conservative per-type half extents at sc=2 (max over loaded variants,
+        // Conservative per-type half extents at sc=1 (max over loaded variants,
         // yaw-independent square bound) for pre-placement neighbour checks.
         float type_max_sq[3] = {0.f, 0.f, 0.f};
         {
@@ -2354,9 +2354,9 @@ void BuildingGlPass::buildMesh(World& world) {
                         const float m = mx > mz ? mx : mz;
                         mx = mz = m;
                     }
-                    const float full = (mx > mz ? mx : mz);
-                    if (full > type_max_sq[t]) {
-                        type_max_sq[t] = full;
+                    const float half = (mx > mz ? mx : mz) * 0.5f;
+                    if (half > type_max_sq[t]) {
+                        type_max_sq[t] = half;
                     }
                 }
             }
@@ -2430,17 +2430,20 @@ void BuildingGlPass::buildMesh(World& world) {
                 ++lot_fail;
             }
             const TreeGlb* g = &arr[variant];
-            // Doubled city-wide: every placed GLB renders at exactly 2x natural
-            // size (all variants a/b/c, all types). Lots far smaller than the
-            // model (<0.75 fit) still keep their procedural building.
+            // Natural size city-wide: every placed GLB renders at scale 1.0
+            // (all variants a/b/c, all types — identical windows everywhere).
+            // Lots far smaller than the model (<0.75 fit) still keep their
+            // procedural building.
             const float fit = building_footprint_scale(g, w, d);
             if (fit < 0.75f) {
                 ++skipped_fit; // lot far smaller than the model — keep procedural
                 return false;
             }
-            const float sc = 2.f;
+            const float sc = 1.f;
             const float y = kTopY + 0.01f - tree_up_min(g) * sc;
-            if (var_n[variant] >= kTreeInstanceCap) {
+            // Reserve one slot per variant for the --bldg-row lineup when asked.
+            const u32 cap = kTreeInstanceCap - (verification_row ? 1u : 0u);
+            if (var_n[variant] >= cap) {
                 ++skipped_cap;
                 return false;
             }
@@ -2565,8 +2568,9 @@ void BuildingGlPass::buildMesh(World& world) {
                 (type == 0) ? shop_var_mats : ((type == 2) ? whs_var_mats : apt_var_mats);
             // Existing building's X/Z/scale are the base; front faces the street.
             const float yaw = street_facing_yaw(c.x, c.z);
-            // 2x GLBs overflow natural lots: keep 2 m clearance to neighbouring
-            // procedural boxes (own lot is hidden; taken lots are hidden too).
+            // Natural-size GLBs can still crowd small lots: keep 2 m clearance
+            // to neighbouring procedural boxes (own lot is hidden; taken lots
+            // are hidden too).
             {
                 const float th = type_max_sq[type];
                 bool blocked = false;
@@ -2878,7 +2882,7 @@ void BuildingGlPass::buildMesh(World& world) {
                                 ++den_skip_gap;
                                 continue;
                             }
-                            if (var_n[variant] >= kTreeInstanceCap) {
+                            if (var_n[variant] >= kTreeInstanceCap - (verification_row ? 1u : 0u)) {
                                 ++den_skip_cap;
                                 continue;
                             }
@@ -2970,11 +2974,11 @@ void BuildingGlPass::buildMesh(World& world) {
                         row_placed);
             std::fflush(stdout);
         }
-        // Scale audit (startup only): density instances must carry uniform
-        // scale in [0.95,1.05] (natural size, identical windows city-wide);
-        // 2x mass/debug landmarks must carry exactly 2.0. Y must equal
-        // kTopY+0.01-up_min*scale. Anything else (tilt, shear, non-uniform or
-        // wrong scale) is logged. --bldg-row debug instances are exempt.
+        // Scale audit (startup only): EVERY building instance must carry uniform
+        // scale in [0.95,1.05] (natural size, identical windows city-wide, no
+        // toy copies, no giants). Y must equal kTopY+0.01-up_min*scale. Anything
+        // else (tilt, shear, non-uniform or wrong scale) is logged.
+        // --bldg-row debug instances are exempt (inspection lineup).
         {
             const TreeGlb* arrs[3] = {shop_glb, apartment_glb, warehouse_glb};
             const u32* ns[3] = {shop_var_n, apt_var_n, whs_var_n};
@@ -3008,9 +3012,8 @@ void BuildingGlPass::buildMesh(World& world) {
                             ok = ok && ux == 0.f && uz == 0.f && uy > 0.f;
                         }
                         ok = ok && std::fabs(m[13] - y_exp) < 0.02f;
-                        // Natural-size density vs 2x landmarks (debug spots keep 2x).
-                        ok = ok && ((lx >= 0.95f && lx <= 1.05f) ||
-                                    std::fabs(lx - 2.f) < 1e-3f);
+                        // Uniform natural size for every instance, no exceptions.
+                        ok = ok && (lx >= 0.95f && lx <= 1.05f);
                         if (!ok && violations < 8u) {
                             std::printf("[buildings] MATRIX VIOLATION %s variant %u inst %u at "
                                         "(%.1f, %.1f, %.1f): bad scale/rotation/y\n",
