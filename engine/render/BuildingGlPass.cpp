@@ -274,6 +274,16 @@ void mat_mul16(float* o, const float* a, const float* b) {
     std::memcpy(o, t, sizeof(t));
 }
 
+// Crosswalk geometry fingerprint (single source of truth; logged once from
+// buildMesh so any screenshot can be traced to the exact dimensions that drew it).
+// N/S arms: bars LONG in X (across their road), thin in Z, stacked in Z.
+// E/W arms: bars LONG in Z, thin in X, stacked in X.
+constexpr float kXwalkLen = kCityStreetWidth; // 20: full curb-to-curb, centred
+constexpr float kXwalkThick = 2.0f;
+constexpr u32 kXwalkCount = 5;
+constexpr float kXwalkStep = 3.5f;            // 2.0 stripe + 1.5 asphalt gap
+constexpr float kXwalkStart = kCityStreetWidth * 0.5f + 1.0f; // 11: outside junction
+
 void upload_solid(unsigned* vao, unsigned* ibo, unsigned* count, SolidVert* verts, u32 vn, u32* idx, u32 in) {
     unsigned vbo = 0;
     glGenVertexArrays(1, vao);
@@ -3108,6 +3118,10 @@ void BuildingGlPass::buildMesh(World& world) {
     }
     std::printf("[city] street mesh: prog=%u verts=%u vao=%u\n", street_prog, street_count,
                 street_vao);
+    std::printf("[xwalk] geometry: len=%.1f thick=%.1f n=%u start=%.1f step=%.1f "
+                "(N/S long-X, E/W long-Z)\n",
+                static_cast<double>(kXwalkLen), static_cast<double>(kXwalkThick), kXwalkCount,
+                static_cast<double>(kXwalkStart), static_cast<double>(kXwalkStep));
     std::fflush(stdout);
 } // end buildMesh
 
@@ -3541,17 +3555,17 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
                 continue;
             }
             const float road_half = kCityStreetWidth * 0.5f; // 10
-            const float bar_len = kCityStreetWidth; // 20: full curb-to-curb
-            const float start = road_half + 1.0f; // 11: just outside the junction box
+            const float bar_len = kXwalkLen;
+            const float start = kXwalkStart;
             const float3 xw{0.94f, 0.94f, 0.94f};
-            for (u32 s = 0; s < 5; ++s) {
-                const float o = static_cast<float>(s) * 3.5f; // 2.0 stripe + 1.5 gap
+            for (u32 s = 0; s < kXwalkCount; ++s) {
+                const float o = static_cast<float>(s) * kXwalkStep;
                 // N/S approaches: bars long in X (across the road), thick in Z.
-                draw_box(building_prog, float3{cx, stripe_y, cz + start + o}, bar_len, 0.05f, 2.0f, xw, 0.f);
-                draw_box(building_prog, float3{cx, stripe_y, cz - start - o}, bar_len, 0.05f, 2.0f, xw, 0.f);
+                draw_box(building_prog, float3{cx, stripe_y, cz + start + o}, bar_len, 0.05f, kXwalkThick, xw, 0.f);
+                draw_box(building_prog, float3{cx, stripe_y, cz - start - o}, bar_len, 0.05f, kXwalkThick, xw, 0.f);
                 // E/W approaches: bars long in Z, thick in X.
-                draw_box(building_prog, float3{cx + start + o, stripe_y, cz}, 2.0f, 0.05f, bar_len, xw, 0.f);
-                draw_box(building_prog, float3{cx - start - o, stripe_y, cz}, 2.0f, 0.05f, bar_len, xw, 0.f);
+                draw_box(building_prog, float3{cx + start + o, stripe_y, cz}, kXwalkThick, 0.05f, bar_len, xw, 0.f);
+                draw_box(building_prog, float3{cx - start - o, stripe_y, cz}, kXwalkThick, 0.05f, bar_len, xw, 0.f);
             }
         }
     }
