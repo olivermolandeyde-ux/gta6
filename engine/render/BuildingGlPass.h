@@ -44,6 +44,10 @@ struct BuildingGlPass {
     u32      shop_count;
     u32      apartment_count;
     u32      warehouse_count;
+    // Street props (one GLB each, real-size, instanced on sidewalks)
+    TreeGlb  hydrant_glb; // props/prop_hydrant_red.glb
+    TreeGlb  bench_glb;   // props/prop_bench_wood.glb
+    TreeGlb  bin_glb;     // props/prop_bin_metal.glb
     bool     verification_row; // sandbox --bldg-row: append 1 instance per variant in a lineup
     // Moving traffic: circuits, agent state, and the per-frame instance matrices.
     CarTraffic car_traffic;

@@ -1019,6 +1019,9 @@ bool BuildingGlPass::init() {
     corolla_glb.wheel_axis = sports_glb.wheel_axis = suv_glb.wheel_axis = -1;
     std::memset(shop_glb, 0, sizeof(shop_glb));
     std::memset(apartment_glb, 0, sizeof(apartment_glb));
+    std::memset(&hydrant_glb, 0, sizeof(hydrant_glb));
+    std::memset(&bench_glb, 0, sizeof(bench_glb));
+    std::memset(&bin_glb, 0, sizeof(bin_glb));
     std::memset(warehouse_glb, 0, sizeof(warehouse_glb));
     std::memset(shop_mats, 0, sizeof(shop_mats));
     std::memset(apartment_mats, 0, sizeof(apartment_mats));
@@ -1361,6 +1364,21 @@ bool BuildingGlPass::init() {
     load_building_model("buildings/warehouse_industrial_variant_b.glb", &warehouse_glb[1], "warehouse_industrial_variant_b");
     load_building_model("buildings/warehouse_industrial_variant_c.glb", &warehouse_glb[2], "warehouse_industrial_variant_c");
 
+    // Street props (same loader call as the shops above)
+    std::printf("[buildings] --- STREET PROP MODELS ---\n");
+    load_building_model("props/prop_hydrant_red.glb", &hydrant_glb, "prop_hydrant_red");
+    load_building_model("props/prop_bench_wood.glb", &bench_glb, "prop_bench_wood");
+    load_building_model("props/prop_bin_metal.glb", &bin_glb, "prop_bin_metal");
+    if (hydrant_glb.nprims == 0) {
+        std::printf("[props] missing prop_hydrant_red (skipped, no fallback)\n");
+    }
+    if (bench_glb.nprims == 0) {
+        std::printf("[props] missing prop_bench_wood (skipped, no fallback)\n");
+    }
+    if (bin_glb.nprims == 0) {
+        std::printf("[props] missing prop_bin_metal (skipped, no fallback)\n");
+    }
+
     // Summary
     u32 shops_loaded = 0, apts_loaded = 0, whses_loaded = 0;
     for (u32 i = 0; i < 3; ++i) {
@@ -1393,6 +1411,15 @@ bool BuildingGlPass::init() {
         for (u32 p = 0; p < warehouse_glb[i].nprims; ++p) {
             warehouse_glb[i].prims[p].alpha_mask = 0;
         }
+    }
+    for (u32 p = 0; p < hydrant_glb.nprims; ++p) {
+        hydrant_glb.prims[p].alpha_mask = 0;
+    }
+    for (u32 p = 0; p < bench_glb.nprims; ++p) {
+        bench_glb.prims[p].alpha_mask = 0;
+    }
+    for (u32 p = 0; p < bin_glb.nprims; ++p) {
+        bin_glb.prims[p].alpha_mask = 0;
     }
     std::printf("[buildings] All building primitives now render as OPAQUE (no alpha blending)\n");
     // Startup texture audit (GL readback, once): mean color + hot-magenta texel
@@ -2376,6 +2403,166 @@ void BuildingGlPass::buildMesh(World& world) {
         std::fflush(stdout);
     }
 
+    // === STREET PROPS (hydrant / bench / bin GLBs on the sidewalk band) ===
+    // Startup only. Sidewalk band = 10.4..12.6 m from the road centre line
+    // (road half 10 + 0.4 curb clearance .. +3 walkway - 0.4 lot clearance).
+    // Positions are constructed inside the band, then validated; asphalt
+    // (<10.4 m of any road line) and lot grass (>12.6 m of every road line)
+    // are both rejected.
+    {
+        std::printf("\n=== [props] PLACEMENT START ===\n");
+        static float bin_mats[kTreeInstanceCap * 16];
+        static float hyd_mats[kTreeInstanceCap * 16];
+        static float ben_mats[kTreeInstanceCap * 16];
+        u32 n_bin = 0, n_hyd = 0, n_ben = 0;
+        u32 bad_band = 0;
+
+        auto road_dist = [](float v) -> float {
+            float f = std::fmod(v, kCityBlockPitch);
+            if (f < 0.f) {
+                f += kCityBlockPitch;
+            }
+            return f < kCityBlockPitch - f ? f : kCityBlockPitch - f;
+        };
+        auto on_walk_band = [&](float x, float z) -> bool {
+            const float dx = road_dist(x);
+            const float dz = road_dist(z);
+            if (dx < 10.4f || dz < 10.4f) {
+                return false; // asphalt
+            }
+            if (dx > 12.6f && dz > 12.6f) {
+                return false; // lot grass
+            }
+            return true;
+        };
+        // Model front (+Z) toward the nearest road centre line.
+        auto prop_yaw = [&](float x, float z) -> float {
+            float fx = std::fmod(x, kCityBlockPitch);
+            if (fx < 0.f) {
+                fx += kCityBlockPitch;
+            }
+            float fz = std::fmod(z, kCityBlockPitch);
+            if (fz < 0.f) {
+                fz += kCityBlockPitch;
+            }
+            const float dx = fx < kCityBlockPitch - fx ? fx : kCityBlockPitch - fx;
+            const float dz = fz < kCityBlockPitch - fz ? fz : kCityBlockPitch - fz;
+            float dirx = 0.f, dirz = 0.f;
+            if (dx <= dz) {
+                dirx = (fx < kCityBlockPitch * 0.5f) ? -1.f : 1.f;
+            } else {
+                dirz = (fz < kCityBlockPitch * 0.5f) ? -1.f : 1.f;
+            }
+            return std::atan2(dirx, dirz);
+        };
+        auto hash2 = [](u32 a, u32 b) -> u32 {
+            u32 h = (a * 73856093u) ^ (b * 19349663u) ^ 83492791u;
+            h ^= h >> 15;
+            h *= 2246822519u;
+            h ^= h >> 13;
+            return h;
+        };
+        auto push_prop = [&](TreeGlb* g, float* mats, u32& n, float x, float z) -> bool {
+            if (!g || g->nprims == 0 || n >= kTreeInstanceCap) {
+                return false;
+            }
+            if (!on_walk_band(x, z)) {
+                ++bad_band;
+                return false;
+            }
+            const float y = kCityPlateauY + 0.05f - tree_up_min(g) * 1.0f;
+            tree_yaw_mat(&mats[n * 16], x, y, z, prop_yaw(x, z), 1.0f, g->z_up);
+            ++n;
+            return true;
+        };
+
+        // Bins ~200: intersection corners (band offset 11.5 both axes).
+        u32 bin_tried = 0;
+        if (bin_glb.nprims > 0) {
+            for (u32 j = 0; j <= kCityBlocks && n_bin < 220u; ++j) {
+                for (u32 i = 0; i <= kCityBlocks && n_bin < 220u; ++i) {
+                    const u32 h = hash2(i, j * 31u + 7u);
+                    if (h % 100u >= 45u) {
+                        continue; // ~45% of intersections -> ~198 bins
+                    }
+                    ++bin_tried;
+                    const float sx = (h & 16u) ? 11.5f : -11.5f;
+                    const float sz = (h & 32u) ? 11.5f : -11.5f;
+                    push_prop(&bin_glb, bin_mats, n_bin,
+                              static_cast<float>(i) * kCityBlockPitch + sx,
+                              static_cast<float>(j) * kCityBlockPitch + sz);
+                }
+            }
+            tree_glb_set_instances(&bin_glb, bin_mats, n_bin);
+        }
+        // Hydrants ~100: EW curbs every ~60 m... every 480 m per road for ~105.
+        u32 hyd_tried = 0;
+        if (hydrant_glb.nprims > 0) {
+            for (u32 j = 0; j <= kCityBlocks && n_hyd < 115u; ++j) {
+                for (u32 k = 0; k < 5u && n_hyd < 115u; ++k) {
+                    ++hyd_tried;
+                    const float x = 60.f + static_cast<float>(k) * 480.f;
+                    const float side = ((j + k) & 1u) ? 11.5f : -11.5f;
+                    push_prop(&hydrant_glb, hyd_mats, n_hyd, x,
+                              static_cast<float>(j) * kCityBlockPitch + side);
+                }
+            }
+            tree_glb_set_instances(&hydrant_glb, hyd_mats, n_hyd);
+        }
+        // Benches ~80: mid-block sidewalk, deterministic edge per block.
+        u32 ben_tried = 0;
+        if (bench_glb.nprims > 0) {
+            for (u32 bz = 0; bz < kCityBlocks && n_ben < 90u; ++bz) {
+                for (u32 bx = 0; bx < kCityBlocks && n_ben < 90u; ++bx) {
+                    const u32 h = hash2(bx * 3u + 1u, bz * 7u + 2u);
+                    if (h % 100u >= 20u) {
+                        continue; // 20% of blocks -> ~80 benches
+                    }
+                    ++ben_tried;
+                    float x = 0.f, z = 0.f;
+                    switch (h & 3u) {
+                    case 0:
+                        x = static_cast<float>(bx) * kCityBlockPitch + 60.f;
+                        z = static_cast<float>(bz) * kCityBlockPitch + 11.5f;
+                        break;
+                    case 1:
+                        x = static_cast<float>(bx) * kCityBlockPitch + 60.f;
+                        z = static_cast<float>(bz + 1u) * kCityBlockPitch - 11.5f;
+                        break;
+                    case 2:
+                        x = static_cast<float>(bx) * kCityBlockPitch + 11.5f;
+                        z = static_cast<float>(bz) * kCityBlockPitch + 60.f;
+                        break;
+                    default:
+                        x = static_cast<float>(bx + 1u) * kCityBlockPitch - 11.5f;
+                        z = static_cast<float>(bz) * kCityBlockPitch + 60.f;
+                        break;
+                    }
+                    push_prop(&bench_glb, ben_mats, n_ben, x, z);
+                }
+            }
+            tree_glb_set_instances(&bench_glb, ben_mats, n_ben);
+        }
+
+        u32 props_loaded = 0;
+        if (hydrant_glb.nprims > 0) {
+            ++props_loaded;
+        }
+        if (bench_glb.nprims > 0) {
+            ++props_loaded;
+        }
+        if (bin_glb.nprims > 0) {
+            ++props_loaded;
+        }
+        std::printf("[props] loaded %d/3, instances bins=%u hydrants=%u benches=%u\n",
+                    props_loaded, n_bin, n_hyd, n_ben);
+        if (bad_band > 0) {
+            std::printf("[props] WARNING: %u placements outside sidewalk band (rejected)\n",
+                        bad_band);
+        }
+        std::fflush(stdout);
+    }
+
     // === CAR TRAFFIC (restored verbatim — untouched behavior) ===
     if (corolla_glb.nprims > 0 || sports_glb.nprims > 0 || suv_glb.nprims > 0) {
         // The models keep their accepted scale/orientation; the traffic plan only hands
@@ -2658,6 +2845,16 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
                     draw_instanced_glb(&warehouse_glb[v], tree_shadow_prog);
                 }
             }
+            // Street props cast shadows too.
+            if (bin_glb.instance_count > 0) {
+                draw_instanced_glb(&bin_glb, tree_shadow_prog);
+            }
+            if (hydrant_glb.instance_count > 0) {
+                draw_instanced_glb(&hydrant_glb, tree_shadow_prog);
+            }
+            if (bench_glb.instance_count > 0) {
+                draw_instanced_glb(&bench_glb, tree_shadow_prog);
+            }
             glUseProgram(shadow_prog);
         }
         glDisable(GL_POLYGON_OFFSET_FILL);
@@ -2825,7 +3022,6 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
         ++drawn;
     }
     const float night = night_glow_amt(time_of_day);
-    const float3 metal{0.18f, 0.18f, 0.20f};
     if (tree_prog) {
         glUseProgram(tree_prog);
         glUniformMatrix4fv(glGetUniformLocation(tree_prog, "view"), 1, GL_FALSE, view);
@@ -2857,6 +3053,16 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
                 draw_instanced_glb(&warehouse_glb[v], tree_prog);
             }
         }
+        // Street props ride the same opaque instanced pass (uNightGlow off).
+        if (bin_glb.instance_count > 0) {
+            draw_instanced_glb(&bin_glb, tree_prog);
+        }
+        if (hydrant_glb.instance_count > 0) {
+            draw_instanced_glb(&hydrant_glb, tree_prog);
+        }
+        if (bench_glb.instance_count > 0) {
+            draw_instanced_glb(&bench_glb, tree_prog);
+        }
         glUniform1f(glGetUniformLocation(tree_prog, "uNightGlow"), 0.f);
         for (u32 m = 0; m < kCarMeshCount; ++m) {
             TreeGlb* cg = car_glb_model(*this, m);
@@ -2882,8 +3088,6 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
         glDisable(GL_BLEND);
         glUseProgram(building_prog);
     }
-    const float sw = kCityStreetWidth * 0.5f + 1.6f;
-    const float gy = kCityPlateauY;
     glBindVertexArray(cube_vao);
     glUniform1i(glGetUniformLocation(building_prog, "uUseTex"), 0);
     glUniform1i(glGetUniformLocation(building_prog, "uAlphaLeaf"), 0);
@@ -2906,44 +3110,8 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
             }
         }
     }
-    for (u32 bz = 0; bz < kCityBlocks; ++bz) {
-        for (u32 bx = 0; bx < kCityBlocks; ++bx) {
-            const float lx = (static_cast<float>(bx) + 0.5f) * kCityBlockPitch;
-            const float lz = (static_cast<float>(bz) + 0.5f) * kCityBlockPitch;
-            if (!near_xz(float3{lx, 0.f, lz}, camera_pos, 160.f)) {
-                continue;
-            }
-            const float sx = static_cast<float>(bx) * kCityBlockPitch + sw;
-            const float sz = static_cast<float>(bz) * kCityBlockPitch + sw;
-            draw_axis_mesh(building_prog, cyl_vao, cyl_count, float3{sx + 4.f, gy, sz + 6.f}, 0.40f, 0.90f,
-                           0.40f, float3{0.18f, 0.22f, 0.16f}, 0.f, 0, 0);
-            draw_axis_mesh(building_prog, cyl_vao, cyl_count, float3{sx + 9.f, gy, sz + 6.f}, 0.40f, 0.90f,
-                           0.40f, float3{0.20f, 0.20f, 0.20f}, 0.f, 0, 0);
-            draw_axis_mesh(building_prog, cyl_vao, cyl_count, float3{sx + 14.f, gy, sz + 6.f}, 0.38f, 0.85f,
-                           0.38f, float3{0.16f, 0.20f, 0.15f}, 0.f, 0, 0);
-            draw_axis_mesh(building_prog, cyl_vao, cyl_count, float3{sx + 3.f, gy, sz + 2.f}, 0.16f, 0.70f, 0.16f,
-                           float3{0.85f, 0.10f, 0.08f}, 0.f, 0, 0);
-            draw_axis_mesh(building_prog, cyl_vao, cyl_count, float3{sx + 3.f, gy + 0.62f, sz + 2.f}, 0.20f,
-                           0.12f, 0.20f, float3{0.75f, 0.08f, 0.06f}, 0.f, 0, 0);
-            draw_axis_mesh(building_prog, cyl_vao, cyl_count, float3{sx + 2.f, gy, sz + 18.f}, 0.16f, 0.70f,
-                           0.16f, float3{0.85f, 0.10f, 0.08f}, 0.f, 0, 0);
-            draw_axis_mesh(building_prog, cyl_vao, cyl_count, float3{sx + 20.f, gy, sz + 2.f}, 0.16f, 0.70f,
-                           0.16f, float3{0.85f, 0.10f, 0.08f}, 0.f, 0, 0);
-            draw_axis_mesh(building_prog, cyl_vao, cyl_count, float3{sx + 1.5f, gy, sz + 1.5f}, 0.06f, 2.5f,
-                           0.06f, metal, 0.f, 0, 0);
-            glBindVertexArray(cube_vao);
-            draw_box(building_prog, float3{sx + 1.5f, gy + 2.45f, sz + 1.5f}, 0.62f, 0.42f, 0.08f,
-                     float3{0.12f, 0.45f, 0.28f}, 0.f);
-            draw_box(building_prog, float3{sx + 22.f, gy, sz + 8.f}, 0.50f, 1.15f, 0.38f, float3{0.12f, 0.28f, 0.62f},
-                     0.f);
-            if (bx + bz > 14) {
-                draw_box(building_prog, float3{sx + 10.f, gy, sz + 14.f}, 1.55f, 0.42f, 0.48f,
-                         float3{0.45f, 0.28f, 0.14f}, 0.f);
-                draw_box(building_prog, float3{sx + 10.f, gy + 0.38f, sz + 14.f}, 1.50f, 0.06f, 0.44f,
-                         float3{0.22f, 0.22f, 0.22f}, 0.f);
-            }
-        }
-    }
+    // NOTE: procedural street furniture (hydrant cylinders, mailbox, bench boxes,
+    // shrubs, sign poles) was deleted here — replaced by instanced GLB props.
     static bool logged_detail = false;
     if (!logged_detail) {
         std::printf("[city] street kit lamps_instanced=%u+%u trees_instanced=%u+%u+%u "
@@ -3029,6 +3197,9 @@ void BuildingGlPass::shutdown() {
         tree_glb_shutdown(&apartment_glb[k]);
         tree_glb_shutdown(&warehouse_glb[k]);
     }
+    tree_glb_shutdown(&hydrant_glb);
+    tree_glb_shutdown(&bench_glb);
+    tree_glb_shutdown(&bin_glb);
     if (g_fallback_white_tex) {
         glDeleteTextures(1, &g_fallback_white_tex);
         g_fallback_white_tex = 0;
