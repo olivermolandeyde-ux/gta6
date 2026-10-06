@@ -2338,7 +2338,7 @@ void BuildingGlPass::buildMesh(World& world) {
                 occ[n_occ++] = {x, z, hx, hz};
             }
         };
-        // Conservative per-type half extents at sc=1 (max over loaded variants,
+        // Conservative per-type half extents at sc=2 (max over loaded variants,
         // yaw-independent square bound) for pre-placement neighbour checks.
         float type_max_sq[3] = {0.f, 0.f, 0.f};
         {
@@ -2354,9 +2354,9 @@ void BuildingGlPass::buildMesh(World& world) {
                         const float m = mx > mz ? mx : mz;
                         mx = mz = m;
                     }
-                    const float half = (mx > mz ? mx : mz) * 0.5f;
-                    if (half > type_max_sq[t]) {
-                        type_max_sq[t] = half;
+                    const float full = (mx > mz ? mx : mz);
+                    if (full > type_max_sq[t]) {
+                        type_max_sq[t] = full;
                     }
                 }
             }
@@ -2407,7 +2407,7 @@ void BuildingGlPass::buildMesh(World& world) {
         auto place_variant_at = [&](float x, float z, float w, float d, u32 id_for_seed,
                                     TreeGlb (&arr)[3], u32* var_n,
                                     float (*var_mats)[kTreeInstanceCap * 16], float yaw,
-                                    const char* what) -> bool {
+                                    const char* what, float min_fit) -> bool {
             u32 variant = id_for_seed % 3u;
             if (arr[variant].nprims == 0) {
                 u32 alt = 3u;
@@ -2430,16 +2430,17 @@ void BuildingGlPass::buildMesh(World& world) {
                 ++lot_fail;
             }
             const TreeGlb* g = &arr[variant];
-            // Natural size city-wide: every placed GLB renders at scale 1.0
-            // (all variants a/b/c, all types — identical windows everywhere).
-            // Lots far smaller than the model (<0.75 fit) still keep their
-            // procedural building.
+            // Doubled city-wide: every placed GLB renders at exactly 2x natural
+            // size (all variants a/b/c, all types). Lots far smaller than twice
+            // the model (<2.0 fit) keep their procedural building, so doubling
+            // can never push a facade onto a road or neighbour (the 2 m occ
+            // check below is the second net).
             const float fit = building_footprint_scale(g, w, d);
-            if (fit < 0.75f) {
-                ++skipped_fit; // lot far smaller than the model — keep procedural
+            if (fit < min_fit) {
+                ++skipped_fit; // lot too small for a doubled model — keep procedural
                 return false;
             }
-            const float sc = 1.f;
+            const float sc = 2.f;
             const float y = kTopY + 0.01f - tree_up_min(g) * sc;
             // Reserve one slot per variant for the --bldg-row lineup when asked.
             const u32 cap = kTreeInstanceCap - (verification_row ? 1u : 0u);
@@ -2477,7 +2478,7 @@ void BuildingGlPass::buildMesh(World& world) {
             float (*var_mats)[kTreeInstanceCap * 16] =
                 (s.type == 0) ? shop_var_mats : ((s.type == 2) ? whs_var_mats : apt_var_mats);
             if (place_variant_at(s.x, s.z, s.w, s.d, 1000u + di, arr, var_n, var_mats, street_facing_yaw(s.x, s.z),
-                                 s.label)) {
+                                 s.label, 0.f)) {
                 std::printf("[buildings] DEBUG: %s placed successfully!\n", s.label);
                 if (s.type == 0) {
                     ++placed_shop;
@@ -2590,7 +2591,7 @@ void BuildingGlPass::buildMesh(World& world) {
                 }
             }
             if (!place_variant_at(c.x, c.z, c.w, c.d, c.id + static_cast<u32>(type) * 7919u,
-                                  arr, var_n, var_mats, yaw, "mass")) {
+                                  arr, var_n, var_mats, yaw, "mass", 2.f)) {
                 return false;
             }
             taken[ci] = 1;
@@ -2729,8 +2730,8 @@ void BuildingGlPass::buildMesh(World& world) {
                         fam_slot[t][1] = var_fp[t][v][1];
                     }
                 }
-                fam_slot[t][0] += 2.5f;
-                fam_slot[t][1] += 2.5f;
+                fam_slot[t][0] = fam_slot[t][0] * 2.f + 2.5f;
+                fam_slot[t][1] = fam_slot[t][1] * 2.f + 2.5f;
             }
             u32 den_shop = 0, den_apt = 0, den_whs = 0;
             u32 den_skip_occ = 0, den_skip_gap = 0, den_skip_mesh = 0, den_skip_cap = 0;
@@ -2830,12 +2831,10 @@ void BuildingGlPass::buildMesh(World& world) {
                                 ++den_skip_occ;
                                 continue;
                             }
-                            // Pick a variant whose NATURAL footprint fits the slot
-                            // (street-facing first, +90 deg fallback); scale stays
-                            // in [0.95,1.05] so windows never change size. No fit =
-                            // courtyard.
-                            const float sc =
-                                0.95f + 0.10f * static_cast<float>(hh % 100u) / 100.f;
+                            // Pick a variant whose DOUBLED footprint fits the slot
+                            // (street-facing first, +90 deg fallback); scale is
+                            // exactly 2x like everywhere else. No fit = courtyard.
+                            const float sc = 2.f;
                             const float yaw0 = street_facing_yaw(cx, cz);
                             u32 variant = 3u;
                             float yaw = yaw0;
@@ -2975,9 +2974,9 @@ void BuildingGlPass::buildMesh(World& world) {
             std::fflush(stdout);
         }
         // Scale audit (startup only): EVERY building instance must carry uniform
-        // scale in [0.95,1.05] (natural size, identical windows city-wide, no
-        // toy copies, no giants). Y must equal kTopY+0.01-up_min*scale. Anything
-        // else (tilt, shear, non-uniform or wrong scale) is logged.
+        // scale exactly 2.0 (doubled city-wide, identical windows everywhere).
+        // Y must equal kTopY+0.01-up_min*scale. Anything else (tilt, shear,
+        // non-uniform or wrong scale) is logged.
         // --bldg-row debug instances are exempt (inspection lineup).
         {
             const TreeGlb* arrs[3] = {shop_glb, apartment_glb, warehouse_glb};
@@ -3012,8 +3011,8 @@ void BuildingGlPass::buildMesh(World& world) {
                             ok = ok && ux == 0.f && uz == 0.f && uy > 0.f;
                         }
                         ok = ok && std::fabs(m[13] - y_exp) < 0.02f;
-                        // Uniform natural size for every instance, no exceptions.
-                        ok = ok && (lx >= 0.95f && lx <= 1.05f);
+                        // Uniform doubled size for every instance, no exceptions.
+                        ok = ok && std::fabs(lx - 2.f) < 1e-3f;
                         if (!ok && violations < 8u) {
                             std::printf("[buildings] MATRIX VIOLATION %s variant %u inst %u at "
                                         "(%.1f, %.1f, %.1f): bad scale/rotation/y\n",
