@@ -1020,6 +1020,11 @@ u32 report_glb_node_rotations(const char* base, const char* label) {
     return rotated;
 }
 
+// Sidewalk darkening tint (one-line brightness knob): sampled pavers are
+// near-white, so scale them to medium concrete gray. Zebra bars stay the
+// brightest white in the street scene.
+const float3 kSidewalkTint{0.52f, 0.52f, 0.50f};
+
 // Shared prop spacing + sidewalk helpers (all prop placement loops).
 // Logic mirrors the original per-block lambdas exactly; hoisted so every prop
 // type shares one taken-list (no cross-type overlaps, old or new).
@@ -1876,6 +1881,8 @@ void BuildingGlPass::buildMesh(World& world) {
                      ring_in);
         std::printf("[city] sidewalk ring: quads=%u (expect %u)\n", ring_in / 6u,
                     kCityBlocks * kCityBlocks * 4u);
+        std::printf("[city] sidewalk tint=(%.2f,%.2f,%.2f)\n", static_cast<double>(kSidewalkTint.x),
+                    static_cast<double>(kSidewalkTint.y), static_cast<double>(kSidewalkTint.z));
         std::fflush(stdout);
     }
 
@@ -3520,7 +3527,8 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
             glBindTexture(GL_TEXTURE_2D, tex_flat_n);
             glUniform1i(glGetUniformLocation(building_prog, "uNormalTex"), 1);
             glUniform1i(glGetUniformLocation(building_prog, "uUseTex"), 1);
-            glUniform3f(glGetUniformLocation(building_prog, "albedo"), 1.f, 1.f, 1.f);
+            glUniform3f(glGetUniformLocation(building_prog, "albedo"), kSidewalkTint.x,
+                        kSidewalkTint.y, kSidewalkTint.z);
         } else {
             glUniform1i(glGetUniformLocation(building_prog, "uUseTex"), 0);
             glUniform3f(glGetUniformLocation(building_prog, "albedo"), 0.55f, 0.55f, 0.55f);
