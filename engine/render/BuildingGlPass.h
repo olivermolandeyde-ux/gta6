@@ -48,6 +48,9 @@ struct BuildingGlPass {
     TreeGlb  hydrant_glb; // props/prop_hydrant_red.glb
     TreeGlb  bench_glb;   // props/prop_bench_wood.glb
     TreeGlb  bin_glb;     // props/prop_bin_metal.glb
+    TreeGlb  mailbox_glb; // props/prop_mailbox_usps.glb
+    TreeGlb  kiosk_glb;   // props/prop_newskiosk_metal.glb
+    TreeGlb  atm_glb;     // props/prop_atm_wall.glb
     bool     verification_row; // sandbox --bldg-row: append 1 instance per variant in a lineup
     // Moving traffic: circuits, agent state, and the per-frame instance matrices.
     CarTraffic car_traffic;

@@ -1004,6 +1004,54 @@ u32 report_glb_node_rotations(const char* base, const char* label) {
     return rotated;
 }
 
+// Shared prop spacing + sidewalk helpers (all prop placement loops).
+// Logic mirrors the original per-block lambdas exactly; hoisted so every prop
+// type shares one taken-list (no cross-type overlaps, old or new).
+constexpr u32 kPropTakenCap = 900;
+float g_prop_taken_xz[kPropTakenCap * 2];
+u32 g_n_prop_taken = 0;
+
+float prop_road_dist(float v) {
+    float f = std::fmod(v, kCityBlockPitch);
+    if (f < 0.f) {
+        f += kCityBlockPitch;
+    }
+    return f < kCityBlockPitch - f ? f : kCityBlockPitch - f;
+}
+
+bool prop_on_walk_band(float x, float z) {
+    const float dx = prop_road_dist(x);
+    const float dz = prop_road_dist(z);
+    if (dx < 10.4f || dz < 10.4f) {
+        return false; // asphalt
+    }
+    if (dx > 12.6f && dz > 12.6f) {
+        return false; // lot grass
+    }
+    return true;
+}
+
+// Model front (+Z) toward the nearest road centre line, snapped to 90 deg.
+float prop_yaw_to_road(float x, float z) {
+    float fx = std::fmod(x, kCityBlockPitch);
+    if (fx < 0.f) {
+        fx += kCityBlockPitch;
+    }
+    float fz = std::fmod(z, kCityBlockPitch);
+    if (fz < 0.f) {
+        fz += kCityBlockPitch;
+    }
+    const float dx = fx < kCityBlockPitch - fx ? fx : kCityBlockPitch - fx;
+    const float dz = fz < kCityBlockPitch - fz ? fz : kCityBlockPitch - fz;
+    float dirx = 0.f, dirz = 0.f;
+    if (dx <= dz) {
+        dirx = (fx < kCityBlockPitch * 0.5f) ? -1.f : 1.f;
+    } else {
+        dirz = (fz < kCityBlockPitch * 0.5f) ? -1.f : 1.f;
+    }
+    return std::atan2(dirx, dirz);
+}
+
 } // namespace
 
 bool BuildingGlPass::init() {
@@ -1022,6 +1070,9 @@ bool BuildingGlPass::init() {
     std::memset(&hydrant_glb, 0, sizeof(hydrant_glb));
     std::memset(&bench_glb, 0, sizeof(bench_glb));
     std::memset(&bin_glb, 0, sizeof(bin_glb));
+    std::memset(&mailbox_glb, 0, sizeof(mailbox_glb));
+    std::memset(&kiosk_glb, 0, sizeof(kiosk_glb));
+    std::memset(&atm_glb, 0, sizeof(atm_glb));
     std::memset(warehouse_glb, 0, sizeof(warehouse_glb));
     std::memset(shop_mats, 0, sizeof(shop_mats));
     std::memset(apartment_mats, 0, sizeof(apartment_mats));
@@ -1369,6 +1420,9 @@ bool BuildingGlPass::init() {
     load_building_model("props/prop_hydrant_red.glb", &hydrant_glb, "prop_hydrant_red");
     load_building_model("props/prop_bench_wood.glb", &bench_glb, "prop_bench_wood");
     load_building_model("props/prop_bin_metal.glb", &bin_glb, "prop_bin_metal");
+    load_building_model("props/prop_mailbox_usps.glb", &mailbox_glb, "prop_mailbox_usps");
+    load_building_model("props/prop_newskiosk_metal.glb", &kiosk_glb, "prop_newskiosk_metal");
+    load_building_model("props/prop_atm_wall.glb", &atm_glb, "prop_atm_wall");
     if (hydrant_glb.nprims == 0) {
         std::printf("[props] missing prop_hydrant_red (skipped, no fallback)\n");
     }
@@ -1377,6 +1431,15 @@ bool BuildingGlPass::init() {
     }
     if (bin_glb.nprims == 0) {
         std::printf("[props] missing prop_bin_metal (skipped, no fallback)\n");
+    }
+    if (mailbox_glb.nprims == 0) {
+        std::printf("[props] missing prop_mailbox_usps (skipped, no fallback)\n");
+    }
+    if (kiosk_glb.nprims == 0) {
+        std::printf("[props] missing prop_newskiosk_metal (skipped, no fallback)\n");
+    }
+    if (atm_glb.nprims == 0) {
+        std::printf("[props] missing prop_atm_wall (skipped, no fallback)\n");
     }
 
     // Summary
@@ -1420,6 +1483,25 @@ bool BuildingGlPass::init() {
     }
     for (u32 p = 0; p < bin_glb.nprims; ++p) {
         bin_glb.prims[p].alpha_mask = 0;
+    }
+    for (u32 p = 0; p < mailbox_glb.nprims; ++p) {
+        mailbox_glb.prims[p].alpha_mask = 0;
+    }
+    for (u32 p = 0; p < kiosk_glb.nprims; ++p) {
+        kiosk_glb.prims[p].alpha_mask = 0;
+    }
+    for (u32 p = 0; p < atm_glb.nprims; ++p) {
+        atm_glb.prims[p].alpha_mask = 0;
+    }
+    // ATM night screen: emissive comes free if any prim carries tex_emit.
+    {
+        bool atm_emit = false;
+        for (u32 p = 0; p < atm_glb.nprims && !atm_emit; ++p) {
+            atm_emit = atm_glb.prims[p].tex_emit != 0;
+        }
+        if (atm_glb.nprims > 0 && !atm_emit) {
+            std::printf("[props] ATM has no emissive texture — screen will not glow at night\n");
+        }
     }
     std::printf("[buildings] All building primitives now render as OPAQUE (no alpha blending)\n");
     // Startup texture audit (GL readback, once): mean color + hot-magenta texel
@@ -2416,10 +2498,10 @@ void BuildingGlPass::buildMesh(World& world) {
         static float ben_mats[kTreeInstanceCap * 16];
         u32 n_bin = 0, n_hyd = 0, n_ben = 0;
         u32 bad_band = 0, too_close = 0;
-        // Every placed prop (all three types) lands here: 4 m minimum spacing
-        // kills hydrant-in-bench overlaps no matter which loop placed first.
-        static float prop_taken_xz[460 * 2];
-        u32 n_prop_xz = 0;
+        // Every placed prop (all types, both placement blocks) lands in the
+        // shared taken-list: minimum spacing kills overlaps no matter which
+        // loop placed first.
+        g_n_prop_taken = 0;
 
         auto road_dist = [](float v) -> float {
             float f = std::fmod(v, kCityBlockPitch);
@@ -2489,7 +2571,8 @@ void BuildingGlPass::buildMesh(World& world) {
         // Sidewalk surface is the street mesh top (plateau + 0.25); ground props
         // 1 cm above it. The old plateau + 0.05 buried them 20 cm deep.
         auto push_prop = [&](TreeGlb* g, float* mats, u32& n, float x, float z, float sc,
-                             int z_up, float target_h, const char* pname) -> bool {
+                             int z_up, float target_h, const char* pname,
+                             float min_d2) -> bool {
             if (!g || g->nprims == 0 || n >= kTreeInstanceCap) {
                 return false;
             }
@@ -2499,10 +2582,10 @@ void BuildingGlPass::buildMesh(World& world) {
             }
             {
                 bool clash = false;
-                for (u32 i = 0; i < n_prop_xz; ++i) {
-                    const float pdx = x - prop_taken_xz[i * 2u];
-                    const float pdz = z - prop_taken_xz[i * 2u + 1u];
-                    if (pdx * pdx + pdz * pdz < 16.f) {
+                for (u32 i = 0; i < g_n_prop_taken; ++i) {
+                    const float pdx = x - g_prop_taken_xz[i * 2u];
+                    const float pdz = z - g_prop_taken_xz[i * 2u + 1u];
+                    if (pdx * pdx + pdz * pdz < min_d2) {
                         clash = true;
                         break;
                     }
@@ -2530,10 +2613,10 @@ void BuildingGlPass::buildMesh(World& world) {
                 }
             }
             ++n;
-            if (n_prop_xz < 460u) {
-                prop_taken_xz[n_prop_xz * 2u] = x;
-                prop_taken_xz[n_prop_xz * 2u + 1u] = z;
-                ++n_prop_xz;
+            if (g_n_prop_taken < kPropTakenCap) {
+                g_prop_taken_xz[g_n_prop_taken * 2u] = x;
+                g_prop_taken_xz[g_n_prop_taken * 2u + 1u] = z;
+                ++g_n_prop_taken;
             }
             return true;
         };
@@ -2554,7 +2637,7 @@ void BuildingGlPass::buildMesh(World& world) {
                     push_prop(&bin_glb, bin_mats, n_bin,
                               static_cast<float>(i) * kCityBlockPitch + sx,
                               static_cast<float>(j) * kCityBlockPitch + sz, sc_bin,
-                              bin_glb.z_up, 2.4f, "bin");
+                              bin_glb.z_up, 2.4f, "bin", 16.f);
                 }
             }
             tree_glb_set_instances(&bin_glb, bin_mats, n_bin);
@@ -2569,7 +2652,7 @@ void BuildingGlPass::buildMesh(World& world) {
                     const float side = ((j + k) & 1u) ? 10.8f : -10.8f;
                     push_prop(&hydrant_glb, hyd_mats, n_hyd, x,
                               static_cast<float>(j) * kCityBlockPitch + side, sc_hyd,
-                              hydrant_glb.z_up, 2.0f, "hydrant");
+                              hydrant_glb.z_up, 2.0f, "hydrant", 16.f);
                 }
             }
             tree_glb_set_instances(&hydrant_glb, hyd_mats, n_hyd);
@@ -2605,7 +2688,7 @@ void BuildingGlPass::buildMesh(World& world) {
                     }
                     push_prop(&bench_glb, ben_mats, n_ben, x, z, sc_ben,
                               0, 1.9f,
-                              "bench"); // flat as authored; ignore z_up=2 misdetect
+                              "bench", 16.f); // flat as authored; ignore z_up=2 misdetect
                 }
             }
             tree_glb_set_instances(&bench_glb, ben_mats, n_ben);
@@ -2690,6 +2773,236 @@ void BuildingGlPass::buildMesh(World& world) {
             std::printf("[props] spacing: %u candidates rejected within 4 m of another prop\n",
                         too_close);
         }
+        std::fflush(stdout);
+    }
+
+    // === STREET PROPS 2 (mailbox / kiosk / atm on the sidewalk band) ===
+    // Same pipeline as bins/hydrants/benches above: deterministic hash, tree_prog
+    // + shadow pass, shared taken-list (1.5 m vs every placed prop, old and new).
+    // NOTE: y uses sidewalk-top grounding (+0.26), same as the other props — the
+    // street mesh surface is plateau + 0.25 and +0.05 would bury them 20 cm.
+    {
+        std::printf("\n=== [props] PLACEMENT 2 START ===\n");
+        static float mb_mats[kTreeInstanceCap * 16];
+        static float ki_mats[kTreeInstanceCap * 16];
+        static float atm_mats[kTreeInstanceCap * 16];
+        u32 n_mb = 0, n_ki = 0, n_atm = 0;
+        // True-scale models (mailbox 0.4x1.2, kiosk 0.5x1.4, atm 0.6x1.3):
+        // bbox-fit scale comes out ~1.0, asserted per instance below.
+        const float sc_mb = 1.0f;
+        const float sc_ki = 1.0f;
+        const float sc_atm = 1.0f;
+        std::printf("[props] scales2: mailbox=%.3f kiosk=%.3f atm=%.3f (true-scale models)\n",
+                    static_cast<double>(sc_mb), static_cast<double>(sc_ki),
+                    static_cast<double>(sc_atm));
+        u32 mism2_logged = 0, mism2_total = 0;
+
+        auto hash3 = [](u32 a, u32 b) -> u32 {
+            u32 h = (a * 73856093u) ^ (b * 19349663u) ^ 1965533753u;
+            h ^= h >> 15;
+            h *= 2246822519u;
+            h ^= h >> 13;
+            return h;
+        };
+        auto push_prop2 = [&](TreeGlb* g, float* mats, u32& n, float x, float z, float sc,
+                              int z_up, float target_h, const char* pname) -> bool {
+            if (!g || g->nprims == 0 || n >= kTreeInstanceCap) {
+                return false;
+            }
+            if (x < 0.f || x > kCityExtentM || z < 0.f || z > kCityExtentM) {
+                return false; // outside the city
+            }
+            if (!prop_on_walk_band(x, z)) {
+                return false; // asphalt or lot grass
+            }
+            for (u32 i = 0; i < g_n_prop_taken; ++i) {
+                const float pdx = x - g_prop_taken_xz[i * 2u];
+                const float pdz = z - g_prop_taken_xz[i * 2u + 1u];
+                if (pdx * pdx + pdz * pdz < 2.25f) {
+                    return false; // < 1.5 m from an placed prop (any type)
+                }
+            }
+            const float up0 = (z_up == 0) ? g->ymin : tree_up_min(g);
+            const float y = kCityPlateauY + 0.26f - up0 * sc;
+            tree_yaw_mat(&mats[n * 16], x, y, z, prop_yaw_to_road(x, z), sc, z_up);
+            const float up_ext = (z_up == 0) ? (g->ymax - g->ymin)
+                                 : (z_up == 1) ? (g->zmax - g->zmin)
+                                               : (g->xmax - g->xmin);
+            const float got_h = up_ext * sc;
+            if (target_h > 0.f && std::fabs(got_h - target_h) > 0.10f * target_h) {
+                ++mism2_total;
+                if (mism2_logged < 5u) {
+                    std::printf("[props] SCALE MISMATCH %s got=%.2f want=%.2f (x=%.1f z=%.1f)\n",
+                                pname, static_cast<double>(got_h), static_cast<double>(target_h),
+                                static_cast<double>(x), static_cast<double>(z));
+                    ++mism2_logged;
+                }
+            }
+            ++n;
+            if (g_n_prop_taken < kPropTakenCap) {
+                g_prop_taken_xz[g_n_prop_taken * 2u] = x;
+                g_prop_taken_xz[g_n_prop_taken * 2u + 1u] = z;
+                ++g_n_prop_taken;
+            }
+            return true;
+        };
+
+        // Mailboxes ~60: intersection corners (tucked 11.9 diagonal, like bins).
+        if (mailbox_glb.nprims > 0) {
+            for (u32 j = 0; j <= kCityBlocks && n_mb < 65u; ++j) {
+                for (u32 i = 0; i <= kCityBlocks && n_mb < 65u; ++i) {
+                    const u32 h = hash3(i, j);
+                    if (h % 100u >= 15u) {
+                        continue;
+                    }
+                    const float x = static_cast<float>(i) * kCityBlockPitch +
+                                    ((h & 64u) ? 11.9f : -11.9f);
+                    const float z = static_cast<float>(j) * kCityBlockPitch +
+                                    ((h & 128u) ? 11.9f : -11.9f);
+                    push_prop2(&mailbox_glb, mb_mats, n_mb, x, z, sc_mb, mailbox_glb.z_up,
+                               1.2f, "mailbox");
+                }
+            }
+            tree_glb_set_instances(&mailbox_glb, mb_mats, n_mb);
+        }
+        // Kiosks ~40: mid-block sidewalk, quarter points (benches sit at centers).
+        if (kiosk_glb.nprims > 0) {
+            for (u32 bz = 0; bz < kCityBlocks && n_ki < 45u; ++bz) {
+                for (u32 bx = 0; bx < kCityBlocks && n_ki < 45u; ++bx) {
+                    const u32 h = hash3(bx * 5u + 3u, bz * 11u + 5u);
+                    if (h % 100u >= 10u) {
+                        continue;
+                    }
+                    float x = 0.f, z = 0.f;
+                    const float along = (h & 4u) ? 30.f : 90.f;
+                    switch (h & 3u) {
+                    case 0:
+                        x = static_cast<float>(bx) * kCityBlockPitch + along;
+                        z = static_cast<float>(bz) * kCityBlockPitch + 10.8f;
+                        break;
+                    case 1:
+                        x = static_cast<float>(bx) * kCityBlockPitch + along;
+                        z = static_cast<float>(bz + 1u) * kCityBlockPitch - 10.8f;
+                        break;
+                    case 2:
+                        x = static_cast<float>(bx) * kCityBlockPitch + 10.8f;
+                        z = static_cast<float>(bz) * kCityBlockPitch + along;
+                        break;
+                    default:
+                        x = static_cast<float>(bx + 1u) * kCityBlockPitch - 10.8f;
+                        z = static_cast<float>(bz) * kCityBlockPitch + along;
+                        break;
+                    }
+                    push_prop2(&kiosk_glb, ki_mats, n_ki, x, z, sc_ki, kiosk_glb.z_up,
+                               1.4f, "kiosk");
+                }
+            }
+            tree_glb_set_instances(&kiosk_glb, ki_mats, n_ki);
+        }
+        // ATMs ~30: lot-edge line (12.4, back toward the building), street-facing.
+        if (atm_glb.nprims > 0) {
+            for (u32 bz = 0; bz < kCityBlocks && n_atm < 35u; ++bz) {
+                for (u32 bx = 0; bx < kCityBlocks && n_atm < 35u; ++bx) {
+                    const u32 h = hash3(bx * 7u + 9u, bz * 13u + 4u);
+                    if (h % 100u >= 10u) {
+                        continue;
+                    }
+                    float x = 0.f, z = 0.f;
+                    switch (h & 3u) {
+                    case 0:
+                        x = static_cast<float>(bx) * kCityBlockPitch + 60.f;
+                        z = static_cast<float>(bz) * kCityBlockPitch + 12.4f;
+                        break;
+                    case 1:
+                        x = static_cast<float>(bx) * kCityBlockPitch + 60.f;
+                        z = static_cast<float>(bz + 1u) * kCityBlockPitch - 12.4f;
+                        break;
+                    case 2:
+                        x = static_cast<float>(bx) * kCityBlockPitch + 12.4f;
+                        z = static_cast<float>(bz) * kCityBlockPitch + 60.f;
+                        break;
+                    default:
+                        x = static_cast<float>(bx + 1u) * kCityBlockPitch - 12.4f;
+                        z = static_cast<float>(bz) * kCityBlockPitch + 60.f;
+                        break;
+                    }
+                    push_prop2(&atm_glb, atm_mats, n_atm, x, z, sc_atm, atm_glb.z_up,
+                               1.3f, "atm");
+                }
+            }
+            tree_glb_set_instances(&atm_glb, atm_mats, n_atm);
+        }
+
+        // World-size check for the new three (same W x D x H format as trio one).
+        {
+            float mw = 0.f, md = 0.f, mh = 0.f, kw = 0.f, kd = 0.f, kh = 0.f, aw = 0.f,
+                  ad = 0.f, ah = 0.f;
+            auto wsize = [](const TreeGlb* g, const float* m, float& w, float& d,
+                            float& h) {
+                float mnx = 1e9f, mxx = -1e9f, mnz = 1e9f, mxz = -1e9f, mny = 1e9f,
+                      mxy = -1e9f;
+                for (u32 c = 0; c < 8u; ++c) {
+                    const float px = (c & 1u) ? g->xmax : g->xmin;
+                    const float py = (c & 2u) ? g->ymax : g->ymin;
+                    const float pz = (c & 4u) ? g->zmax : g->zmin;
+                    const float wx = m[0] * px + m[4] * py + m[8] * pz + m[12];
+                    const float wy = m[1] * px + m[5] * py + m[9] * pz + m[13];
+                    const float wz = m[2] * px + m[6] * py + m[10] * pz + m[14];
+                    if (wx < mnx) {
+                        mnx = wx;
+                    }
+                    if (wx > mxx) {
+                        mxx = wx;
+                    }
+                    if (wy < mny) {
+                        mny = wy;
+                    }
+                    if (wy > mxy) {
+                        mxy = wy;
+                    }
+                    if (wz < mnz) {
+                        mnz = wz;
+                    }
+                    if (wz > mxz) {
+                        mxz = wz;
+                    }
+                }
+                w = mxx - mnx;
+                d = mxz - mnz;
+                h = mxy - mny;
+            };
+            if (n_mb > 0) {
+                wsize(&mailbox_glb, mb_mats, mw, md, mh);
+            }
+            if (n_ki > 0) {
+                wsize(&kiosk_glb, ki_mats, kw, kd, kh);
+            }
+            if (n_atm > 0) {
+                wsize(&atm_glb, atm_mats, aw, ad, ah);
+            }
+            std::printf("[props] world size2 mailbox=%.2fx%.2fx%.2f kiosk=%.2fx%.2fx%.2f "
+                        "atm=%.2fx%.2fx%.2f\n",
+                        static_cast<double>(mw), static_cast<double>(md), static_cast<double>(mh),
+                        static_cast<double>(kw), static_cast<double>(kd), static_cast<double>(kh),
+                        static_cast<double>(aw), static_cast<double>(ad), static_cast<double>(ah));
+        }
+        if (mism2_total > mism2_logged) {
+            std::printf("[props] SCALE MISMATCH total %u instances (+%u above)\n", mism2_total,
+                        mism2_total - mism2_logged);
+        }
+
+        u32 props2_loaded = 0;
+        if (mailbox_glb.nprims > 0) {
+            ++props2_loaded;
+        }
+        if (kiosk_glb.nprims > 0) {
+            ++props2_loaded;
+        }
+        if (atm_glb.nprims > 0) {
+            ++props2_loaded;
+        }
+        std::printf("[props] loaded %d/3 more, instances mailbox=%u kiosk=%u atm=%u\n",
+                    props2_loaded, n_mb, n_ki, n_atm);
         std::fflush(stdout);
     }
 
@@ -2985,6 +3298,15 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
             if (bench_glb.instance_count > 0) {
                 draw_instanced_glb(&bench_glb, tree_shadow_prog);
             }
+            if (mailbox_glb.instance_count > 0) {
+                draw_instanced_glb(&mailbox_glb, tree_shadow_prog);
+            }
+            if (kiosk_glb.instance_count > 0) {
+                draw_instanced_glb(&kiosk_glb, tree_shadow_prog);
+            }
+            if (atm_glb.instance_count > 0) {
+                draw_instanced_glb(&atm_glb, tree_shadow_prog);
+            }
             glUseProgram(shadow_prog);
         }
         glDisable(GL_POLYGON_OFFSET_FILL);
@@ -3193,6 +3515,15 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
         if (bench_glb.instance_count > 0) {
             draw_instanced_glb(&bench_glb, tree_prog);
         }
+        if (mailbox_glb.instance_count > 0) {
+            draw_instanced_glb(&mailbox_glb, tree_prog);
+        }
+        if (kiosk_glb.instance_count > 0) {
+            draw_instanced_glb(&kiosk_glb, tree_prog);
+        }
+        if (atm_glb.instance_count > 0) {
+            draw_instanced_glb(&atm_glb, tree_prog);
+        }
         glUniform1f(glGetUniformLocation(tree_prog, "uNightGlow"), 0.f);
         for (u32 m = 0; m < kCarMeshCount; ++m) {
             TreeGlb* cg = car_glb_model(*this, m);
@@ -3330,6 +3661,9 @@ void BuildingGlPass::shutdown() {
     tree_glb_shutdown(&hydrant_glb);
     tree_glb_shutdown(&bench_glb);
     tree_glb_shutdown(&bin_glb);
+    tree_glb_shutdown(&mailbox_glb);
+    tree_glb_shutdown(&kiosk_glb);
+    tree_glb_shutdown(&atm_glb);
     if (g_fallback_white_tex) {
         glDeleteTextures(1, &g_fallback_white_tex);
         g_fallback_white_tex = 0;
