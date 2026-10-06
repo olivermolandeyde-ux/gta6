@@ -68,7 +68,9 @@ void main() {
     float crossZ = (1.0 - step(10.0, dd.x)) * step(10.5, dd.y) * (1.0 - step(15.5, dd.y));
     float crossX = (1.0 - step(10.0, dd.y)) * step(10.5, dd.x) * (1.0 - step(15.5, dd.x));
     curbMask *= (1.0 - max(crossZ, crossX));
+    // Same gap for the white edge line: it must not run through the zebra bars.
     float edgeLine = (1.0 - step(0.008, abs(ax - 0.355))) * (1.0 - sidewalkMask);
+    edgeLine *= (1.0 - max(bandZ, bandX));
 
     vec3 c = mix(asphalt, curb, curbMask);
     c = mix(c, sidewalk, sidewalkMask);
