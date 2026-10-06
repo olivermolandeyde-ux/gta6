@@ -2788,10 +2788,10 @@ void BuildingGlPass::buildMesh(World& world) {
         static float atm_mats[kTreeInstanceCap * 16];
         u32 n_mb = 0, n_ki = 0, n_atm = 0;
         // True-scale models (mailbox 0.4x1.2, kiosk 0.5x1.4, atm 0.6x1.3):
-        // bbox-fit scale comes out ~1.0, asserted per instance below.
-        const float sc_mb = 1.0f;
-        const float sc_ki = 1.0f;
-        const float sc_atm = 1.0f;
+        // 2.2x oversize like the old trio so they read at street distance.
+        const float sc_mb = 2.6f / max_of(0.001f, mailbox_glb.ymax - mailbox_glb.ymin);
+        const float sc_ki = 3.0f / max_of(0.001f, kiosk_glb.ymax - kiosk_glb.ymin);
+        const float sc_atm = 2.8f / max_of(0.001f, atm_glb.ymax - atm_glb.ymin);
         std::printf("[props] scales2: mailbox=%.3f kiosk=%.3f atm=%.3f (true-scale models)\n",
                     static_cast<double>(sc_mb), static_cast<double>(sc_ki),
                     static_cast<double>(sc_atm));
@@ -2860,7 +2860,7 @@ void BuildingGlPass::buildMesh(World& world) {
                     const float z = static_cast<float>(j) * kCityBlockPitch +
                                     ((h & 128u) ? 11.9f : -11.9f);
                     push_prop2(&mailbox_glb, mb_mats, n_mb, x, z, sc_mb, mailbox_glb.z_up,
-                               1.2f, "mailbox");
+                               2.6f, "mailbox");
                 }
             }
             tree_glb_set_instances(&mailbox_glb, mb_mats, n_mb);
@@ -2894,7 +2894,7 @@ void BuildingGlPass::buildMesh(World& world) {
                         break;
                     }
                     push_prop2(&kiosk_glb, ki_mats, n_ki, x, z, sc_ki, kiosk_glb.z_up,
-                               1.4f, "kiosk");
+                               3.0f, "kiosk");
                 }
             }
             tree_glb_set_instances(&kiosk_glb, ki_mats, n_ki);
@@ -2927,7 +2927,7 @@ void BuildingGlPass::buildMesh(World& world) {
                         break;
                     }
                     push_prop2(&atm_glb, atm_mats, n_atm, x, z, sc_atm, atm_glb.z_up,
-                               1.3f, "atm");
+                               2.8f, "atm");
                 }
             }
             tree_glb_set_instances(&atm_glb, atm_mats, n_atm);
