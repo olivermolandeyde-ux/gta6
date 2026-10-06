@@ -2462,28 +2462,30 @@ void BuildingGlPass::buildMesh(World& world) {
             h ^= h >> 13;
             return h;
         };
-        // Real-world prop sizes from the model bounding boxes (target / model):
-        // bin 1.0 m tall, hydrant 0.8 m tall, bench 1.8 m long. All three are
-        // authored at real size, so these compute to ~1.0 — logged to prove it.
+        // Forced real-world prop sizes (target / model bbox), slightly oversized
+        // so props read at street distance: bin 1.2 m tall, hydrant 1.0 m tall,
+        // bench 2.2 m long. The scale is written into every instance matrix
+        // below (never just computed) and asserted per instance.
         // Bench z_up is forced to 0 (flat, as authored): the loader's long-axis
         // heuristic misfires on the 1.8 m bench (z_up=2) and tree_yaw_mat would
         // stand it on its end; no Rx needed, its local up is already +Y.
         const float sc_bin =
-            1.0f / max_of(0.001f, bin_glb.ymax - bin_glb.ymin);
+            1.2f / max_of(0.001f, bin_glb.ymax - bin_glb.ymin);
         const float sc_hyd =
-            0.8f / max_of(0.001f, hydrant_glb.ymax - hydrant_glb.ymin);
+            1.0f / max_of(0.001f, hydrant_glb.ymax - hydrant_glb.ymin);
         const float bench_len =
             (bench_glb.xmax - bench_glb.xmin) > (bench_glb.zmax - bench_glb.zmin)
                 ? (bench_glb.xmax - bench_glb.xmin)
                 : (bench_glb.zmax - bench_glb.zmin);
-        const float sc_ben = 1.8f / max_of(0.001f, bench_len);
-        std::printf("[props] scales: bin=%.3f hydrant=%.3f bench=%.3f (target/model bbox)\n",
+        const float sc_ben = 2.2f / max_of(0.001f, bench_len);
+        std::printf("[props] scales: bin=%.3f hydrant=%.3f bench=%.3f (forced target/model bbox)\n",
                     static_cast<double>(sc_bin), static_cast<double>(sc_hyd),
                     static_cast<double>(sc_ben));
+        u32 mism_logged = 0, mism_total = 0;
         // Sidewalk surface is the street mesh top (plateau + 0.25); ground props
         // 1 cm above it. The old plateau + 0.05 buried them 20 cm deep.
         auto push_prop = [&](TreeGlb* g, float* mats, u32& n, float x, float z, float sc,
-                             int z_up) -> bool {
+                             int z_up, float target_h, const char* pname) -> bool {
             if (!g || g->nprims == 0 || n >= kTreeInstanceCap) {
                 return false;
             }
@@ -2494,6 +2496,20 @@ void BuildingGlPass::buildMesh(World& world) {
             const float up0 = (z_up == 0) ? g->ymin : tree_up_min(g);
             const float y = kCityPlateauY + 0.26f - up0 * sc;
             tree_yaw_mat(&mats[n * 16], x, y, z, prop_yaw(x, z), sc, z_up);
+            // Assert the written matrix really yields the target world height.
+            const float up_ext = (z_up == 0) ? (g->ymax - g->ymin)
+                                 : (z_up == 1) ? (g->zmax - g->zmin)
+                                               : (g->xmax - g->xmin);
+            const float got_h = up_ext * sc;
+            if (target_h > 0.f && std::fabs(got_h - target_h) > 0.10f * target_h) {
+                ++mism_total;
+                if (mism_logged < 5u) {
+                    std::printf("[props] SCALE MISMATCH %s got=%.2f want=%.2f (x=%.1f z=%.1f)\n",
+                                pname, static_cast<double>(got_h), static_cast<double>(target_h),
+                                static_cast<double>(x), static_cast<double>(z));
+                    ++mism_logged;
+                }
+            }
             ++n;
             return true;
         };
@@ -2513,7 +2529,7 @@ void BuildingGlPass::buildMesh(World& world) {
                     push_prop(&bin_glb, bin_mats, n_bin,
                               static_cast<float>(i) * kCityBlockPitch + sx,
                               static_cast<float>(j) * kCityBlockPitch + sz, sc_bin,
-                              bin_glb.z_up);
+                              bin_glb.z_up, 1.2f, "bin");
                 }
             }
             tree_glb_set_instances(&bin_glb, bin_mats, n_bin);
@@ -2528,7 +2544,7 @@ void BuildingGlPass::buildMesh(World& world) {
                     const float side = ((j + k) & 1u) ? 11.5f : -11.5f;
                     push_prop(&hydrant_glb, hyd_mats, n_hyd, x,
                               static_cast<float>(j) * kCityBlockPitch + side, sc_hyd,
-                              hydrant_glb.z_up);
+                              hydrant_glb.z_up, 1.0f, "hydrant");
                 }
             }
             tree_glb_set_instances(&hydrant_glb, hyd_mats, n_hyd);
@@ -2563,10 +2579,70 @@ void BuildingGlPass::buildMesh(World& world) {
                         break;
                     }
                     push_prop(&bench_glb, ben_mats, n_ben, x, z, sc_ben,
-                              0); // flat as authored; ignore z_up=2 misdetect
+                              0, 1.0f,
+                              "bench"); // flat as authored; ignore z_up=2 misdetect
                 }
             }
             tree_glb_set_instances(&bench_glb, ben_mats, n_ben);
+        }
+
+        // Measure instance 0 of each prop in world space (corners through the
+        // written matrix) — the real numbers, not the inputs.
+        auto world_size = [](const TreeGlb* g, const float* m, float& w, float& d,
+                             float& h) {
+            float mnx = 1e9f, mxx = -1e9f, mnz = 1e9f, mxz = -1e9f, mny = 1e9f,
+                  mxy = -1e9f;
+            for (u32 c = 0; c < 8u; ++c) {
+                const float px = (c & 1u) ? g->xmax : g->xmin;
+                const float py = (c & 2u) ? g->ymax : g->ymin;
+                const float pz = (c & 4u) ? g->zmax : g->zmin;
+                const float wx = m[0] * px + m[4] * py + m[8] * pz + m[12];
+                const float wy = m[1] * px + m[5] * py + m[9] * pz + m[13];
+                const float wz = m[2] * px + m[6] * py + m[10] * pz + m[14];
+                if (wx < mnx) {
+                    mnx = wx;
+                }
+                if (wx > mxx) {
+                    mxx = wx;
+                }
+                if (wy < mny) {
+                    mny = wy;
+                }
+                if (wy > mxy) {
+                    mxy = wy;
+                }
+                if (wz < mnz) {
+                    mnz = wz;
+                }
+                if (wz > mxz) {
+                    mxz = wz;
+                }
+            }
+            w = mxx - mnx;
+            d = mxz - mnz;
+            h = mxy - mny;
+        };
+        {
+            float bw = 0.f, bd = 0.f, bh = 0.f, ew = 0.f, ed = 0.f, eh = 0.f, hw = 0.f,
+                  hd = 0.f, hh = 0.f;
+            if (n_bin > 0) {
+                world_size(&bin_glb, bin_mats, bw, bd, bh);
+            }
+            if (n_ben > 0) {
+                world_size(&bench_glb, ben_mats, ew, ed, eh);
+            }
+            if (n_hyd > 0) {
+                world_size(&hydrant_glb, hyd_mats, hw, hd, hh);
+            }
+            std::printf("[props] world size bin=%.2fx%.2fx%.2f bench=%.2fx%.2fx%.2f "
+                        "hydrant=%.2fx%.2fx%.2f\n",
+                        static_cast<double>(bw), static_cast<double>(bd), static_cast<double>(bh),
+                        static_cast<double>(ew), static_cast<double>(ed), static_cast<double>(eh),
+                        static_cast<double>(hw), static_cast<double>(hd), static_cast<double>(hh));
+        }
+        if (mism_total > mism_logged) {
+            std::printf("[props] SCALE MISMATCH total %u instances (+%u above)\n", mism_total,
+                        mism_total - mism_logged);
         }
 
         u32 props_loaded = 0;
