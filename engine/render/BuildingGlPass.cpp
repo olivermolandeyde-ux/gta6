@@ -189,8 +189,8 @@ constexpr const char* kStFs =
     "  float dash=step(0.45,fract(UV.y*8.0))*(1.0-step(0.04,abs(UV.x-0.5)));\n"
     "  vec2 gmod=min(mod(FragPos.xz,120.0),120.0-mod(FragPos.xz,120.0));\n"
     "  float inBox=(1.0-step(11.0,gmod.x))*(1.0-step(11.0,gmod.y));\n"
-    "  float bandZ=(1.0-step(9.5,gmod.x))*step(10.5,gmod.y)*(1.0-step(17.0,gmod.y));\n"
-    "  float bandX=(1.0-step(9.5,gmod.y))*step(10.5,gmod.x)*(1.0-step(17.0,gmod.x));\n"
+    "  float bandZ=(1.0-step(10.0,gmod.x))*step(10.5,gmod.y)*(1.0-step(27.5,gmod.y));\n"
+    "  float bandX=(1.0-step(10.0,gmod.y))*step(10.5,gmod.x)*(1.0-step(27.5,gmod.x));\n"
     "  dash*=1.0-max(inBox,max(bandZ,bandX));\n"
     "  vec3 c=mix(asphalt,sidewalk,edge); c=mix(c,paint,dash); FragColor=vec4(c,1.0); }\n";
 
@@ -3541,15 +3541,17 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
                 continue;
             }
             const float road_half = kCityStreetWidth * 0.5f; // 10
-            const float bar_len = kCityStreetWidth - 2.f * 1.0f; // 18: curb-to-curb minus inset
+            const float bar_len = kCityStreetWidth; // 20: full curb-to-curb
             const float start = road_half + 1.0f; // 11: just outside the junction box
             const float3 xw{0.94f, 0.94f, 0.94f};
-            for (u32 s = 0; s < 6; ++s) {
-                const float o = static_cast<float>(s) * 1.0f; // 0.5 thick + 0.5 gap
-                draw_box(building_prog, float3{cx, stripe_y, cz + start + o}, bar_len, 0.03f, 0.50f, xw, 0.f);
-                draw_box(building_prog, float3{cx, stripe_y, cz - start - o}, bar_len, 0.03f, 0.50f, xw, 0.f);
-                draw_box(building_prog, float3{cx + start + o, stripe_y, cz}, 0.50f, 0.03f, bar_len, xw, 0.f);
-                draw_box(building_prog, float3{cx - start - o, stripe_y, cz}, 0.50f, 0.03f, bar_len, xw, 0.f);
+            for (u32 s = 0; s < 5; ++s) {
+                const float o = static_cast<float>(s) * 3.5f; // 2.0 stripe + 1.5 gap
+                // N/S approaches: bars long in X (across the road), thick in Z.
+                draw_box(building_prog, float3{cx, stripe_y, cz + start + o}, bar_len, 0.05f, 2.0f, xw, 0.f);
+                draw_box(building_prog, float3{cx, stripe_y, cz - start - o}, bar_len, 0.05f, 2.0f, xw, 0.f);
+                // E/W approaches: bars long in Z, thick in X.
+                draw_box(building_prog, float3{cx + start + o, stripe_y, cz}, 2.0f, 0.05f, bar_len, xw, 0.f);
+                draw_box(building_prog, float3{cx - start - o, stripe_y, cz}, 2.0f, 0.05f, bar_len, xw, 0.f);
             }
         }
     }
