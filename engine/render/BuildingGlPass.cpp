@@ -1870,6 +1870,61 @@ void BuildingGlPass::buildMesh(World& world) {
                 tree_glb_set_instances(&warehouse_glb[v], whs_var_mats[v], whs_var_n[v]);
             }
         }
+        // Yaw-only audit (startup only): every instance must be uniform-scale +
+        // Y rotation with y = plateau + 0.05 - up_min*scale. Anything else (tilt,
+        // shear, non-uniform scale) is logged — a tilted GLB with a clean matrix
+        // means the tilt is baked into the asset, not the placement.
+        {
+            const TreeGlb* arrs[3] = {shop_glb, apartment_glb, warehouse_glb};
+            const u32* ns[3] = {shop_var_n, apt_var_n, whs_var_n};
+            const float* mats[3] = {&shop_var_mats[0][0], &apt_var_mats[0][0],
+                                    &whs_var_mats[0][0]};
+            const char* names[3] = {"shop", "apartment", "warehouse"};
+            u32 violations = 0;
+            for (u32 t = 0; t < 3u; ++t) {
+                for (u32 v = 0; v < 3u; ++v) {
+                    const TreeGlb* g = &arrs[t][v];
+                    for (u32 i = 0; i < ns[t][v]; ++i) {
+                        const float* m = &mats[t][(v * kTreeInstanceCap + i) * 16];
+                        const float cx = m[0], cy = m[1], cz = m[2];
+                        const float ux = m[4], uy = m[5], uz = m[6];
+                        const float fx = m[8], fy = m[9], fz = m[10];
+                        const float lx = std::sqrt(cx * cx + cy * cy + cz * cz);
+                        const float ly = std::sqrt(ux * ux + uy * uy + uz * uz);
+                        const float lz = std::sqrt(fx * fx + fy * fy + fz * fz);
+                        const float dot_xz =
+                            (lx > 0.f && lz > 0.f) ? (cx * fx + cy * fy + cz * fz) / (lx * lz) : 0.f;
+                        const float y_exp =
+                            kCityPlateauY + 0.05f - tree_up_min(g) * (ly > 0.f ? ly : 1.f);
+                        bool ok = (m[3] == 0.f && m[7] == 0.f && m[11] == 0.f && m[15] == 1.f);
+                        ok = ok && lx > 0.f && std::fabs(lx - ly) < 1e-3f * lx &&
+                             std::fabs(lx - lz) < 1e-3f * lx;
+                        ok = ok && dot_xz > -1e-4f && dot_xz < 1e-4f;
+                        if (g->z_up == 0) {
+                            // Yaw-only: Y column must be straight up.
+                            ok = ok && ux == 0.f && uz == 0.f && uy > 0.f;
+                        }
+                        ok = ok && std::fabs(m[13] - y_exp) < 0.02f;
+                        if (!ok && violations < 8u) {
+                            std::printf("[buildings] MATRIX VIOLATION %s variant %u inst %u at "
+                                        "(%.1f, %.1f, %.1f): non-yaw rotation or bad y\n",
+                                        names[t], v, i, static_cast<double>(m[12]),
+                                        static_cast<double>(m[13]), static_cast<double>(m[14]));
+                            ++violations;
+                        } else if (!ok) {
+                            ++violations;
+                        }
+                    }
+                }
+            }
+            if (violations == 0) {
+                std::printf("[buildings] Matrix audit: all instances yaw-only, y grounded\n");
+            } else {
+                std::printf("[buildings] Matrix audit: %u violating instances (see above)\n",
+                            violations);
+            }
+            std::fflush(stdout);
+        }
         // Member totals stay in sync; member mats hold the concatenated set for inspection.
         shop_count = shop_var_n[0] + shop_var_n[1] + shop_var_n[2];
         apartment_count = apt_var_n[0] + apt_var_n[1] + apt_var_n[2];
@@ -2061,6 +2116,9 @@ void BuildingGlPass::buildMesh(World& world) {
             std::fflush(stdout);
         }
     }
+    std::printf("[city] street mesh: prog=%u verts=%u vao=%u\n", street_prog, street_count,
+                street_vao);
+    std::fflush(stdout);
 } // end buildMesh
 
 void BuildingGlPass::update_car_instances(float clock_s) {
@@ -2244,10 +2302,15 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
     glActiveTexture(GL_TEXTURE2);
     glBindTexture(GL_TEXTURE_2D, shadow_tex);
     glUniform1i(glGetUniformLocation(street_prog, "uShadow"), 2);
+    // Street quads are single-sided (down-facing winding); draw them unculled so the
+    // ground never depends on cull state leaked from the instanced/shadow passes.
+    glDisable(GL_CULL_FACE);
+    glDepthMask(GL_TRUE);
     glBindVertexArray(street_vao);
-    if (street_count > 0) {
+    if (street_prog && street_count > 0) {
         glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(street_count));
     }
+    glEnable(GL_CULL_FACE); // restore culling for the procedural-box passes
     glUseProgram(building_prog);
     glBindVertexArray(cube_vao);
     float model[16];
