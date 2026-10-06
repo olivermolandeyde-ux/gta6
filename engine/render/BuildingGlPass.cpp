@@ -2462,7 +2462,28 @@ void BuildingGlPass::buildMesh(World& world) {
             h ^= h >> 13;
             return h;
         };
-        auto push_prop = [&](TreeGlb* g, float* mats, u32& n, float x, float z) -> bool {
+        // Real-world prop sizes from the model bounding boxes (target / model):
+        // bin 1.0 m tall, hydrant 0.8 m tall, bench 1.8 m long. All three are
+        // authored at real size, so these compute to ~1.0 — logged to prove it.
+        // Bench z_up is forced to 0 (flat, as authored): the loader's long-axis
+        // heuristic misfires on the 1.8 m bench (z_up=2) and tree_yaw_mat would
+        // stand it on its end; no Rx needed, its local up is already +Y.
+        const float sc_bin =
+            1.0f / max_of(0.001f, bin_glb.ymax - bin_glb.ymin);
+        const float sc_hyd =
+            0.8f / max_of(0.001f, hydrant_glb.ymax - hydrant_glb.ymin);
+        const float bench_len =
+            (bench_glb.xmax - bench_glb.xmin) > (bench_glb.zmax - bench_glb.zmin)
+                ? (bench_glb.xmax - bench_glb.xmin)
+                : (bench_glb.zmax - bench_glb.zmin);
+        const float sc_ben = 1.8f / max_of(0.001f, bench_len);
+        std::printf("[props] scales: bin=%.3f hydrant=%.3f bench=%.3f (target/model bbox)\n",
+                    static_cast<double>(sc_bin), static_cast<double>(sc_hyd),
+                    static_cast<double>(sc_ben));
+        // Sidewalk surface is the street mesh top (plateau + 0.25); ground props
+        // 1 cm above it. The old plateau + 0.05 buried them 20 cm deep.
+        auto push_prop = [&](TreeGlb* g, float* mats, u32& n, float x, float z, float sc,
+                             int z_up) -> bool {
             if (!g || g->nprims == 0 || n >= kTreeInstanceCap) {
                 return false;
             }
@@ -2470,8 +2491,9 @@ void BuildingGlPass::buildMesh(World& world) {
                 ++bad_band;
                 return false;
             }
-            const float y = kCityPlateauY + 0.05f - tree_up_min(g) * 1.0f;
-            tree_yaw_mat(&mats[n * 16], x, y, z, prop_yaw(x, z), 1.0f, g->z_up);
+            const float up0 = (z_up == 0) ? g->ymin : tree_up_min(g);
+            const float y = kCityPlateauY + 0.26f - up0 * sc;
+            tree_yaw_mat(&mats[n * 16], x, y, z, prop_yaw(x, z), sc, z_up);
             ++n;
             return true;
         };
@@ -2490,7 +2512,8 @@ void BuildingGlPass::buildMesh(World& world) {
                     const float sz = (h & 32u) ? 11.5f : -11.5f;
                     push_prop(&bin_glb, bin_mats, n_bin,
                               static_cast<float>(i) * kCityBlockPitch + sx,
-                              static_cast<float>(j) * kCityBlockPitch + sz);
+                              static_cast<float>(j) * kCityBlockPitch + sz, sc_bin,
+                              bin_glb.z_up);
                 }
             }
             tree_glb_set_instances(&bin_glb, bin_mats, n_bin);
@@ -2504,7 +2527,8 @@ void BuildingGlPass::buildMesh(World& world) {
                     const float x = 60.f + static_cast<float>(k) * 480.f;
                     const float side = ((j + k) & 1u) ? 11.5f : -11.5f;
                     push_prop(&hydrant_glb, hyd_mats, n_hyd, x,
-                              static_cast<float>(j) * kCityBlockPitch + side);
+                              static_cast<float>(j) * kCityBlockPitch + side, sc_hyd,
+                              hydrant_glb.z_up);
                 }
             }
             tree_glb_set_instances(&hydrant_glb, hyd_mats, n_hyd);
@@ -2538,7 +2562,8 @@ void BuildingGlPass::buildMesh(World& world) {
                         z = static_cast<float>(bz) * kCityBlockPitch + 60.f;
                         break;
                     }
-                    push_prop(&bench_glb, ben_mats, n_ben, x, z);
+                    push_prop(&bench_glb, ben_mats, n_ben, x, z, sc_ben,
+                              0); // flat as authored; ignore z_up=2 misdetect
                 }
             }
             tree_glb_set_instances(&bench_glb, ben_mats, n_ben);
