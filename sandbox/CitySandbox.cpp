@@ -220,17 +220,16 @@ int main(int argc, char** argv) {
         terrain.cameraPos    = cam;
         terrain.cameraTarget = float3_add(cam, fwd);
         if (xwalk) {
-            // Scripted intersection inspection: 1.7 m grazing view along the road,
-            // then a corner view, then top-down.
+            // Scripted inspection: sky-up for clouds, then a wide street view
+            // (buildings + sky), then top-down.
             if (frames < 8) {
-                terrain.cameraPos    = float3{1200.f, 6.7f, 80.f};
-                terrain.cameraTarget = float3{1200.f, 6.0f, 140.f};
+                terrain.cameraPos    = float3{1200.f, 10.f, 130.f};
+                terrain.cameraTarget = float3{1190.f, 500.f, 500.f};
             } else if (frames < 12) {
-                terrain.cameraPos    = float3{1352.f, 6.7f, 100.f};
-                terrain.cameraTarget = float3{1332.f, 5.2f, 119.f};
+                terrain.cameraPos    = float3{1150.f, 12.f, 40.f};
+                terrain.cameraTarget = float3{1250.f, 25.f, 400.f};
             } else {
-                // Aerial survey framing (~5 blocks across for density review).
-                terrain.cameraPos    = float3{1200.f, 420.f, 121.f};
+                terrain.cameraPos    = float3{1200.f, 250.f, 121.f};
                 terrain.cameraTarget = float3{1200.f, 5.f, 120.f};
             }
         }
@@ -270,14 +269,14 @@ int main(int argc, char** argv) {
             std::fflush(stdout);
         }
         if (xwalk && frames == 6) {
-            save_screenshot_ppm("build/xwalk_street.ppm", terrain.width, terrain.height);
-            std::printf("[city] screenshot: build/xwalk_street.ppm (grazing 1.7 m, frame %u)\n",
+            save_screenshot_ppm("build/cloud_sky.ppm", terrain.width, terrain.height);
+            std::printf("[city] screenshot: build/cloud_sky.ppm (sky up, frame %u)\n",
                         frames);
             std::fflush(stdout);
         }
         if (xwalk && frames == 10) {
-            save_screenshot_ppm("build/xwalk_corner.ppm", terrain.width, terrain.height);
-            std::printf("[city] screenshot: build/xwalk_corner.ppm (corner view, frame %u)\n",
+            save_screenshot_ppm("build/cloud_street.ppm", terrain.width, terrain.height);
+            std::printf("[city] screenshot: build/cloud_street.ppm (street wide, frame %u)\n",
                         frames);
             std::fflush(stdout);
         }

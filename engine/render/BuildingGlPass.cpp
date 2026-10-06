@@ -1147,6 +1147,9 @@ bool BuildingGlPass::init() {
     tex_sidewalk = 0;
     tex_grass = 0;
     tex_asphalt = 0;
+    tex_clouds = 0;
+    cloud_has_alpha = 0;
+    cloud_tex_w = cloud_tex_h = 0;
     tex_flat_n = 0;
     street_count = 0;
     num_buildings = 0;
@@ -1392,6 +1395,92 @@ bool BuildingGlPass::init() {
         }
         std::printf("[city] asphalt tint=(%.2f,%.2f,%.2f)\n", static_cast<double>(kAsphaltTint.x),
                     static_cast<double>(kAsphaltTint.y), static_cast<double>(kAsphaltTint.z));
+        if (file) {
+            std::free(file);
+        }
+        std::fflush(stdout);
+    }
+    // Cloud billboard texture (RGBA). Probe: real alpha anywhere -> use tex.a
+    // (uHasAlpha=1); black corner -> luminance-as-alpha, white color; white
+    // corner -> no usable alpha, keep the procedural shader path instead.
+    // Mipmaps + clamped anisotropy, CLAMP_TO_EDGE (billboard quads).
+    {
+        const char* cands[3] = {"assets/textures/clouds.png", "./assets/textures/clouds.png",
+                                "build/assets/textures/clouds.png"};
+        u8* file = nullptr;
+        u32 flen = 0;
+        for (u32 i = 0; i < 3 && !file; ++i) {
+            FILE* f = std::fopen(cands[i], "rb");
+            if (!f) {
+                continue;
+            }
+            std::fseek(f, 0, SEEK_END);
+            const long sz = std::ftell(f);
+            std::fseek(f, 0, SEEK_SET);
+            if (sz > 20 && sz < 16L * 1024L * 1024L) {
+                file = static_cast<u8*>(std::malloc(static_cast<usize>(sz)));
+                if (file && std::fread(file, 1, static_cast<usize>(sz), f) == static_cast<usize>(sz)) {
+                    flen = static_cast<u32>(sz);
+                } else {
+                    std::free(file);
+                    file = nullptr;
+                }
+            }
+            std::fclose(f);
+        }
+        u8* rgba = nullptr;
+        u32 tw = 0, th = 0;
+        if (file && decode_png_file_rgba(file, flen, &rgba, &tw, &th) && rgba && tw && th) {
+            u32 transparent = 0;
+            const u32 n = tw * th;
+            for (u32 i = 0; i < n; ++i) {
+                if (rgba[i * 4u + 3u] < 255) {
+                    ++transparent;
+                    break;
+                }
+            }
+            const float cr = rgba[0] / 255.f, cg = rgba[1] / 255.f, cb = rgba[2] / 255.f;
+            const float clum = cr * 0.299f + cg * 0.587f + cb * 0.114f;
+            if (transparent) {
+                cloud_has_alpha = 1;
+            } else if (clum < 0.05f) {
+                cloud_has_alpha = 0; // black background: luminance-as-alpha
+            } else {
+                std::printf("[clouds] no usable alpha, keeping procedural\n");
+                std::free(rgba);
+                rgba = nullptr;
+            }
+            if (rgba) {
+                GLfloat max_aniso = 0.f;
+                glGetFloatv(0x84FF /*GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT*/, &max_aniso);
+                GLfloat aniso = max_aniso;
+                if (aniso > 8.f) {
+                    aniso = 8.f;
+                }
+                if (aniso < 1.f) {
+                    aniso = 1.f;
+                }
+                glGenTextures(1, &tex_clouds);
+                glBindTexture(GL_TEXTURE_2D, tex_clouds);
+                glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+                glTexParameterf(GL_TEXTURE_2D, 0x84FE /*GL_TEXTURE_MAX_ANISOTROPY_EXT*/, aniso);
+                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, static_cast<int>(tw),
+                             static_cast<int>(th), 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+                glGenerateMipmap(GL_TEXTURE_2D);
+                cloud_tex_w = tw;
+                cloud_tex_h = th;
+                std::printf("[clouds] texture=%ux%u hasAlpha=%d aniso %.1f of max %.1f\n", tw,
+                            th, cloud_has_alpha, static_cast<double>(aniso),
+                            static_cast<double>(max_aniso));
+                std::free(rgba);
+            }
+        } else {
+            std::printf("[clouds] texture missing, keeping procedural\n");
+        }
         if (file) {
             std::free(file);
         }
@@ -3892,19 +3981,40 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
         float3 upv{0.f, 1.f, 0.f};
         glUniform3f(glGetUniformLocation(cloud_prog, "uRight"), right.x, right.y, right.z);
         glUniform3f(glGetUniformLocation(cloud_prog, "uUp"), upv.x, upv.y, upv.z);
-        for (u32 i = 0; i < 28; ++i) {
+        glUniform3f(glGetUniformLocation(cloud_prog, "uCamPos"), camera_pos.x, camera_pos.y,
+                    camera_pos.z);
+        glUniform1f(glGetUniformLocation(cloud_prog, "uTimeOfDay"), time_of_day);
+        const int use_tex = (tex_clouds != 0) ? 1 : 0;
+        glUniform1i(glGetUniformLocation(cloud_prog, "uUseTex"), use_tex);
+        glUniform1i(glGetUniformLocation(cloud_prog, "uHasAlpha"), cloud_has_alpha);
+        if (use_tex) {
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, tex_clouds);
+            glUniform1i(glGetUniformLocation(cloud_prog, "uCloudTex"), 0);
+        }
+        constexpr u32 kCloudBillboards = 40;
+        for (u32 i = 0; i < kCloudBillboards; ++i) {
             const float seed = static_cast<float>(i) * 17.13f;
             float x = std::fmod(120.f + seed * 73.f + clock_s * 0.3f, 2800.f);
             float z = 80.f + std::fmod(seed * 91.f, 2300.f);
             float y = 420.f + std::fmod(seed * 37.f, 380.f);
-            float sx = 140.f + std::fmod(seed * 11.f, 160.f);
-            float sy = 40.f + std::fmod(seed * 7.f, 50.f);
+            float sx = 140.f + std::fmod(seed * 13.f, 320.f);
+            float sy = 40.f + std::fmod(seed * 7.f, 100.f);
             glUniform3f(glGetUniformLocation(cloud_prog, "uCenter"), x, y, z);
             glUniform2f(glGetUniformLocation(cloud_prog, "uSize"), sx, sy);
+            glUniform1f(glGetUniformLocation(cloud_prog, "uRot"), static_cast<float>(i & 3u));
+            glUniform1f(glGetUniformLocation(cloud_prog, "uFlip"), static_cast<float>((i >> 2) & 1u));
             glDrawArrays(GL_TRIANGLES, 0, 6);
         }
         glDepthMask(GL_TRUE);
         glDisable(GL_BLEND);
+        static bool cloud_logged = false;
+        if (!cloud_logged) {
+            cloud_logged = true;
+            std::printf("[clouds] texture=%ux%u hasAlpha=%d billboards=%u\n", cloud_tex_w,
+                        cloud_tex_h, cloud_has_alpha, kCloudBillboards);
+            std::fflush(stdout);
+        }
     }
 
     set_building_uniforms(building_prog, view, proj, sun, time_of_day, camera_pos);
@@ -4310,6 +4420,10 @@ void BuildingGlPass::shutdown() {
     if (cloud_prog) {
         glDeleteProgram(cloud_prog);
         cloud_prog = 0;
+    }
+    if (tex_clouds) {
+        glDeleteTextures(1, &tex_clouds);
+        tex_clouds = 0;
     }
     if (shadow_prog) {
         glDeleteProgram(shadow_prog);

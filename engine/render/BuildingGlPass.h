@@ -29,6 +29,9 @@ struct BuildingGlPass {
     unsigned tex_sidewalk; // assets/textures/sidewalk.png, or 0 = flat gray fallback
     unsigned tex_grass;    // assets/textures/grass.png, or 0 = flat green fallback
     unsigned tex_asphalt;  // assets/textures/asphalt.png, or 0 = flat dark-gray fallback
+    unsigned tex_clouds;   // assets/textures/clouds.png, or 0 = procedural blobs
+    int      cloud_has_alpha; // 1 = real alpha channel, 0 = luminance-as-alpha
+    u32      cloud_tex_w, cloud_tex_h;
     unsigned tex_flat_n;   // 1x1 flat normal for textured non-facade draws
     unsigned cloud_prog;
     unsigned cyl_vao, cyl_ibo, cyl_count;
