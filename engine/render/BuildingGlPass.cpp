@@ -1075,6 +1075,12 @@ float prop_yaw_to_road(float x, float z) {
     return std::atan2(dirx, dirz);
 }
 
+// Street/block level datum, defined once: asphalt at road level, lawn and
+// sidewalk tops exactly equal, 15 cm curb face between them.
+constexpr float kRoadY = kCityPlateauY;
+constexpr float kCurbH = 0.15f;
+constexpr float kTopY = kRoadY + kCurbH;
+
 } // namespace
 
 bool BuildingGlPass::init() {
@@ -1123,6 +1129,7 @@ bool BuildingGlPass::init() {
     street_vao = street_vbo = 0;
     lot_vao = lot_ibo = lot_count = 0;
     ring_vao = ring_ibo = ring_count = 0;
+    skirt_vao = skirt_ibo = skirt_count = 0;
     tex_sidewalk = 0;
     tex_grass = 0;
     tex_flat_n = 0;
@@ -1808,7 +1815,7 @@ void BuildingGlPass::buildMesh(World& world) {
     // ribbons z-fought at every crossing.
     static float verts[kStreetVertCap * 5];
     u32 n = 0;
-    const float y      = kCityPlateauY + 0.25f;
+    const float y      = kRoadY;
     const float half_w = kCityStreetWidth * 0.5f + 3.f; // 10 m asphalt + 3 m sidewalk
     const float pitch  = kCityBlockPitch;
     const u32   nline  = kCityBlocks + 1;
@@ -1874,7 +1881,7 @@ void BuildingGlPass::buildMesh(World& world) {
         static SolidVert lot_verts[kCityBlocks * kCityBlocks * 4];
         static u32 lot_idx[kCityBlocks * kCityBlocks * 6];
         u32 lot_vn = 0, lot_in = 0;
-        const float lot_y = kCityPlateauY - 0.04f;
+        const float lot_y = kTopY;
         // Lot spans the FULL block [10,110]^2 and tucks UNDER the sidewalk ring
         // (ring above hides the edge): no green poke-through, no slit.
         const float inset = kCityStreetWidth * 0.5f;
@@ -1917,7 +1924,7 @@ void BuildingGlPass::buildMesh(World& world) {
         static SolidVert ring_verts[kCityBlocks * kCityBlocks * 16];
         static u32 ring_idx[kCityBlocks * kCityBlocks * 24];
         u32 ring_vn = 0, ring_in = 0;
-        const float ring_y = kCityPlateauY + 0.25f;
+        const float ring_y = kTopY;
         const float sw = 3.0f;
         for (u32 bz = 0; bz < kCityBlocks; ++bz) {
             for (u32 bx = 0; bx < kCityBlocks; ++bx) {
@@ -1956,6 +1963,56 @@ void BuildingGlPass::buildMesh(World& world) {
                     kCityBlocks * kCityBlocks * 4u);
         std::printf("[city] sidewalk tint=(%.2f,%.2f,%.2f)\n", static_cast<double>(kSidewalkTint.x),
                     static_cast<double>(kSidewalkTint.y), static_cast<double>(kSidewalkTint.z));
+        std::fflush(stdout);
+    }
+
+    // Solid slab skirt: vertical concrete walls around each block's raised
+    // footprint ([10,110]^2), from kTopY down to kRoadY-0.10. Drawn cull-off so
+    // the block reads solid from both sides; clear-color can never show under
+    // an edge. Own VAO (flat gray albedo, no texture).
+    {
+        static SolidVert skirt_verts[kCityBlocks * kCityBlocks * 16];
+        static u32 skirt_idx[kCityBlocks * kCityBlocks * 24];
+        u32 skirt_vn = 0, skirt_in = 0;
+        const float y_top = kTopY;
+        const float y_bot = kRoadY - 0.10f;
+        for (u32 bz = 0; bz < kCityBlocks; ++bz) {
+            for (u32 bx = 0; bx < kCityBlocks; ++bx) {
+                const float x0 = static_cast<float>(bx) * kCityBlockPitch + 10.f;
+                const float x1 = static_cast<float>(bx + 1u) * kCityBlockPitch - 10.f;
+                const float z0 = static_cast<float>(bz) * kCityBlockPitch + 10.f;
+                const float z1 = static_cast<float>(bz + 1u) * kCityBlockPitch - 10.f;
+                // wall quads: (a along edge, top/bottom). Normals face outward.
+                const float w[4][6] = {
+                    {x0, z0, x1, z0, 0.f, -1.f}, // south face (faces -z road)
+                    {x1, z1, x0, z1, 0.f, 1.f},  // north face (faces +z road)
+                    {x0, z1, x0, z0, -1.f, 0.f}, // west face (faces -x road)
+                    {x1, z0, x1, z1, 1.f, 0.f},  // east face (faces +x road)
+                };
+                for (u32 s = 0; s < 4u; ++s) {
+                    const u32 base = skirt_vn;
+                    solid_push(skirt_verts, &skirt_vn, w[s][0], y_top, w[s][1], w[s][4], 0.f,
+                               w[s][5], 0.f, 0.f);
+                    solid_push(skirt_verts, &skirt_vn, w[s][2], y_top, w[s][3], w[s][4], 0.f,
+                               w[s][5], 1.f, 0.f);
+                    solid_push(skirt_verts, &skirt_vn, w[s][2], y_bot, w[s][3], w[s][4], 0.f,
+                               w[s][5], 1.f, 1.f);
+                    solid_push(skirt_verts, &skirt_vn, w[s][0], y_bot, w[s][1], w[s][4], 0.f,
+                               w[s][5], 0.f, 1.f);
+                    skirt_idx[skirt_in++] = base + 0;
+                    skirt_idx[skirt_in++] = base + 1;
+                    skirt_idx[skirt_in++] = base + 2;
+                    skirt_idx[skirt_in++] = base + 0;
+                    skirt_idx[skirt_in++] = base + 2;
+                    skirt_idx[skirt_in++] = base + 3;
+                }
+            }
+        }
+        upload_solid(&skirt_vao, &skirt_ibo, &skirt_count, skirt_verts, skirt_vn, skirt_idx,
+                     skirt_in);
+        std::printf("[city] levels: road=%.2f curb=%.2f top=%.2f; skirt quads=%u\n",
+                    static_cast<double>(kRoadY), static_cast<double>(kCurbH),
+                    static_cast<double>(kTopY), skirt_in / 6u);
         std::fflush(stdout);
     }
 
@@ -3223,6 +3280,9 @@ void BuildingGlPass::buildMesh(World& world) {
             }
             corolla_basis(car_glb[m], car_basis[m], &car_fwd_axis[m], &car_up_axis[m]);
             car_scale[m] = corolla_fit_scale(car_glb[m]);
+            if (m == 1u) {
+                car_scale[m] *= 2.f; // sports car reads twice as big
+            }
             car_y[m] = kCityPlateauY + 0.30f -
                        corolla_model_ymin(car_glb[m], car_basis[m]) * car_scale[m];
         }
@@ -3627,6 +3687,27 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
                            nullptr);
         }
     }
+    // Curb-face walls: flat concrete gray, untextured, double-sided via cull-off.
+    glBindVertexArray(skirt_vao);
+    {
+        float ident[16];
+        mat_ident(ident);
+        glUniformMatrix4fv(glGetUniformLocation(building_prog, "model"), 1, GL_FALSE, ident);
+        bind_inv_scale(building_prog, 1.f, 1.f, 1.f);
+        glUniform1i(glGetUniformLocation(building_prog, "uUseTex"), 0);
+        glUniform1i(glGetUniformLocation(building_prog, "uAlphaLeaf"), 0);
+        glUniform1i(glGetUniformLocation(building_prog, "uFacade"), 0);
+        glUniform3f(glGetUniformLocation(building_prog, "albedo"), 0.5f, 0.5f, 0.5f);
+        glUniform1f(glGetUniformLocation(building_prog, "roughness"), 0.9f);
+        glUniform1f(glGetUniformLocation(building_prog, "emissionBoost"), 0.f);
+        glUniform1f(glGetUniformLocation(building_prog, "floors"), 1.f);
+        glUniform1i(glGetUniformLocation(building_prog, "district"), 2);
+        glUniform1i(glGetUniformLocation(building_prog, "windowStyle"), 0);
+        if (skirt_count > 0) {
+            glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(skirt_count), GL_UNSIGNED_INT,
+                           nullptr);
+        }
+    }
     glDisable(GL_POLYGON_OFFSET_FILL);
     glEnable(GL_CULL_FACE); // restore culling for the procedural-box passes
     glUseProgram(building_prog);
@@ -3818,7 +3899,7 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
     // Zebra bars sit near-flush (centre +0.25, 0.02 thick: 1 cm embedded, 1 cm
     // proud) so grazing views show no parallax overshoot past the curb.
     // Polygon offset around this loop only wins any residual depth ties.
-    const float stripe_y = kCityPlateauY + 0.25f;
+    const float stripe_y = kRoadY + 0.02f;
     glEnable(GL_POLYGON_OFFSET_FILL);
     glPolygonOffset(-1.f, -1.f);
     for (u32 j = 0; j <= kCityBlocks; ++j) {
@@ -3902,6 +3983,15 @@ void BuildingGlPass::shutdown() {
         ring_ibo = 0;
     }
     ring_count = 0;
+    if (skirt_vao) {
+        glDeleteVertexArrays(1, &skirt_vao);
+        skirt_vao = 0;
+    }
+    if (skirt_ibo) {
+        glDeleteBuffers(1, &skirt_ibo);
+        skirt_ibo = 0;
+    }
+    skirt_count = 0;
     if (tex_sidewalk) {
         glDeleteTextures(1, &tex_sidewalk);
         tex_sidewalk = 0;
