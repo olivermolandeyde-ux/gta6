@@ -2035,7 +2035,7 @@ void BuildingGlPass::buildMesh(World& world) {
             }
             const float yaw = static_cast<float>(b->building_id % 4u) * 1.5707963f;
             const float sc  = 0.95f + static_cast<float>(b->building_id % 6u) * (0.10f / 5.f);
-            tree_yaw_mat(&sky_mats[sky_n * 16], b->position.x, kCityPlateauY + 0.05f, b->position.z, yaw, sc,
+            tree_yaw_mat(&sky_mats[sky_n * 16], b->position.x, kTopY + 0.01f, b->position.z, yaw, sc,
                          sky_glb.z_up);
             ++sky_n;
         }
@@ -2439,7 +2439,7 @@ void BuildingGlPass::buildMesh(World& world) {
                 return false;
             }
             const float sc = 2.f;
-            const float y = kCityPlateauY + 0.05f - tree_up_min(g) * sc;
+            const float y = kTopY + 0.01f - tree_up_min(g) * sc;
             if (var_n[variant] >= kTreeInstanceCap) {
                 ++skipped_cap;
                 return false;
@@ -2671,13 +2671,11 @@ void BuildingGlPass::buildMesh(World& world) {
             }
             try_place_candidate(ci, type);
         }
-        // === DENSITY PARCELS (fill blocks wall-to-wall with fitted GLBs) ===
-        // Startup only. Subdivides each block interior into district-sized parcels
-        // and places fitted GLBs (existing 2x landmarks untouched). Footprints fit
-        // parcels, so 2 m gaps + 3 m setbacks hold with zero overlaps; an explicit
-        // neighbour check enforces it. Appends to the same per-variant instance
-        // arrays (same draw calls, same 60 FPS profile). Ground = current lot
-        // level (plateau+0.05; the slab levels are a later task, one-line change).
+        // === DENSITY SLOTS (fit parcels to buildings, never the reverse) ===
+        // HARD RULE: every density instance uses uniform scale in [0.95,1.05]
+        // (natural size, identical windows city-wide). Slots are sized FROM the
+        // variant footprints + gap, so no scaling-to-fit ever happens. Ground =
+        // kTopY like everything else standing on the slab now.
         {
             struct FullB {
                 float x, z, hw, hd;
@@ -2700,10 +2698,55 @@ void BuildingGlPass::buildMesh(World& world) {
                 h ^= h >> 13;
                 return h;
             };
+            // Natural footprints per variant at scale 1 (z_up-aware).
+            float var_fp[3][3][2];
+            {
+                const TreeGlb* fa[3] = {shop_glb, apartment_glb, warehouse_glb};
+                for (u32 t = 0; t < 3u; ++t) {
+                    for (u32 v = 0; v < 3u; ++v) {
+                        const TreeGlb* g = &fa[t][v];
+                        var_fp[t][v][0] = g->xmax - g->xmin;
+                        var_fp[t][v][1] =
+                            (g->z_up ? g->ymax - g->ymin : g->zmax - g->zmin);
+                    }
+                }
+            }
+            // Family max footprint + 2.5 m gap = slot size per district family.
+            float fam_slot[3][2] = {{0.f, 0.f}, {0.f, 0.f}, {0.f, 0.f}};
+            for (u32 t = 0; t < 3u; ++t) {
+                for (u32 v = 0; v < 3u; ++v) {
+                    if (var_fp[t][v][0] <= 0.001f) {
+                        continue;
+                    }
+                    if (var_fp[t][v][0] > fam_slot[t][0]) {
+                        fam_slot[t][0] = var_fp[t][v][0];
+                    }
+                    if (var_fp[t][v][1] > fam_slot[t][1]) {
+                        fam_slot[t][1] = var_fp[t][v][1];
+                    }
+                }
+                fam_slot[t][0] += 2.5f;
+                fam_slot[t][1] += 2.5f;
+            }
             u32 den_shop = 0, den_apt = 0, den_whs = 0;
             u32 den_skip_occ = 0, den_skip_gap = 0, den_skip_mesh = 0, den_skip_cap = 0;
-            for (u32 bz = 0; bz < kCityBlocks; ++bz) {
-                for (u32 bx = 0; bx < kCityBlocks; ++bx) {
+            u32 den_skip_fit = 0;
+            // Shuffled block order: caps must not starve one side of the city.
+            static u32 border[kCityBlocks * kCityBlocks];
+            for (u32 b = 0; b < kCityBlocks * kCityBlocks; ++b) {
+                border[b] = b;
+            }
+            for (u32 b = 0; b < kCityBlocks * kCityBlocks; ++b) {
+                const u32 hh = h3(b * 13u + 5u, b * 29u + 11u, 7u);
+                const u32 j = b + (hh % (kCityBlocks * kCityBlocks - b));
+                const u32 t = border[b];
+                border[b] = border[j];
+                border[j] = t;
+            }
+            for (u32 ob = 0; ob < kCityBlocks * kCityBlocks; ++ob) {
+                const u32 bx = border[ob] % kCityBlocks;
+                const u32 bz = border[ob] / kCityBlocks;
+                {
                     // District = majority vote of procedural buildings in this block.
                     u32 votes[6] = {0, 0, 0, 0, 0, 0};
                     for (u32 i = 0; i < n_fb; ++i) {
@@ -2724,36 +2767,29 @@ void BuildingGlPass::buildMesh(World& world) {
                     float pw = 18.f, pdpt = 18.f, prob = 0.85f;
                     int type = 1;
                     if (district == 5u) {
-                        pw = 14.f;
-                        pdpt = 18.f;
                         prob = 0.90f;
                         type = 0;
                     } else if (district == 4u) {
-                        pw = 30.f;
-                        pdpt = 30.f;
                         prob = 0.80f;
                         type = 2;
                     } else if (district == 3u) {
-                        pw = 24.f;
-                        pdpt = 24.f;
                         prob = 0.60f;
                         type = 1;
                     } else if (district == 0u) {
-                        pw = 18.f;
-                        pdpt = 18.f;
                         prob = 0.90f;
                         type = 1;
                     } else if (district == 1u) {
-                        pw = 18.f;
-                        pdpt = 18.f;
                         prob = 0.85f;
                         type = 0;
                     } else {
-                        pw = 18.f;
-                        pdpt = 18.f;
                         prob = 0.85f;
                         type = 1;
                     }
+                    // Slots sized FROM the family footprints + gap (never reverse).
+                    const float pw2 = fam_slot[type][0] > 1.f ? fam_slot[type][0] : 18.f;
+                    const float pd2 = fam_slot[type][1] > 1.f ? fam_slot[type][1] : 18.f;
+                    pw = pw2;
+                    pdpt = pd2;
                     TreeGlb* arr = (type == 0) ? shop_glb
                                    : ((type == 2) ? warehouse_glb : apartment_glb);
                     u32* var_n = (type == 0) ? shop_var_n
@@ -2772,8 +2808,8 @@ void BuildingGlPass::buildMesh(World& world) {
                     for (u32 j = 0; j < nz; ++j) {
                         for (u32 i = 0; i < nx; ++i) {
                             const u32 hh = h3(bx * 64u + i, bz * 64u + j, 99u);
-                            if (hh % 100u >= static_cast<u32>(prob * 35.f)) {
-                                continue; // courtyard / park (thinned ~65% for FPS)
+                            if (hh % 100u >= static_cast<u32>(prob * 100.f)) {
+                                continue; // courtyard / park
                             }
                             const float cx = ox + (i + 0.5f) * pw;
                             const float cz = oz + (j + 0.5f) * pdpt;
@@ -2790,29 +2826,50 @@ void BuildingGlPass::buildMesh(World& world) {
                                 ++den_skip_occ;
                                 continue;
                             }
-                            u32 variant = hh % 3u;
-                            if (arr[variant].nprims == 0) {
-                                u32 alt = 3u;
-                                for (u32 v = 0; v < 3u; ++v) {
-                                    if (arr[v].nprims > 0) {
-                                        alt = v;
-                                        break;
-                                    }
-                                }
-                                if (alt >= 3u) {
-                                    ++den_skip_mesh;
+                            // Pick a variant whose NATURAL footprint fits the slot
+                            // (street-facing first, +90 deg fallback); scale stays
+                            // in [0.95,1.05] so windows never change size. No fit =
+                            // courtyard.
+                            const float sc =
+                                0.95f + 0.10f * static_cast<float>(hh % 100u) / 100.f;
+                            const float yaw0 = street_facing_yaw(cx, cz);
+                            u32 variant = 3u;
+                            float yaw = yaw0;
+                            bool swapped = false;
+                            for (u32 t = 0; t < 3u && variant >= 3u; ++t) {
+                                const u32 v = (hh + t) % 3u;
+                                if (arr[v].nprims == 0) {
                                     continue;
                                 }
-                                variant = alt;
+                                const float vw = var_fp[type][v][0] * sc;
+                                const float vd = var_fp[type][v][1] * sc;
+                                const float yaw_a = yaw0;
+                                const bool sw_a =
+                                    std::fabs(std::sin(yaw_a)) > 0.707f;
+                                if ((sw_a ? vd : vw) <= pw + 0.05f &&
+                                    (sw_a ? vw : vd) <= pdpt + 0.05f) {
+                                    variant = v;
+                                    yaw = yaw_a;
+                                    swapped = sw_a;
+                                    break;
+                                }
+                                const float yaw_b = yaw_a + 1.5707963f;
+                                const bool sw_b = !sw_a;
+                                if ((sw_b ? vd : vw) <= pw + 0.05f &&
+                                    (sw_b ? vw : vd) <= pdpt + 0.05f) {
+                                    variant = v;
+                                    yaw = yaw_b;
+                                    swapped = sw_b;
+                                    break;
+                                }
+                            }
+                            if (variant >= 3u) {
+                                ++den_skip_fit;
+                                continue;
                             }
                             const TreeGlb* g = &arr[variant];
-                            const float fw = pw * (0.68f + 0.17f * ((hh >> 8) % 100u) / 100.f);
-                            const float fd = pdpt * (0.68f + 0.17f * ((hh >> 16) % 100u) / 100.f);
-                            const float sc = building_footprint_scale(g, fw, fd);
-                            const float yaw = street_facing_yaw(cx, cz);
-                            const bool swapped = std::fabs(std::sin(yaw)) > 0.707f;
-                            const float mw = g->xmax - g->xmin;
-                            const float md = (g->z_up ? g->ymax - g->ymin : g->zmax - g->zmin);
+                            const float mw = var_fp[type][variant][0];
+                            const float md = var_fp[type][variant][1];
                             const float hx = (swapped ? md : mw) * sc * 0.5f;
                             const float hz = (swapped ? mw : md) * sc * 0.5f;
                             // >=2 m gap to every placed GLB (shared list: mass,
@@ -2826,7 +2883,7 @@ void BuildingGlPass::buildMesh(World& world) {
                                 continue;
                             }
                             const float y0 = tree_up_min(g);
-                            const float y = kCityPlateauY + 0.05f - y0 * sc;
+                            const float y = kTopY + 0.01f - y0 * sc;
                             tree_yaw_mat(&var_mats[variant][var_n[variant] * 16], cx, y, cz,
                                          yaw, sc, g->z_up);
                             ++var_n[variant];
@@ -2843,9 +2900,9 @@ void BuildingGlPass::buildMesh(World& world) {
                 }
             }
             std::printf("[buildings] density: +%u shops +%u apartments +%u warehouses "
-                        "(skipped %u occupied, %u gap, %u nomesh, %u cap)\n",
+                        "(skipped %u occupied, %u gap, %u nomesh, %u cap, %u fit)\n",
                         den_shop, den_apt, den_whs, den_skip_occ, den_skip_gap, den_skip_mesh,
-                        den_skip_cap);
+                        den_skip_cap, den_skip_fit);
             std::fflush(stdout);
         }
         // Upload once via the existing instanced pipeline (same as trees/cars).
@@ -2858,6 +2915,14 @@ void BuildingGlPass::buildMesh(World& world) {
             }
             if (warehouse_glb[v].nprims > 0) {
                 tree_glb_set_instances(&warehouse_glb[v], whs_var_mats[v], whs_var_n[v]);
+            }
+        }
+        // Row base indices: audit below skips these debug instances.
+        u32 row_base_n[3][3];
+        for (u32 t = 0; t < 3u; ++t) {
+            const u32* nn = (t == 0) ? shop_var_n : ((t == 2) ? whs_var_n : apt_var_n);
+            for (u32 v = 0; v < 3u; ++v) {
+                row_base_n[t][v] = nn[v];
             }
         }
         // Sandbox verification lineup (--bldg-row): one instance of each of the 9
@@ -2885,7 +2950,7 @@ void BuildingGlPass::buildMesh(World& world) {
                 const TreeGlb* g = &arr[v];
                 const float sc = building_footprint_scale(g, ref_w[t], ref_d[t]);
                 const float x = 1200.f + (static_cast<float>(k) - 4.f) * 7.f;
-                const float y = kCityPlateauY + 0.05f - tree_up_min(g) * sc;
+                const float y = kTopY + 0.01f - tree_up_min(g) * sc;
                 tree_yaw_mat(&var_mats[v][var_n[v] * 16], x, y, 160.f, 0.f, sc, g->z_up);
                 ++var_n[v];
                 ++row_placed;
@@ -2905,10 +2970,11 @@ void BuildingGlPass::buildMesh(World& world) {
                         row_placed);
             std::fflush(stdout);
         }
-        // Yaw-only audit (startup only): every instance must be uniform-scale +
-        // Y rotation with y = plateau + 0.05 - up_min*scale. Anything else (tilt,
-        // shear, non-uniform scale) is logged — a tilted GLB with a clean matrix
-        // means the tilt is baked into the asset, not the placement.
+        // Scale audit (startup only): density instances must carry uniform
+        // scale in [0.95,1.05] (natural size, identical windows city-wide);
+        // 2x mass/debug landmarks must carry exactly 2.0. Y must equal
+        // kTopY+0.01-up_min*scale. Anything else (tilt, shear, non-uniform or
+        // wrong scale) is logged. --bldg-row debug instances are exempt.
         {
             const TreeGlb* arrs[3] = {shop_glb, apartment_glb, warehouse_glb};
             const u32* ns[3] = {shop_var_n, apt_var_n, whs_var_n};
@@ -2920,6 +2986,9 @@ void BuildingGlPass::buildMesh(World& world) {
                 for (u32 v = 0; v < 3u; ++v) {
                     const TreeGlb* g = &arrs[t][v];
                     for (u32 i = 0; i < ns[t][v]; ++i) {
+                        if (i >= row_base_n[t][v]) {
+                            continue; // debug row instance
+                        }
                         const float* m = &mats[t][(v * kTreeInstanceCap + i) * 16];
                         const float cx = m[0], cy = m[1], cz = m[2];
                         const float ux = m[4], uy = m[5], uz = m[6];
@@ -2929,8 +2998,7 @@ void BuildingGlPass::buildMesh(World& world) {
                         const float lz = std::sqrt(fx * fx + fy * fy + fz * fz);
                         const float dot_xz =
                             (lx > 0.f && lz > 0.f) ? (cx * fx + cy * fy + cz * fz) / (lx * lz) : 0.f;
-                        const float y_exp =
-                            kCityPlateauY + 0.05f - tree_up_min(g) * (ly > 0.f ? ly : 1.f);
+                        const float y_exp = kTopY + 0.01f - tree_up_min(g) * (ly > 0.f ? ly : 1.f);
                         bool ok = (m[3] == 0.f && m[7] == 0.f && m[11] == 0.f && m[15] == 1.f);
                         ok = ok && lx > 0.f && std::fabs(lx - ly) < 1e-3f * lx &&
                              std::fabs(lx - lz) < 1e-3f * lx;
@@ -2940,9 +3008,12 @@ void BuildingGlPass::buildMesh(World& world) {
                             ok = ok && ux == 0.f && uz == 0.f && uy > 0.f;
                         }
                         ok = ok && std::fabs(m[13] - y_exp) < 0.02f;
+                        // Natural-size density vs 2x landmarks (debug spots keep 2x).
+                        ok = ok && ((lx >= 0.95f && lx <= 1.05f) ||
+                                    std::fabs(lx - 2.f) < 1e-3f);
                         if (!ok && violations < 8u) {
                             std::printf("[buildings] MATRIX VIOLATION %s variant %u inst %u at "
-                                        "(%.1f, %.1f, %.1f): non-yaw rotation or bad y\n",
+                                        "(%.1f, %.1f, %.1f): bad scale/rotation/y\n",
                                         names[t], v, i, static_cast<double>(m[12]),
                                         static_cast<double>(m[13]), static_cast<double>(m[14]));
                             ++violations;
@@ -2953,7 +3024,7 @@ void BuildingGlPass::buildMesh(World& world) {
                 }
             }
             if (violations == 0) {
-                std::printf("[buildings] Matrix audit: all instances yaw-only, y grounded\n");
+                std::printf("[buildings] Matrix audit: all instances yaw-only, scale ok, y grounded\n");
             } else {
                 std::printf("[buildings] Matrix audit: %u violating instances (see above)\n",
                             violations);
