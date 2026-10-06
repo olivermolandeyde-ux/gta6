@@ -9,17 +9,51 @@
 
 #include <SDL.h>
 
+#if defined(__APPLE__)
+#define GL_SILENCE_DEPRECATION
+#include <OpenGL/gl3.h>
+#else
+#define GL_GLEXT_PROTOTYPES 1
+#include <SDL_opengl.h>
+#endif
+
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+
+// Verification screenshot: raw framebuffer -> binary PPM (no encoder needed).
+static void save_screenshot_ppm(const char* path, int w, int h) {
+    if (w <= 0 || h <= 0) {
+        return;
+    }
+    engine::u8* px = static_cast<engine::u8*>(std::malloc((engine::usize)w * h * 3));
+    if (!px) {
+        return;
+    }
+    glReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, px);
+    FILE* f = std::fopen(path, "wb");
+    if (f) {
+        std::fprintf(f, "P6\n%d %d\n255\n", w, h);
+        for (int y = h - 1; y >= 0; --y) {
+            std::fwrite(px + (engine::usize)y * w * 3, 1, (engine::usize)w * 3, f);
+        }
+        std::fclose(f);
+    }
+    std::free(px);
+}
 
 int main(int argc, char** argv) {
     using namespace engine;
     setvbuf(stdout, nullptr, _IOLBF, 0);
     bool forever = true;
+    bool bldg_row = false;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--once") == 0) {
             forever = false;
+        }
+        if (std::strcmp(argv[i], "--bldg-row") == 0) {
+            bldg_row = true;
         }
     }
 
@@ -102,6 +136,11 @@ int main(int argc, char** argv) {
     cityGen.buildings_spawned = cityGen.streets_spawned = 0;
     cityGen.lights_spawned = cityGen.windows_spawned = 0;
     cityGen.generateCity(world, city_center, kCityCenterM, 900);
+    if (bldg_row) {
+        buildings.verification_row = true;
+        std::printf("[city] verification row enabled: 9 GLB variants at z=160 + screenshot\n");
+        std::fflush(stdout);
+    }
     buildings.buildMesh(world);
 
     std::printf("[city] press F to flip the car bodies 180 deg, G to flip the SUV alone\n");
@@ -200,6 +239,12 @@ int main(int argc, char** argv) {
         const float3 sun = sky_now ? sky_now->sun_direction : float3{0.5f, 0.8f, 0.3f};
         buildings.draw(world, terrain.cameraPos, terrain.cameraTarget, terrain.width, terrain.height, tod,
                        sun, static_cast<float>(frames) * dt);
+        if (bldg_row && frames == 6) {
+            save_screenshot_ppm("build/bldg_row.ppm", terrain.width, terrain.height);
+            std::printf("[city] screenshot: build/bldg_row.ppm (verification row, frame %u)\n",
+                        frames);
+            std::fflush(stdout);
+        }
         window.swap();
         ++frames;
 

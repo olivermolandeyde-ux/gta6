@@ -1024,6 +1024,7 @@ bool BuildingGlPass::init() {
     std::memset(apartment_mats, 0, sizeof(apartment_mats));
     std::memset(warehouse_mats, 0, sizeof(warehouse_mats));
     shop_count = apartment_count = warehouse_count = 0;
+    verification_row = false;
     std::memset(&car_traffic, 0, sizeof(car_traffic));
     car_traffic_live = false;
     car_clock        = 0.f;
@@ -1833,7 +1834,9 @@ void BuildingGlPass::buildMesh(World& world) {
         std::printf("\n=== [buildings] PLACEMENT START ===\n");
 
         // Reset per-build state (buildMesh runs once at startup).
-        shop_count = apartment_count = warehouse_count = 0;
+        // NOTE: verification_row is set by the sandbox between init() and buildMesh();
+        // do NOT clear it here.
+    shop_count = apartment_count = warehouse_count = 0;
         clear_replaced_buildings();
 
         // Per-variant instance matrices. Static: ~57KB per array, too big for the stack.
@@ -2163,6 +2166,51 @@ void BuildingGlPass::buildMesh(World& world) {
             if (warehouse_glb[v].nprims > 0) {
                 tree_glb_set_instances(&warehouse_glb[v], whs_var_mats[v], whs_var_n[v]);
             }
+        }
+        // Sandbox verification lineup (--bldg-row): one instance of each of the 9
+        // variants in a row 30 m ahead of the spawn camera (x centered on 1200,
+        // z=160, yaw 0, grounded). Appended after quotas; quota logs below are
+        // unaffected (they use placed_*), member totals include the row.
+        if (verification_row) {
+            const float ref_w[3] = {14.f, 24.f, 30.f};
+            const float ref_d[3] = {10.f, 18.f, 22.f};
+            u32 row_placed = 0;
+            for (u32 k = 0; k < 9u; ++k) {
+                const u32 t = k / 3u; // 0 shops, 1 apartments, 2 warehouses
+                const u32 v = k % 3u;
+                TreeGlb* arr = (t == 0) ? shop_glb : ((t == 2) ? warehouse_glb : apartment_glb);
+                if (arr[v].nprims == 0) {
+                    continue;
+                }
+                float (*var_mats)[kTreeInstanceCap * 16] =
+                    (t == 0) ? shop_var_mats : ((t == 2) ? whs_var_mats : apt_var_mats);
+                u32* var_n =
+                    (t == 0) ? shop_var_n : ((t == 2) ? whs_var_n : apt_var_n);
+                if (var_n[v] >= kTreeInstanceCap) {
+                    continue;
+                }
+                const TreeGlb* g = &arr[v];
+                const float sc = building_footprint_scale(g, ref_w[t], ref_d[t]);
+                const float x = 1200.f + (static_cast<float>(k) - 4.f) * 7.f;
+                const float y = kCityPlateauY + 0.05f - tree_up_min(g) * sc;
+                tree_yaw_mat(&var_mats[v][var_n[v] * 16], x, y, 160.f, 0.f, sc, g->z_up);
+                ++var_n[v];
+                ++row_placed;
+            }
+            for (u32 v = 0; v < 3u; ++v) {
+                if (shop_glb[v].nprims > 0) {
+                    tree_glb_set_instances(&shop_glb[v], shop_var_mats[v], shop_var_n[v]);
+                }
+                if (apartment_glb[v].nprims > 0) {
+                    tree_glb_set_instances(&apartment_glb[v], apt_var_mats[v], apt_var_n[v]);
+                }
+                if (warehouse_glb[v].nprims > 0) {
+                    tree_glb_set_instances(&warehouse_glb[v], whs_var_mats[v], whs_var_n[v]);
+                }
+            }
+            std::printf("[buildings] verification row: %u/9 instances at z=160 (yaw 0)\n",
+                        row_placed);
+            std::fflush(stdout);
         }
         // Yaw-only audit (startup only): every instance must be uniform-scale +
         // Y rotation with y = plateau + 0.05 - up_min*scale. Anything else (tilt,

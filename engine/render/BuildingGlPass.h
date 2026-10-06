@@ -44,6 +44,7 @@ struct BuildingGlPass {
     u32      shop_count;
     u32      apartment_count;
     u32      warehouse_count;
+    bool     verification_row; // sandbox --bldg-row: append 1 instance per variant in a lineup
     // Moving traffic: circuits, agent state, and the per-frame instance matrices.
     CarTraffic car_traffic;
     bool       car_traffic_live;

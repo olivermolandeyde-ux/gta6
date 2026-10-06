@@ -38,7 +38,10 @@ float shadow_at() {
 
 void main() {
     vec4 albedo = texture(uAlbedo, UV);
-    if (albedo.a < 0.5) {
+    // Honor material alphaMode: OPAQUE (uAlphaMask==0) never discards, so opaque
+    // walls cannot get see-through holes from low texture alpha. MASK discards
+    // at the material cutoff (trees/leaves/glass).
+    if (uAlphaMask > 0 && albedo.a < uAlphaCut) {
         discard;
     }
     if (albedo.r > 0.85 && albedo.b > 0.80 && albedo.g < 0.28) {

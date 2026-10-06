@@ -817,6 +817,9 @@ unsigned upload_rgba(const u8* rgba, u32 w, u32 h) {
     unsigned tex = 0;
     glGenTextures(1, &tex);
     glBindTexture(GL_TEXTURE_2D, tex);
+    // Tight rows, always: our uploads are tightly packed, so alignment 1 is
+    // correct for every format here and a 3-byte RGB row can never skew.
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     if (has_alpha) {
         // Mipmaps average leaf alpha below the cutoff and the canopy vanishes.
@@ -1143,6 +1146,12 @@ struct WheelCandidate {
 
 WheelCandidate g_wheel_cand[8];
 u32            g_wheel_cand_n = 0;
+
+// Walk audit: mesh-nodes visited and prims emitted per load. Compared against
+// stored nprims after the walk, this proves each prim entered the instance VAOs
+// exactly once (no duplicate coincident draws).
+u32 g_walk_mesh_nodes = 0;
+u32 g_walk_prims_out = 0;
 
 // Parts of a wheel assembly whose geometry is not a clean disc, so car_wheel_fit refused
 // them: a brake disc with its caliper, a rim with bolt heads, a hub cap. The name still
@@ -1660,10 +1669,24 @@ unsigned decode_view_image(const JDoc* d, u32 img, const u8* bin, u32 bin_len, u
     u32 w = 0, h = 0;
     const int is_tree = is_tree_label(tree_label);
     const int is_rgba = is_tree || is_lamp_label(tree_label) || is_car_label(tree_label);
-    const int ok_img  = is_rgba ? decode_image_rgba_tree(bin + off, bl, &rgba, &w, &h)
-                                : decode_image_rgba(bin + off, bl, &rgba, &w, &h);
+    // The engine PNG decoder is byte-exact (verified against reference PNG
+    // decode); try it first for PNG sources so a platform ImageIO channel-order
+    // quirk can never tint uploads. ImageIO stays for JPEG and as PNG fallback.
+    const u8* s = bin + off;
+    const int is_png = (bl >= 8 && s[0] == 137 && s[1] == 80 && s[2] == 78 && s[3] == 71 &&
+                        s[4] == 13 && s[5] == 10 && s[6] == 26 && s[7] == 10);
+    const int is_jpg = (bl >= 3 && s[0] == 0xFF && s[1] == 0xD8 && s[2] == 0xFF);
+    int ok_img = 0;
+    const char* dec = "none";
+    if (is_png && png_decode_rgba(bin + off, bl, &rgba, &w, &h)) {
+        ok_img = 1;
+        dec = "png";
+    } else {
+        ok_img = is_rgba ? decode_image_rgba_tree(bin + off, bl, &rgba, &w, &h)
+                         : decode_image_rgba(bin + off, bl, &rgba, &w, &h);
+        dec = ok_img ? "imageio" : "none";
+    }
     if (!ok_img || !rgba) {
-        const u8* s = bin + off;
         std::printf("[glb] WARNING: Failed to decode image (%u bytes, sig %02x %02x %02x %02x)\n", bl,
                     slen_sig(s, bl, 0), slen_sig(s, bl, 1), slen_sig(s, bl, 2), slen_sig(s, bl, 3));
         std::fflush(stdout);
@@ -1673,6 +1696,17 @@ unsigned decode_view_image(const JDoc* d, u32 img, const u8* bin, u32 bin_len, u
         repair_tree_tex(rgba, w, h, tree_label);
     }
     unsigned tex = upload_rgba(rgba, w, h);
+    u32 mip_levels = 1;
+    if (!g_last_tex_alpha) {
+        u32 m = w > h ? w : h;
+        while (m > 1) {
+            m >>= 1;
+            ++mip_levels;
+        }
+    }
+    std::printf("[glb] tex upload: %s img src=%s via %s %ux%ux4 -> RGBA8 mips=%u id=%u (%u src bytes)\n",
+                tree_label ? tree_label : "?",
+                is_png ? "PNG" : (is_jpg ? "JPEG" : "unknown"), dec, w, h, mip_levels, tex, bl);
     std::printf("[glb] Created OpenGL texture ID %u (%ux%u pixels, %u src bytes)\n", tex, w, h, bl);
     std::fflush(stdout);
     std::free(rgba);
@@ -2002,12 +2036,18 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
                                     pr.tex_w, pr.tex_h);
                         std::fflush(stdout);
                     } else {
+                        const int is_bldg = !is_tree_label(out->label) && !is_lamp_label(out->label) &&
+                                            !is_car_label(out->label);
                         std::printf("[glb] WARNING: Failed to load texture for material %u%s\n", mat_i,
                                     is_tree_label(out->label) ? " — tree fallback later"
                                     : is_lamp_label(out->label) ? " — lamp metal fallback"
-                                                                : " — debug RED");
+                                    : (is_bldg ? " — baseColorFactor fallback (never magenta)"
+                                               : " — debug RED"));
                         std::fflush(stdout);
-                        if (!is_tree_label(out->label)) {
+                        // Buildings fall through with pr.tex == 0 so the
+                        // baseColorFactor solid below applies — magenta must
+                        // never ship as a missing-texture signal on facades.
+                        if (!is_tree_label(out->label) && !is_bldg) {
                             pr.tex   = lamp_or_fail_tex(out->label);
                             pr.tex_w = pr.tex_h = 1;
                         }
@@ -2094,7 +2134,9 @@ bool emit_prim(TreeGlb* out, const JDoc* d, u32 prim, const float* world, const 
             pr.tex = lamp_metal_tex();
             std::printf("[glb] %s material %u has no albedo — lamp metal\n", out->label, mat_i);
         } else {
-            std::printf("[glb] WARNING: Failed to load texture for material %u — using gray metal\n", mat_i);
+            std::printf("[glb] WARNING: %s prim %u (material %u) has no albedo and no baseColorFactor"
+                        " — using gray metal (re-author asset if this shows on screen)\n",
+                        out->label, out->nprims, mat_i);
             pr.tex = gray_metal_tex();
         }
         std::fflush(stdout);
@@ -2297,6 +2339,8 @@ void walk_node(TreeGlb* out, const JDoc* d, u32 node, const float* parent, const
                     mname && mname->kind == JK_STR ? static_cast<int>(mname->slen) : 1,
                     mname && mname->kind == JK_STR ? mname->s : "-", npr);
         std::fflush(stdout);
+        ++g_walk_mesh_nodes;
+        g_walk_prims_out += npr;
         if (prims && prims->kind == JK_ARR) {
             for (u32 c = prims->child; c != 0; c = d->nodes[c].next) {
                 emit_prim(out, d, c, world, bin, bin_len, tex_cache, tex_w, tex_h, tex_a, ntex, mname, nn);
@@ -2423,6 +2467,8 @@ bool load_tree_glb(const char* path, TreeGlb* out) {
     g_wheel_by_name = 0;
     g_wheel_by_shape = 0;
     g_wheel_ends_n = 0;
+    g_walk_mesh_nodes = 0;
+    g_walk_prims_out = 0;
     out->wheel_axis = -1;
     out->nose_sign  = 0;
     std::printf("[glb] Loading tree model: %s\n", path);
@@ -2594,6 +2640,10 @@ bool load_tree_glb(const char* path, TreeGlb* out) {
 
     // Decide the shape-only wheel candidates now: the walk is done, so the car's floor and
     // its length/height axes are known, and this is still before attrib 8 is attached.
+    std::printf("[glb] %s walk: %u mesh-nodes, %u prims emitted, stored %u prims%s\n", out->label,
+                g_walk_mesh_nodes, g_walk_prims_out, out->nprims,
+                g_walk_prims_out == out->nprims ? " (no duplicates)" : " — DUPLICATE/PRIMEDROP BUG");
+    std::fflush(stdout);
     wheel_hunt_finish(out);
 
     // With the whole model measured, the axis roles are known, so the front/back wheel
