@@ -50,13 +50,13 @@ float shadow_at() {
     float bias = 0.0025;
     float vis = 0.0;
     vec2 texel = 1.0 / vec2(1024.0);
-    for (int y = -2; y <= 2; ++y) {
-        for (int x = -2; x <= 2; ++x) {
+    for (int y = -1; y <= 1; ++y) {
+        for (int x = -1; x <= 1; ++x) {
             float d = texture(uShadow, p.xy + vec2(x, y) * texel).r;
             vis += (p.z - bias > d) ? 0.42 : 1.0;
         }
     }
-    return vis / 25.0;
+    return vis / 9.0;
 }
 
 void main() {

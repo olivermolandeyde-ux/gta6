@@ -273,6 +273,49 @@ void mat_mul16(float* o, const float* a, const float* b) {
     std::memcpy(o, t, sizeof(t));
 }
 
+// Camera frustum from the same view/proj used for drawing (column-major math
+// matches the rest of this file). Conservative sphere test: never culls
+// anything visible; skips per-box draw calls (and their uniform uploads) for
+// off-screen buildings. Shadow pass is intentionally NOT culled here —
+// out-of-view casters can still shade the frame.
+struct CamFrustum {
+    float p[6][4];
+};
+
+void frustum_from_clip(CamFrustum* f, const float* view, const float* proj) {
+    float m[16];
+    mat_mul16(m, proj, view);
+    // row i of clip = (m[i], m[4+i], m[8+i], m[12+i]); planes = row3 +/- rowN.
+    const int s[6] = {1, -1, 1, -1, 1, -1};
+    const int r[6] = {0, 0, 1, 1, 2, 2};
+    for (u32 i = 0; i < 6u; ++i) {
+        const float a = static_cast<float>(s[i]);
+        const int k = r[i];
+        f->p[i][0] = m[12] + a * m[k];
+        f->p[i][1] = m[13] + a * m[4 + k];
+        f->p[i][2] = m[14] + a * m[8 + k];
+        f->p[i][3] = m[15] + a * m[12 + k];
+        const float l = std::sqrt(f->p[i][0] * f->p[i][0] + f->p[i][1] * f->p[i][1] +
+                                  f->p[i][2] * f->p[i][2]);
+        if (l > 1e-9f) {
+            const float inv = 1.f / l;
+            f->p[i][0] *= inv;
+            f->p[i][1] *= inv;
+            f->p[i][2] *= inv;
+            f->p[i][3] *= inv;
+        }
+    }
+}
+
+bool frustum_holds(const CamFrustum* f, float x, float y, float z, float rad) {
+    for (u32 i = 0; i < 6u; ++i) {
+        if (f->p[i][0] * x + f->p[i][1] * y + f->p[i][2] * z + f->p[i][3] < -rad) {
+            return false;
+        }
+    }
+    return true;
+}
+
 // Crosswalk geometry fingerprint (single source of truth; logged once from
 // buildMesh so any screenshot can be traced to the exact dimensions that drew it).
 // Zebra style (photo ground truth): bars run PARALLEL to traffic.
@@ -3653,6 +3696,8 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
     float view[16], proj[16];
     mat_look(view, camera_pos, camera_target, float3{0.f, 1.f, 0.f});
     mat_persp(proj, 1.22173047f, static_cast<float>(width) / max_of(1, height), 0.15f, 8000.f);
+    CamFrustum frust;
+    frustum_from_clip(&frust, view, proj); // once per frame; main pass only
     (void)sun_dir;
     const float3 sun = float3{0.35f, 0.88f, 0.32f};
 
@@ -3734,18 +3779,9 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
             if (sports_glb.instance_count > 0) {
                 draw_instanced_glb(&sports_glb, tree_shadow_prog);
             }
-            // New GLB buildings cast shadows too.
-            for (u32 v = 0; v < 3u; ++v) {
-                if (shop_glb[v].instance_count > 0) {
-                    draw_instanced_glb(&shop_glb[v], tree_shadow_prog);
-                }
-                if (apartment_glb[v].instance_count > 0) {
-                    draw_instanced_glb(&apartment_glb[v], tree_shadow_prog);
-                }
-                if (warehouse_glb[v].instance_count > 0) {
-                    draw_instanced_glb(&warehouse_glb[v], tree_shadow_prog);
-                }
-            }
+            // PERF: the 9 GLB building variants skip the shadow-map pass (they are
+            // the heaviest instanced meshes). They still RECEIVE shadows via the
+            // uShadow sample in the main pass; small props keep casting.
             // Street props cast shadows too.
             if (bin_glb.instance_count > 0) {
                 draw_instanced_glb(&bin_glb, tree_shadow_prog);
@@ -3917,6 +3953,12 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
         const float dx = b->position.x - camera_pos.x;
         const float dz = b->position.z - camera_pos.z;
         if (dx * dx + dz * dz > 1400.f * 1400.f) {
+            continue;
+        }
+        const float brad =
+            0.5f * std::sqrt(b->width * b->width + b->height * b->height + b->depth * b->depth);
+        if (!frustum_holds(&frust, b->position.x, b->position.y + b->height * 0.5f,
+                            b->position.z, brad)) {
             continue;
         }
         model_trs(model, b->position, b->width, b->height, b->depth);
@@ -4099,6 +4141,9 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
             const float cx = static_cast<float>(i) * kCityBlockPitch;
             const float cz = static_cast<float>(j) * kCityBlockPitch;
             if (!near_xz(float3{cx, 0.f, cz}, camera_pos, 180.f)) {
+                continue;
+            }
+            if (!frustum_holds(&frust, cx, kRoadY + 2.f, cz, 30.f)) {
                 continue;
             }
             const float start = kXwalkStart; // 11: just outside the junction box
