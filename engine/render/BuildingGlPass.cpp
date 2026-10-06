@@ -2415,7 +2415,11 @@ void BuildingGlPass::buildMesh(World& world) {
         static float hyd_mats[kTreeInstanceCap * 16];
         static float ben_mats[kTreeInstanceCap * 16];
         u32 n_bin = 0, n_hyd = 0, n_ben = 0;
-        u32 bad_band = 0;
+        u32 bad_band = 0, too_close = 0;
+        // Every placed prop (all three types) lands here: 4 m minimum spacing
+        // kills hydrant-in-bench overlaps no matter which loop placed first.
+        static float prop_taken_xz[460 * 2];
+        u32 n_prop_xz = 0;
 
         auto road_dist = [](float v) -> float {
             float f = std::fmod(v, kCityBlockPitch);
@@ -2493,6 +2497,21 @@ void BuildingGlPass::buildMesh(World& world) {
                 ++bad_band;
                 return false;
             }
+            {
+                bool clash = false;
+                for (u32 i = 0; i < n_prop_xz; ++i) {
+                    const float pdx = x - prop_taken_xz[i * 2u];
+                    const float pdz = z - prop_taken_xz[i * 2u + 1u];
+                    if (pdx * pdx + pdz * pdz < 16.f) {
+                        clash = true;
+                        break;
+                    }
+                }
+                if (clash) {
+                    ++too_close;
+                    return false;
+                }
+            }
             const float up0 = (z_up == 0) ? g->ymin : tree_up_min(g);
             const float y = kCityPlateauY + 0.26f - up0 * sc;
             tree_yaw_mat(&mats[n * 16], x, y, z, prop_yaw(x, z), sc, z_up);
@@ -2511,10 +2530,16 @@ void BuildingGlPass::buildMesh(World& world) {
                 }
             }
             ++n;
+            if (n_prop_xz < 460u) {
+                prop_taken_xz[n_prop_xz * 2u] = x;
+                prop_taken_xz[n_prop_xz * 2u + 1u] = z;
+                ++n_prop_xz;
+            }
             return true;
         };
 
-        // Bins ~200: intersection corners (band offset 11.5 both axes).
+        // Bins ~200: tucked into intersection corners (band offset 11.9 both axes,
+        // clear of the zebra paint which spans +-5 m across each arm).
         u32 bin_tried = 0;
         if (bin_glb.nprims > 0) {
             for (u32 j = 0; j <= kCityBlocks && n_bin < 220u; ++j) {
@@ -2524,8 +2549,8 @@ void BuildingGlPass::buildMesh(World& world) {
                         continue; // ~45% of intersections -> ~198 bins
                     }
                     ++bin_tried;
-                    const float sx = (h & 16u) ? 11.5f : -11.5f;
-                    const float sz = (h & 32u) ? 11.5f : -11.5f;
+                    const float sx = (h & 16u) ? 11.9f : -11.9f;
+                    const float sz = (h & 32u) ? 11.9f : -11.9f;
                     push_prop(&bin_glb, bin_mats, n_bin,
                               static_cast<float>(i) * kCityBlockPitch + sx,
                               static_cast<float>(j) * kCityBlockPitch + sz, sc_bin,
@@ -2541,7 +2566,7 @@ void BuildingGlPass::buildMesh(World& world) {
                 for (u32 k = 0; k < 5u && n_hyd < 115u; ++k) {
                     ++hyd_tried;
                     const float x = 60.f + static_cast<float>(k) * 480.f;
-                    const float side = ((j + k) & 1u) ? 11.5f : -11.5f;
+                    const float side = ((j + k) & 1u) ? 10.8f : -10.8f;
                     push_prop(&hydrant_glb, hyd_mats, n_hyd, x,
                               static_cast<float>(j) * kCityBlockPitch + side, sc_hyd,
                               hydrant_glb.z_up, 2.0f, "hydrant");
@@ -2563,18 +2588,18 @@ void BuildingGlPass::buildMesh(World& world) {
                     switch (h & 3u) {
                     case 0:
                         x = static_cast<float>(bx) * kCityBlockPitch + 60.f;
-                        z = static_cast<float>(bz) * kCityBlockPitch + 11.5f;
+                        z = static_cast<float>(bz) * kCityBlockPitch + 10.8f;
                         break;
                     case 1:
                         x = static_cast<float>(bx) * kCityBlockPitch + 60.f;
-                        z = static_cast<float>(bz + 1u) * kCityBlockPitch - 11.5f;
+                        z = static_cast<float>(bz + 1u) * kCityBlockPitch - 10.8f;
                         break;
                     case 2:
-                        x = static_cast<float>(bx) * kCityBlockPitch + 11.5f;
+                        x = static_cast<float>(bx) * kCityBlockPitch + 10.8f;
                         z = static_cast<float>(bz) * kCityBlockPitch + 60.f;
                         break;
                     default:
-                        x = static_cast<float>(bx + 1u) * kCityBlockPitch - 11.5f;
+                        x = static_cast<float>(bx + 1u) * kCityBlockPitch - 10.8f;
                         z = static_cast<float>(bz) * kCityBlockPitch + 60.f;
                         break;
                     }
@@ -2660,6 +2685,10 @@ void BuildingGlPass::buildMesh(World& world) {
         if (bad_band > 0) {
             std::printf("[props] WARNING: %u placements outside sidewalk band (rejected)\n",
                         bad_band);
+        }
+        if (too_close > 0) {
+            std::printf("[props] spacing: %u candidates rejected within 4 m of another prop\n",
+                        too_close);
         }
         std::fflush(stdout);
     }
