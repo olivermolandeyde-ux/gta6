@@ -17,6 +17,9 @@ struct BuildingGlPass {
     unsigned cube_ibo;
     unsigned street_vao;
     unsigned street_vbo;
+    unsigned lot_vao;   // static block-interior ground (one quad per block)
+    unsigned lot_ibo;
+    unsigned lot_count; // index count for the lot mesh
     unsigned cloud_prog;
     unsigned cyl_vao, cyl_ibo, cyl_count;
     unsigned sph_vao, sph_ibo, sph_count;

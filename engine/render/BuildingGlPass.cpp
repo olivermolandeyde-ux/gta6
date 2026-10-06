@@ -827,6 +827,183 @@ float building_footprint_scale(const TreeGlb* t, float target_w, float target_d)
     return s;
 }
 
+// Startup audit: scan a GLB file's node list for non-identity rotations on mesh
+// nodes (a baked tilt). Standalone JSON scan — does not touch the GLB loader.
+// Returns the number of rotated mesh nodes found (0 = clean or unreadable).
+u32 report_glb_node_rotations(const char* base, const char* label) {
+    char paths[3][512];
+    std::snprintf(paths[0], sizeof(paths[0]), "%s/assets/models/buildings/%s", LEONIDA_SOURCE_DIR,
+                  base);
+    std::snprintf(paths[1], sizeof(paths[1]), "assets/models/buildings/%s", base);
+    std::snprintf(paths[2], sizeof(paths[2]), "build/assets/models/buildings/%s", base);
+    FILE* f = nullptr;
+    for (u32 i = 0; i < 3 && !f; ++i) {
+        f = std::fopen(paths[i], "rb");
+    }
+    if (!f) {
+        return 0;
+    }
+    std::fseek(f, 0, SEEK_END);
+    const long sz = std::ftell(f);
+    std::fseek(f, 0, SEEK_SET);
+    if (sz < 20 || sz > 32L * 1024L * 1024L) {
+        std::fclose(f);
+        return 0;
+    }
+    char* buf = static_cast<char*>(std::malloc(static_cast<usize>(sz) + 1));
+    if (!buf) {
+        std::fclose(f);
+        return 0;
+    }
+    const usize nread = std::fread(buf, 1, static_cast<usize>(sz), f);
+    std::fclose(f);
+    buf[nread] = 0;
+    u32 magic = 0;
+    std::memcpy(&magic, buf, 4);
+    if (magic != 0x46546C67u || nread < 20) {
+        std::free(buf);
+        return 0;
+    }
+    // First chunk must be JSON.
+    u32 json_len = 0;
+    std::memcpy(&json_len, buf + 12, 4);
+    if (12 + 8 + json_len > nread) {
+        std::free(buf);
+        return 0;
+    }
+    const char* json = buf + 20;
+    const char* jend = json + json_len;
+    // Find the "nodes" array.
+    const char* arr = nullptr;
+    for (const char* p = json; p + 7 < jend; ++p) {
+        if (p[0] == '"' && std::strncmp(p + 1, "nodes\"", 6) == 0) {
+            const char* q = p + 7;
+            while (q < jend && (*q == ' ' || *q == '\t' || *q == '\n' || *q == '\r' || *q == ':')) {
+                ++q;
+            }
+            if (q < jend && *q == '[') {
+                arr = q + 1;
+            }
+            break;
+        }
+    }
+    u32 rotated = 0;
+    u32 total = 0;
+    if (arr) {
+        // Walk top-level objects of the array; strings respected for depth.
+        const char* p = arr;
+        while (p < jend) {
+            while (p < jend && *p != '{' && *p != ']') {
+                ++p;
+            }
+            if (p >= jend || *p == ']') {
+                break;
+            }
+            const char* obj = p;
+            int depth = 0;
+            bool in_str = false;
+            while (p < jend) {
+                const char c = *p;
+                if (in_str) {
+                    if (c == '\\') {
+                        p += 2;
+                        continue;
+                    }
+                    if (c == '"') {
+                        in_str = false;
+                    }
+                    ++p;
+                    continue;
+                }
+                if (c == '"') {
+                    in_str = true;
+                    ++p;
+                    continue;
+                }
+                if (c == '{') {
+                    ++depth;
+                } else if (c == '}') {
+                    --depth;
+                    ++p;
+                    if (depth == 0) {
+                        break;
+                    }
+                    continue;
+                }
+                ++p;
+            }
+            const char* obj_end = p; // one past '}'
+            ++total;
+            // rotation array inside this object?
+            float q[4] = {0.f, 0.f, 0.f, 1.f};
+            bool has_rot = false;
+            for (const char* r = obj; r + 10 < obj_end; ++r) {
+                if (r[0] == '"' && std::strncmp(r + 1, "rotation\"", 9) == 0) {
+                    const char* b = r + 10;
+                    while (b < obj_end && *b != '[') {
+                        ++b;
+                    }
+                    if (b < obj_end) {
+                        char* e = nullptr;
+                        bool ok = true;
+                        const char* s = b + 1;
+                        for (u32 k = 0; k < 4; ++k) {
+                            q[k] = std::strtof(s, &e);
+                            if (e == s) {
+                                ok = false;
+                                break;
+                            }
+                            s = e;
+                        }
+                        has_rot = ok;
+                    }
+                    break;
+                }
+            }
+            if (has_rot && (std::fabs(q[0]) > 1e-3f || std::fabs(q[1]) > 1e-3f ||
+                            std::fabs(q[2]) > 1e-3f || std::fabs(std::fabs(q[3]) - 1.f) > 1e-3f)) {
+                // name + mesh presence for the report.
+                char nm[96] = {'?', 0};
+                bool has_mesh = false;
+                for (const char* r = obj; r + 6 < obj_end; ++r) {
+                    if (r[0] == '"' && std::strncmp(r + 1, "name\"", 5) == 0) {
+                        const char* s = r + 6;
+                        while (s < obj_end && *s != '"') {
+                            ++s;
+                        }
+                        if (s < obj_end) {
+                            ++s;
+                            u32 k = 0;
+                            while (s + k < obj_end && s[k] != '"' && k + 1u < sizeof(nm)) {
+                                nm[k] = s[k];
+                                ++k;
+                            }
+                            nm[k] = 0;
+                        }
+                    }
+                    if (r[0] == '"' && std::strncmp(r + 1, "mesh\"", 5) == 0) {
+                        has_mesh = true;
+                    }
+                }
+                std::printf("[buildings] node-rot: %s node '%s' rotation "
+                            "(%.3f, %.3f, %.3f, %.3f)%s\n",
+                            label, nm, static_cast<double>(q[0]), static_cast<double>(q[1]),
+                            static_cast<double>(q[2]), static_cast<double>(q[3]),
+                            has_mesh ? " HAS MESH — SUSPECT (re-author this asset)" : "");
+                ++rotated;
+            }
+            (void)obj_end;
+        }
+        if (rotated == 0) {
+            std::printf("[buildings] node-rot: %s: %u nodes scanned, no rotated mesh nodes\n",
+                        label, total);
+        }
+    }
+    std::free(buf);
+    std::fflush(stdout);
+    return rotated;
+}
+
 } // namespace
 
 bool BuildingGlPass::init() {
@@ -866,6 +1043,7 @@ bool BuildingGlPass::init() {
     glow_count = 0;
     cube_vao = cube_vbo = cube_ibo = 0;
     street_vao = street_vbo = 0;
+    lot_vao = lot_ibo = lot_count = 0;
     street_count = 0;
     num_buildings = 0;
 
@@ -1143,12 +1321,14 @@ bool BuildingGlPass::init() {
             // Log texture info for each primitive
             for (u32 p = 0; p < dst->nprims; ++p) {
                 const TreePrim& pr = dst->prims[p];
-                std::printf("[buildings]   Prim %u: %u verts, tex=%u (%ux%u), emit_tex=%u, "
-                            "has_alpha=%d, alpha_mask=%d, gl_mode=%d\n",
-                            p, pr.nidx, pr.tex, pr.tex_w, pr.tex_h, pr.tex_emit,
-                            pr.has_alpha, pr.alpha_mask, pr.gl_mode);
+                std::printf("[buildings]   Prim %u of %s: %u verts, tex=%u (%ux%u), "
+                            "has_texture=%d, emit_tex=%u, has_alpha=%d, alpha_mask=%d, gl_mode=%d\n",
+                            p, type, pr.nidx, pr.tex, pr.tex_w, pr.tex_h, pr.tex != 0 ? 1 : 0,
+                            pr.tex_emit, pr.has_alpha, pr.alpha_mask, pr.gl_mode);
                 if (pr.tex == 0) {
-                    std::printf("[buildings]   WARNING: Prim %u has NO texture bound! Will render pink.\n", p);
+                    std::printf("[buildings]   WARNING: %s prim %u has NO texture: 1x1 white "
+                                "fallback is bound (renders solid, not pink).\n",
+                                type, p);
                 }
             }
             if (dst->nprims > 0) {
@@ -1214,6 +1394,85 @@ bool BuildingGlPass::init() {
         }
     }
     std::printf("[buildings] All building primitives now render as OPAQUE (no alpha blending)\n");
+    // Startup texture audit (GL readback, once): mean color + hot-magenta texel
+    // fraction per prim pinpoints baked placeholder textures vs. missing binds.
+    // A magenta building whose prims scan clean is tinted by vertex color/COLOR_0
+    // in the asset, not by sampling — also re-authored, not placement.
+    {
+        const TreeGlb* arrs[3] = {shop_glb, apartment_glb, warehouse_glb};
+        const char* tnames[3] = {"shop", "apartment", "warehouse"};
+        const char* vnames[9] = {"shop_small_variant_a", "shop_small_variant_b",
+                                 "shop_small_variant_c", "apartment_5story_variant_a",
+                                 "apartment_5story_variant_b", "apartment_5story_variant_c",
+                                 "warehouse_industrial_variant_a", "warehouse_industrial_variant_b",
+                                 "warehouse_industrial_variant_c"};
+        for (u32 t = 0; t < 3u; ++t) {
+            for (u32 v = 0; v < 3u; ++v) {
+                const TreeGlb& g = arrs[t][v];
+                const char* label = vnames[t * 3u + v];
+                for (u32 p = 0; p < g.nprims; ++p) {
+                    const TreePrim& pr = g.prims[p];
+                    if (pr.tex == 0) {
+                        std::printf("[buildings] texscan: %s prim %u: NO TEXTURE "
+                                    "(white fallback bound; renders solid %s)\n",
+                                    label, p, tnames[t]);
+                        continue;
+                    }
+                    GLint tw = 0, th = 0;
+                    glBindTexture(GL_TEXTURE_2D, pr.tex);
+                    glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &tw);
+                    glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &th);
+                    if (tw <= 0 || th <= 0 || tw > 2048 || th > 2048) {
+                        std::printf("[buildings] texscan: %s prim %u: unreadable size %dx%d\n",
+                                    label, p, tw, th);
+                        continue;
+                    }
+                    u8* px = static_cast<u8*>(std::malloc(static_cast<usize>(tw) * th * 4));
+                    if (!px) {
+                        continue;
+                    }
+                    glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, px);
+                    u64 sr = 0, sg = 0, sb = 0;
+                    u32 mag = 0;
+                    const u32 n = static_cast<u32>(tw) * static_cast<u32>(th);
+                    for (u32 i = 0; i < n; ++i) {
+                        const u8 r = px[i * 4u], gg = px[i * 4u + 1u], b = px[i * 4u + 2u];
+                        sr += r;
+                        sg += gg;
+                        sb += b;
+                        if (r > 230 && b > 220 && gg < 50) {
+                            ++mag;
+                        }
+                    }
+                    std::free(px);
+                    std::printf("[buildings] texscan: %s prim %u %dx%d mean=(%u,%u,%u) "
+                                "magenta=%u (%.2f%%)%s\n",
+                                label, p, tw, th, (u32)(sr / n), (u32)(sg / n), (u32)(sb / n),
+                                mag, 100.0 * (double)mag / (double)n,
+                                mag > n / 20 ? " <-- BAKED PLACEHOLDER, re-author asset" : "");
+                }
+            }
+        }
+        std::fflush(stdout);
+    }
+    // Startup node-rotation audit: which of the 9 files bakes a tilt into a mesh node.
+    {
+        const char* files[9] = {
+            "shop_small_variant_a.glb", "shop_small_variant_b.glb", "shop_small_variant_c.glb",
+            "apartment_5story_variant_a.glb", "apartment_5story_variant_b.glb",
+            "apartment_5story_variant_c.glb", "warehouse_industrial_variant_a.glb",
+            "warehouse_industrial_variant_b.glb", "warehouse_industrial_variant_c.glb"};
+        const char* labels[9] = {
+            "shop_small_variant_a", "shop_small_variant_b", "shop_small_variant_c",
+            "apartment_5story_variant_a", "apartment_5story_variant_b",
+            "apartment_5story_variant_c", "warehouse_industrial_variant_a",
+            "warehouse_industrial_variant_b", "warehouse_industrial_variant_c"};
+        std::printf("[buildings] --- NODE ROTATION AUDIT ---\n");
+        for (u32 i = 0; i < 9u; ++i) {
+            report_glb_node_rotations(files[i], labels[i]);
+        }
+        std::fflush(stdout);
+    }
     std::printf("[buildings] ==========================================\n\n");
     std::fflush(stdout);
     constexpr const char* kGlowFbVs =
@@ -1326,6 +1585,41 @@ void BuildingGlPass::buildMesh(World& world) {
     std::printf("[city] gpu mesh buildings=%u street_verts=%u (non-overlapping tiles)\n", num_buildings,
                 n);
     std::fflush(stdout);
+
+    // Lot ground: one static quad per block interior. Spans road-half inset with a
+    // 0.5 m overlap tucking under the road/sidewalk band (no seams), 4 cm below
+    // the road quads (no z-fight; roads win the overlap), same winding as street
+    // quads (drawn unculled). 400 quads = 1600 verts / 2400 indices, GL_STATIC_DRAW.
+    {
+        static SolidVert lot_verts[kCityBlocks * kCityBlocks * 4];
+        static u32 lot_idx[kCityBlocks * kCityBlocks * 6];
+        u32 lot_vn = 0, lot_in = 0;
+        const float lot_y = kCityPlateauY - 0.04f;
+        const float inset = kCityStreetWidth * 0.5f - 0.5f;
+        for (u32 bz = 0; bz < kCityBlocks; ++bz) {
+            for (u32 bx = 0; bx < kCityBlocks; ++bx) {
+                const float x0 = static_cast<float>(bx) * kCityBlockPitch + inset;
+                const float x1 = static_cast<float>(bx + 1) * kCityBlockPitch - inset;
+                const float z0 = static_cast<float>(bz) * kCityBlockPitch + inset;
+                const float z1 = static_cast<float>(bz + 1) * kCityBlockPitch - inset;
+                const u32 base = lot_vn;
+                solid_push(lot_verts, &lot_vn, x0, lot_y, z0, 0.f, 1.f, 0.f, 0.f, 0.f);
+                solid_push(lot_verts, &lot_vn, x1, lot_y, z0, 0.f, 1.f, 0.f, 1.f, 0.f);
+                solid_push(lot_verts, &lot_vn, x1, lot_y, z1, 0.f, 1.f, 0.f, 1.f, 1.f);
+                solid_push(lot_verts, &lot_vn, x0, lot_y, z1, 0.f, 1.f, 0.f, 0.f, 1.f);
+                lot_idx[lot_in++] = base + 0;
+                lot_idx[lot_in++] = base + 1;
+                lot_idx[lot_in++] = base + 2;
+                lot_idx[lot_in++] = base + 0;
+                lot_idx[lot_in++] = base + 2;
+                lot_idx[lot_in++] = base + 3;
+            }
+        }
+        upload_solid(&lot_vao, &lot_ibo, &lot_count, lot_verts, lot_vn, lot_idx, lot_in);
+        std::printf("[city] lot mesh: verts=%u (expect %u)\n", lot_in,
+                    kCityBlocks * kCityBlocks * 6);
+        std::fflush(stdout);
+    }
 
     static float sky_mats[kTreeInstanceCap * 16];
     u32 sky_n = 0;
@@ -2310,6 +2604,32 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
     if (street_prog && street_count > 0) {
         glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(street_count));
     }
+    // Lot ground: one static draw, grass green, unlit-detail off. Inherits fog and
+    // shadow-map reception from the already-set building_prog uniforms, so trees
+    // and buildings shadow the grass for free.
+    glUseProgram(building_prog);
+    glDisable(GL_CULL_FACE);
+    glDepthMask(GL_TRUE);
+    glBindVertexArray(lot_vao);
+    {
+        float ident[16];
+        mat_ident(ident);
+        glUniformMatrix4fv(glGetUniformLocation(building_prog, "model"), 1, GL_FALSE, ident);
+        bind_inv_scale(building_prog, 1.f, 1.f, 1.f);
+        glUniform1i(glGetUniformLocation(building_prog, "uUseTex"), 0);
+        glUniform1i(glGetUniformLocation(building_prog, "uAlphaLeaf"), 0);
+        glUniform1i(glGetUniformLocation(building_prog, "uFacade"), 0);
+        glUniform3f(glGetUniformLocation(building_prog, "albedo"), 0.16f, 0.30f, 0.14f);
+        glUniform1f(glGetUniformLocation(building_prog, "roughness"), 0.9f);
+        glUniform1f(glGetUniformLocation(building_prog, "emissionBoost"), 0.f);
+        glUniform1f(glGetUniformLocation(building_prog, "floors"), 1.f);
+        glUniform1i(glGetUniformLocation(building_prog, "district"), 2);
+        glUniform1i(glGetUniformLocation(building_prog, "windowStyle"), 0);
+        if (lot_count > 0) {
+            glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(lot_count), GL_UNSIGNED_INT,
+                           nullptr);
+        }
+    }
     glEnable(GL_CULL_FACE); // restore culling for the procedural-box passes
     glUseProgram(building_prog);
     glBindVertexArray(cube_vao);
@@ -2577,6 +2897,15 @@ void BuildingGlPass::shutdown() {
     if (street_vbo) {
         glDeleteBuffers(1, &street_vbo);
     }
+    if (lot_vao) {
+        glDeleteVertexArrays(1, &lot_vao);
+        lot_vao = 0;
+    }
+    if (lot_ibo) {
+        glDeleteBuffers(1, &lot_ibo);
+        lot_ibo = 0;
+    }
+    lot_count = 0;
     if (building_prog) {
         glDeleteProgram(building_prog);
     }
