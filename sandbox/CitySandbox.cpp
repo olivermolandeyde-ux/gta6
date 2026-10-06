@@ -221,8 +221,8 @@ int main(int argc, char** argv) {
                 terrain.cameraPos    = float3{1200.f, 6.7f, 80.f};
                 terrain.cameraTarget = float3{1200.f, 6.0f, 140.f};
             } else if (frames < 12) {
-                terrain.cameraPos    = float3{1225.f, 6.7f, 95.f};
-                terrain.cameraTarget = float3{1211.f, 5.2f, 109.f};
+                terrain.cameraPos    = float3{1352.f, 6.7f, 100.f};
+                terrain.cameraTarget = float3{1332.f, 5.2f, 119.f};
             } else {
                 terrain.cameraPos    = float3{1200.f, 250.f, 121.f};
                 terrain.cameraTarget = float3{1200.f, 5.f, 120.f};

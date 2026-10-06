@@ -1686,10 +1686,10 @@ void BuildingGlPass::buildMesh(World& world) {
             const float cz = static_cast<float>(j) * pitch;
             const float u_in0 = 3.f / 26.f;  // u at 10 m from centre (asphalt edge)
             const float u_in1 = 23.f / 26.f; // u at 10 m, far side
-            // Corner overlap bounds: 0.2 m onto the road quads (9.8) and onto the
-            // lot side (13.2), same street Y. UVs continue the span mapping
-            // exactly, so overlaps share identical colours (invisible, no fight).
-            const float cu0 = 22.8f / 26.f; // u at 9.8 m
+            // Corner overlap bounds: start EXACTLY at road_half (10.0) — never
+            // inside the asphalt domain — with 0.2 m overlap outward onto the
+            // lot side only (13.2, hidden below). Same street Y. UVs continue
+            // the span mapping exactly.
             const float cu1 = 26.2f / 26.f; // u at 13.2 m
             // Asphalt centre box +-10.
             emit_aabb_quad(verts, &n, cx - 10.f, cz - 10.f, cx + 10.f, cz + 10.f, y, 0.5f, 0.f,
@@ -1704,15 +1704,15 @@ void BuildingGlPass::buildMesh(World& world) {
                            u_in0, 0.f, u_in1, 0.f, u_in1, 0.f);
             emit_aabb_quad(verts, &n, cx - 13.f, cz - 10.f, cx - 10.f, cz + 10.f, y, u_in0, 0.f,
                            u_in0, 0.f, u_in1, 0.f, u_in1, 0.f);
-            // Sidewalk corners: full [9.8,13.2]^2 with 0.2 m overlap each way.
-            emit_aabb_quad(verts, &n, cx + 9.8f, cz + 9.8f, cx + 13.2f, cz + 13.2f, y, cu0, 0.f,
-                           cu0, 0.f, cu1, 0.f, cu1, 0.f);
-            emit_aabb_quad(verts, &n, cx + 9.8f, cz - 13.2f, cx + 13.2f, cz - 9.8f, y, 1.f - cu1, 0.f,
-                           1.f - cu1, 0.f, 1.f - cu0, 0.f, 1.f - cu0, 0.f);
-            emit_aabb_quad(verts, &n, cx - 13.2f, cz + 9.8f, cx - 9.8f, cz + 13.2f, y, cu0, 0.f,
-                           cu0, 0.f, cu1, 0.f, cu1, 0.f);
-            emit_aabb_quad(verts, &n, cx - 13.2f, cz - 13.2f, cx - 9.8f, cz - 9.8f, y, 1.f - cu1, 0.f,
-                           1.f - cu1, 0.f, 1.f - cu0, 0.f, 1.f - cu0, 0.f);
+            // Sidewalk corners: [10.0,13.2]^2 — edge-to-edge with the band.
+            emit_aabb_quad(verts, &n, cx + 10.f, cz + 10.f, cx + 13.2f, cz + 13.2f, y, u_in1, 0.f,
+                           u_in1, 0.f, cu1, 0.f, cu1, 0.f);
+            emit_aabb_quad(verts, &n, cx + 10.f, cz - 13.2f, cx + 13.2f, cz - 10.f, y, 1.f - cu1, 0.f,
+                           1.f - cu1, 0.f, u_in0, 0.f, u_in0, 0.f);
+            emit_aabb_quad(verts, &n, cx - 13.2f, cz + 10.f, cx - 10.f, cz + 13.2f, y, u_in1, 0.f,
+                           u_in1, 0.f, cu1, 0.f, cu1, 0.f);
+            emit_aabb_quad(verts, &n, cx - 13.2f, cz - 13.2f, cx - 10.f, cz - 10.f, y, 1.f - cu1, 0.f,
+                           1.f - cu1, 0.f, u_in0, 0.f, u_in0, 0.f);
         }
     }
     for (u32 j = 0; j < nline; ++j) {
