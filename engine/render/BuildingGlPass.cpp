@@ -184,15 +184,14 @@ constexpr const char* kStVs =
 constexpr const char* kStFs =
     "#version 330 core\n"
     "in vec2 UV; in vec3 FragPos; out vec4 FragColor;\n"
-    "void main(){ vec3 asphalt=vec3(0.12,0.12,0.13); vec3 sidewalk=vec3(0.42,0.41,0.38); vec3 paint=vec3(0.92,0.86,0.35);\n"
-    "  float edge=step(0.88,abs(UV.x*2.0-1.0));\n"
+    "void main(){ vec3 asphalt=vec3(0.12,0.12,0.13); vec3 paint=vec3(0.92,0.86,0.35);\n"
     "  float dash=step(0.45,fract(UV.y*8.0))*(1.0-step(0.04,abs(UV.x-0.5)));\n"
     "  vec2 gmod=min(mod(FragPos.xz,120.0),120.0-mod(FragPos.xz,120.0));\n"
     "  float inBox=(1.0-step(11.0,gmod.x))*(1.0-step(11.0,gmod.y));\n"
     "  float bandZ=(1.0-step(9.5,gmod.x))*step(10.5,gmod.y)*(1.0-step(15.5,gmod.y));\n"
     "  float bandX=(1.0-step(9.5,gmod.y))*step(10.5,gmod.x)*(1.0-step(15.5,gmod.x));\n"
     "  dash*=1.0-max(inBox,max(bandZ,bandX));\n"
-    "  vec3 c=mix(asphalt,sidewalk,edge); c=mix(c,paint,dash); FragColor=vec4(c,1.0); }\n";
+    "  vec3 c=mix(asphalt,paint,dash); FragColor=vec4(c,1.0); }\n";
 
 // Unit cube 0..1, 24 verts (pos, nrm, uv).
 constexpr float kCube[] = {
@@ -1116,6 +1115,9 @@ bool BuildingGlPass::init() {
     cube_vao = cube_vbo = cube_ibo = 0;
     street_vao = street_vbo = 0;
     lot_vao = lot_ibo = lot_count = 0;
+    ring_vao = ring_ibo = ring_count = 0;
+    tex_sidewalk = 0;
+    tex_flat_n = 0;
     street_count = 0;
     num_buildings = 0;
 
@@ -1187,6 +1189,70 @@ bool BuildingGlPass::init() {
         tex_bark = gl_upload_rgba(rgba, kProcTexSize, kProcTexSize, true);
         proc_tex_leaf(rgba);
         tex_leaf = gl_upload_rgba(rgba, kProcTexSize, kProcTexSize, true);
+    }
+    // Sidewalk paver texture for the ring mesh (world-space tiled). Falls back
+    // to flat light-gray when the PNG is missing — never crashes, never magenta.
+    {
+        const char* cands[3] = {"assets/textures/sidewalk.png", "./assets/textures/sidewalk.png",
+                                "build/assets/textures/sidewalk.png"};
+        u8* file = nullptr;
+        u32 flen = 0;
+        for (u32 i = 0; i < 3 && !file; ++i) {
+            FILE* f = std::fopen(cands[i], "rb");
+            if (!f) {
+                continue;
+            }
+            std::fseek(f, 0, SEEK_END);
+            const long sz = std::ftell(f);
+            std::fseek(f, 0, SEEK_SET);
+            if (sz > 20 && sz < 16L * 1024L * 1024L) {
+                file = static_cast<u8*>(std::malloc(static_cast<usize>(sz)));
+                if (file && std::fread(file, 1, static_cast<usize>(sz), f) == static_cast<usize>(sz)) {
+                    flen = static_cast<u32>(sz);
+                } else {
+                    std::free(file);
+                    file = nullptr;
+                }
+            }
+            std::fclose(f);
+        }
+        u8* rgba = nullptr;
+        u32 tw = 0, th = 0;
+        if (file && decode_png_file_rgba(file, flen, &rgba, &tw, &th) && rgba && tw && th) {
+            glGenTextures(1, &tex_sidewalk);
+            glBindTexture(GL_TEXTURE_2D, tex_sidewalk);
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, static_cast<int>(tw), static_cast<int>(th),
+                         0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+            glGenerateMipmap(GL_TEXTURE_2D);
+            std::printf("[city] sidewalk texture: %ux%u from PNG (tiled world/2 m)\n", tw, th);
+            std::free(rgba);
+        } else {
+            tex_sidewalk = 0;
+            std::printf("[city] sidewalk texture missing: flat light-gray fallback\n");
+        }
+        if (file) {
+            std::free(file);
+        }
+        std::fflush(stdout);
+    }
+    // 1x1 flat normal so textured ground (uUseTex=1) gets no fake relief from
+    // whatever happens to sit on unit 1 (building.frag always samples uNormalTex
+    // in that branch).
+    {
+        const u8 flat[3] = {128, 128, 255};
+        glGenTextures(1, &tex_flat_n);
+        glBindTexture(GL_TEXTURE_2D, tex_flat_n);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, 1, 1, 0, GL_RGB, GL_UNSIGNED_BYTE, flat);
     }
     {
         constexpr const char* kShVs =
@@ -1675,22 +1741,14 @@ void BuildingGlPass::buildMesh(World& world) {
     const float pitch  = kCityBlockPitch;
     const u32   nline  = kCityBlocks + 1;
 
-    // Intersections as 9 quads: asphalt center box + 4 asphalt arm boxes (the
-    // roads run straight through) + 4 sidewalk corner quads that close the
-    // pedestrian ring. Corner/arm UVs continue the adjoining spans' u-mapping
-    // exactly (u across the road, v const: dash is shader-suppressed here), so
-    // shared edges never show a colour step, gap or overlap.
+    // Intersections as 5 asphalt quads (centre box + 4 arm boxes): the roads run
+    // straight through. Corners belong to the sidewalk ring mesh (own VAO).
     for (u32 j = 0; j < nline; ++j) {
         for (u32 i = 0; i < nline; ++i) {
             const float cx = static_cast<float>(i) * pitch;
             const float cz = static_cast<float>(j) * pitch;
             const float u_in0 = 3.f / 26.f;  // u at 10 m from centre (asphalt edge)
             const float u_in1 = 23.f / 26.f; // u at 10 m, far side
-            // Corner overlap bounds: start EXACTLY at road_half (10.0) — never
-            // inside the asphalt domain — with 0.2 m overlap outward onto the
-            // lot side only (13.2, hidden below). Same street Y. UVs continue
-            // the span mapping exactly.
-            const float cu1 = 26.2f / 26.f; // u at 13.2 m
             // Asphalt centre box +-10.
             emit_aabb_quad(verts, &n, cx - 10.f, cz - 10.f, cx + 10.f, cz + 10.f, y, 0.5f, 0.f,
                            0.5f, 0.f, 0.5f, 0.f, 0.5f, 0.f);
@@ -1704,15 +1762,6 @@ void BuildingGlPass::buildMesh(World& world) {
                            u_in0, 0.f, u_in1, 0.f, u_in1, 0.f);
             emit_aabb_quad(verts, &n, cx - 13.f, cz - 10.f, cx - 10.f, cz + 10.f, y, u_in0, 0.f,
                            u_in0, 0.f, u_in1, 0.f, u_in1, 0.f);
-            // Sidewalk corners: [10.0,13.2]^2 — edge-to-edge with the band.
-            emit_aabb_quad(verts, &n, cx + 10.f, cz + 10.f, cx + 13.2f, cz + 13.2f, y, u_in1, 0.f,
-                           u_in1, 0.f, cu1, 0.f, cu1, 0.f);
-            emit_aabb_quad(verts, &n, cx + 10.f, cz - 13.2f, cx + 13.2f, cz - 10.f, y, 1.f - cu1, 0.f,
-                           1.f - cu1, 0.f, u_in0, 0.f, u_in0, 0.f);
-            emit_aabb_quad(verts, &n, cx - 13.2f, cz + 10.f, cx - 10.f, cz + 13.2f, y, u_in1, 0.f,
-                           u_in1, 0.f, cu1, 0.f, cu1, 0.f);
-            emit_aabb_quad(verts, &n, cx - 13.2f, cz - 13.2f, cx - 10.f, cz - 10.f, y, 1.f - cu1, 0.f,
-                           1.f - cu1, 0.f, u_in0, 0.f, u_in0, 0.f);
         }
     }
     for (u32 j = 0; j < nline; ++j) {
@@ -1754,10 +1803,9 @@ void BuildingGlPass::buildMesh(World& world) {
         static u32 lot_idx[kCityBlocks * kCityBlocks * 6];
         u32 lot_vn = 0, lot_in = 0;
         const float lot_y = kCityPlateauY - 0.04f;
-        // Lot tucks UNDER the street/sidewalk (from 9.5): it sits 4 cm below at
-        // plateau-0.04, so the surfaces above hide its edge completely — no slit,
-        // no blue border. Never clip it to start at 13 (that opened a seam).
-        const float inset = kCityStreetWidth * 0.5f - 0.5f;
+        // Lot spans the FULL block [10,110]^2 and tucks UNDER the sidewalk ring
+        // (ring above hides the edge): no green poke-through, no slit.
+        const float inset = kCityStreetWidth * 0.5f;
         for (u32 bz = 0; bz < kCityBlocks; ++bz) {
             for (u32 bx = 0; bx < kCityBlocks; ++bx) {
                 const float x0 = static_cast<float>(bx) * kCityBlockPitch + inset;
@@ -1780,6 +1828,54 @@ void BuildingGlPass::buildMesh(World& world) {
         upload_solid(&lot_vao, &lot_ibo, &lot_count, lot_verts, lot_vn, lot_idx, lot_in);
         std::printf("[city] lot mesh: verts=%u (expect %u)\n", lot_in,
                     kCityBlocks * kCityBlocks * 6);
+        std::fflush(stdout);
+    }
+
+    // Sidewalk ring: 4 textured strips per block (N/S span full x so corners are
+    // covered — no corner quads, no holes). Same Y as the road (clean edge);
+    // polygon offset at draw time wins the overlap with the road quads below.
+    // UVs are world-space / 2 m with GL_REPEAT.
+    {
+        static SolidVert ring_verts[kCityBlocks * kCityBlocks * 16];
+        static u32 ring_idx[kCityBlocks * kCityBlocks * 24];
+        u32 ring_vn = 0, ring_in = 0;
+        const float ring_y = kCityPlateauY + 0.25f;
+        const float sw = 3.0f;
+        for (u32 bz = 0; bz < kCityBlocks; ++bz) {
+            for (u32 bx = 0; bx < kCityBlocks; ++bx) {
+                const float x0 = static_cast<float>(bx) * kCityBlockPitch + 10.f;
+                const float x1 = static_cast<float>(bx + 1u) * kCityBlockPitch - 10.f;
+                const float z0 = static_cast<float>(bz) * kCityBlockPitch + 10.f;
+                const float z1 = static_cast<float>(bz + 1u) * kCityBlockPitch - 10.f;
+                // N: full x, S: full x, W/E: inner z only.
+                const float q[4][4] = {{x0, z0, x1, z0 + sw},
+                                       {x0, z1 - sw, x1, z1},
+                                       {x0, z0 + sw, x0 + sw, z1 - sw},
+                                       {x1 - sw, z0 + sw, x1, z1 - sw}};
+                for (u32 s = 0; s < 4u; ++s) {
+                    const float ax0 = q[s][0], az0 = q[s][1], ax1 = q[s][2], az1 = q[s][3];
+                    const u32 base = ring_vn;
+                    solid_push(ring_verts, &ring_vn, ax0, ring_y, az0, 0.f, 1.f, 0.f,
+                               ax0 * 0.5f, az0 * 0.5f);
+                    solid_push(ring_verts, &ring_vn, ax1, ring_y, az0, 0.f, 1.f, 0.f,
+                               ax1 * 0.5f, az0 * 0.5f);
+                    solid_push(ring_verts, &ring_vn, ax1, ring_y, az1, 0.f, 1.f, 0.f,
+                               ax1 * 0.5f, az1 * 0.5f);
+                    solid_push(ring_verts, &ring_vn, ax0, ring_y, az1, 0.f, 1.f, 0.f,
+                               ax0 * 0.5f, az1 * 0.5f);
+                    ring_idx[ring_in++] = base + 0;
+                    ring_idx[ring_in++] = base + 1;
+                    ring_idx[ring_in++] = base + 2;
+                    ring_idx[ring_in++] = base + 0;
+                    ring_idx[ring_in++] = base + 2;
+                    ring_idx[ring_in++] = base + 3;
+                }
+            }
+        }
+        upload_solid(&ring_vao, &ring_ibo, &ring_count, ring_verts, ring_vn, ring_idx,
+                     ring_in);
+        std::printf("[city] sidewalk ring: quads=%u (expect %u)\n", ring_in / 6u,
+                    kCityBlocks * kCityBlocks * 4u);
         std::fflush(stdout);
     }
 
@@ -3395,6 +3491,46 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
                            nullptr);
         }
     }
+    // Sidewalk ring: textured pavers (or flat gray fallback). Same Y as the road
+    // with polygon offset winning the overlap; fog/shadow uniforms inherited.
+    // building.frag scales albedo UV by (1.6, floors*0.28): floors=6 keeps the
+    // world/2 m tiles ~square; uFacade=0 keeps walls/windows off.
+    glDisable(GL_CULL_FACE);
+    glDepthMask(GL_TRUE);
+    glEnable(GL_POLYGON_OFFSET_FILL);
+    glPolygonOffset(-1.f, -1.f);
+    glBindVertexArray(ring_vao);
+    {
+        float ident[16];
+        mat_ident(ident);
+        glUniformMatrix4fv(glGetUniformLocation(building_prog, "model"), 1, GL_FALSE, ident);
+        bind_inv_scale(building_prog, 1.f, 1.f, 1.f);
+        glUniform1i(glGetUniformLocation(building_prog, "uAlphaLeaf"), 0);
+        glUniform1i(glGetUniformLocation(building_prog, "uFacade"), 0);
+        glUniform1f(glGetUniformLocation(building_prog, "roughness"), 0.9f);
+        glUniform1f(glGetUniformLocation(building_prog, "emissionBoost"), 0.f);
+        glUniform1f(glGetUniformLocation(building_prog, "floors"), 6.f);
+        glUniform1i(glGetUniformLocation(building_prog, "district"), 2);
+        glUniform1i(glGetUniformLocation(building_prog, "windowStyle"), 0);
+        if (tex_sidewalk) {
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, tex_sidewalk);
+            glUniform1i(glGetUniformLocation(building_prog, "uAlbedo"), 0);
+            glActiveTexture(GL_TEXTURE1);
+            glBindTexture(GL_TEXTURE_2D, tex_flat_n);
+            glUniform1i(glGetUniformLocation(building_prog, "uNormalTex"), 1);
+            glUniform1i(glGetUniformLocation(building_prog, "uUseTex"), 1);
+            glUniform3f(glGetUniformLocation(building_prog, "albedo"), 1.f, 1.f, 1.f);
+        } else {
+            glUniform1i(glGetUniformLocation(building_prog, "uUseTex"), 0);
+            glUniform3f(glGetUniformLocation(building_prog, "albedo"), 0.55f, 0.55f, 0.55f);
+        }
+        if (ring_count > 0) {
+            glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(ring_count), GL_UNSIGNED_INT,
+                           nullptr);
+        }
+    }
+    glDisable(GL_POLYGON_OFFSET_FILL);
     glEnable(GL_CULL_FACE); // restore culling for the procedural-box passes
     glUseProgram(building_prog);
     glBindVertexArray(cube_vao);
@@ -3660,6 +3796,23 @@ void BuildingGlPass::shutdown() {
         lot_ibo = 0;
     }
     lot_count = 0;
+    if (ring_vao) {
+        glDeleteVertexArrays(1, &ring_vao);
+        ring_vao = 0;
+    }
+    if (ring_ibo) {
+        glDeleteBuffers(1, &ring_ibo);
+        ring_ibo = 0;
+    }
+    ring_count = 0;
+    if (tex_sidewalk) {
+        glDeleteTextures(1, &tex_sidewalk);
+        tex_sidewalk = 0;
+    }
+    if (tex_flat_n) {
+        glDeleteTextures(1, &tex_flat_n);
+        tex_flat_n = 0;
+    }
     if (building_prog) {
         glDeleteProgram(building_prog);
     }

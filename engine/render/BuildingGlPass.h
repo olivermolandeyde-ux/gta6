@@ -20,6 +20,11 @@ struct BuildingGlPass {
     unsigned lot_vao;   // static block-interior ground (one quad per block)
     unsigned lot_ibo;
     unsigned lot_count; // index count for the lot mesh
+    unsigned ring_vao;  // static sidewalk ring (textured strips per block)
+    unsigned ring_ibo;
+    unsigned ring_count; // index count for the ring mesh
+    unsigned tex_sidewalk; // assets/textures/sidewalk.png, or 0 = flat gray fallback
+    unsigned tex_flat_n;   // 1x1 flat normal for textured non-facade draws
     unsigned cloud_prog;
     unsigned cyl_vao, cyl_ibo, cyl_count;
     unsigned sph_vao, sph_ibo, sph_count;

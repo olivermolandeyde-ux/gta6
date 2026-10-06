@@ -71,5 +71,9 @@ void               tree_glb_shutdown(TreeGlb* t);
 void               tree_glb_set_instances(TreeGlb* t, const float* mats16, u32 count);
 // Per-instance wheel spin angles in radians, already scaled to this model's wheel radius.
 void               tree_glb_set_wheel_angles(TreeGlb* t, const float* angles, u32 count);
+// Standalone PNG decode for non-GLB callers (ground textures). Engine decoder,
+// no ImageIO. Returns malloc'd RGBA, w/h set on success.
+[[nodiscard]] bool decode_png_file_rgba(const u8* src, u32 slen, u8** out_rgba, u32* out_w,
+                                        u32* out_h);
 
 } // namespace engine

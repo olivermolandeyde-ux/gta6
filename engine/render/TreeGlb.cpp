@@ -2914,4 +2914,10 @@ void tree_glb_set_instances(TreeGlb* t, const float* mats16, u32 count) {
     glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(count * 16 * sizeof(float)), mats16);
 }
 
+// Standalone PNG decode for non-GLB callers (e.g. ground textures). Same
+// byte-exact decoder the GLB path uses for PNG sources. No ImageIO involved.
+bool decode_png_file_rgba(const u8* src, u32 slen, u8** out_rgba, u32* out_w, u32* out_h) {
+    return png_decode_rgba(src, slen, out_rgba, out_w, out_h);
+}
+
 } // namespace engine

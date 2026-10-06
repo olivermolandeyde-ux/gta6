@@ -31,27 +31,22 @@ float shadow_at() {
 }
 
 void main() {
+    // NOTE: no sidewalk band here on purpose — the sidewalk is its own textured
+    // ring mesh. Road quads paint asphalt + centre dash + edge lines only, so no
+    // sidewalk band can ever cross an intersection or a crosswalk.
     vec3 asphalt = vec3(0.251, 0.251, 0.251);
-    vec3 sidewalk = vec3(0.827, 0.827, 0.827);
-    vec3 curb = vec3(0.35, 0.35, 0.34);
     vec3 yellow = vec3(1.0, 0.843, 0.0);
     vec3 white = vec3(1.0, 1.0, 1.0);
     float ax = abs(UV.x - 0.5);
-    float sidewalkMask = step(0.385, ax);
-    float curbMask = step(0.365, ax) * (1.0 - sidewalkMask);
 
     float n = hash12(floor(FragPos.xz * 2.2));
     asphalt *= (0.92 + 0.16 * n);
     float wet = step(0.86, hash12(floor(FragPos.xz * 0.09)));
     asphalt *= mix(1.0, 0.72, wet);
 
-    vec2 slab = fract(FragPos.xz / 2.0);
-    float seam = 1.0 - step(0.04, min(slab.x, slab.y)) * step(min(slab.x, slab.y), 0.96);
-    sidewalk = mix(sidewalk * (0.96 + 0.06 * n), sidewalk * 0.70, seam * sidewalkMask);
-
     float along_m = UV.y * 10.0;
     float dash = step(0.0, 3.0 - mod(along_m, 6.0));
-    float centerDash = (1.0 - step(0.012, abs(UV.x - 0.5))) * dash * (1.0 - sidewalkMask);
+    float centerDash = (1.0 - step(0.012, abs(UV.x - 0.5))) * dash;
     // Suppress the centre dash inside the junction box and the zebra bands
     // (bars span +-8.5 m across, 11..14.5 m out on every approach), so no
     // yellow pokes through the white stripes. Geometry contract: pitch 120,
@@ -62,18 +57,10 @@ void main() {
     float bandZ = (1.0 - step(9.5, dd.x)) * step(10.5, dd.y) * (1.0 - step(15.5, dd.y));
     float bandX = (1.0 - step(9.5, dd.y)) * step(10.5, dd.x) * (1.0 - step(15.5, dd.x));
     centerDash *= (1.0 - max(inBox, max(bandZ, bandX)));
-    // Gap the dark curb/gutter ring where pedestrians cross (same zebra zones),
-    // so the crossing reads sidewalk-to-sidewalk instead of over a gutter slash.
-    // Asphalt shows through the gap; the white bars sit on top of it.
-    float crossZ = (1.0 - step(10.0, dd.x)) * step(10.5, dd.y) * (1.0 - step(15.5, dd.y));
-    float crossX = (1.0 - step(10.0, dd.y)) * step(10.5, dd.x) * (1.0 - step(15.5, dd.x));
-    curbMask *= (1.0 - max(crossZ, crossX));
-    // Same gap for the white edge line: it must not run through the zebra bars.
-    float edgeLine = (1.0 - step(0.008, abs(ax - 0.355))) * (1.0 - sidewalkMask);
+    float edgeLine = (1.0 - step(0.008, abs(ax - 0.355)));
     edgeLine *= (1.0 - max(bandZ, bandX));
 
-    vec3 c = mix(asphalt, curb, curbMask);
-    c = mix(c, sidewalk, sidewalkMask);
+    vec3 c = asphalt;
     c = mix(c, yellow, centerDash);
     c = mix(c, white, edgeLine);
     c *= (0.55 + 0.45 * shadow_at());
