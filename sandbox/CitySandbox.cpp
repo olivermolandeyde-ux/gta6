@@ -215,10 +215,14 @@ int main(int argc, char** argv) {
         terrain.cameraPos    = cam;
         terrain.cameraTarget = float3_add(cam, fwd);
         if (xwalk) {
-            // Scripted intersection inspection: street-level first, then top-down.
-            if (frames < 9) {
-                terrain.cameraPos    = float3{1200.f, 7.f, 80.f};
-                terrain.cameraTarget = float3{1200.f, 7.f, 140.f};
+            // Scripted intersection inspection: 1.7 m grazing view along the road,
+            // then a corner view, then top-down.
+            if (frames < 8) {
+                terrain.cameraPos    = float3{1200.f, 6.7f, 80.f};
+                terrain.cameraTarget = float3{1200.f, 6.0f, 140.f};
+            } else if (frames < 12) {
+                terrain.cameraPos    = float3{1225.f, 6.7f, 95.f};
+                terrain.cameraTarget = float3{1211.f, 5.2f, 109.f};
             } else {
                 terrain.cameraPos    = float3{1200.f, 250.f, 121.f};
                 terrain.cameraTarget = float3{1200.f, 5.f, 120.f};
@@ -261,11 +265,17 @@ int main(int argc, char** argv) {
         }
         if (xwalk && frames == 6) {
             save_screenshot_ppm("build/xwalk_street.ppm", terrain.width, terrain.height);
-            std::printf("[city] screenshot: build/xwalk_street.ppm (street level, frame %u)\n",
+            std::printf("[city] screenshot: build/xwalk_street.ppm (grazing 1.7 m, frame %u)\n",
                         frames);
             std::fflush(stdout);
         }
-        if (xwalk && frames == 12) {
+        if (xwalk && frames == 10) {
+            save_screenshot_ppm("build/xwalk_corner.ppm", terrain.width, terrain.height);
+            std::printf("[city] screenshot: build/xwalk_corner.ppm (corner view, frame %u)\n",
+                        frames);
+            std::fflush(stdout);
+        }
+        if (xwalk && frames == 14) {
             save_screenshot_ppm("build/xwalk_top.ppm", terrain.width, terrain.height);
             std::printf("[city] screenshot: build/xwalk_top.ppm (top-down, frame %u)\n",
                         frames);
@@ -297,7 +307,7 @@ int main(int argc, char** argv) {
         if (frames > 60u * 60u * 8u) {
             break;
         }
-        if (xwalk && frames > 14) {
+        if (xwalk && frames > 16) {
             break; // scripted shots done
         }
     }

@@ -1749,7 +1749,10 @@ void BuildingGlPass::buildMesh(World& world) {
         static u32 lot_idx[kCityBlocks * kCityBlocks * 6];
         u32 lot_vn = 0, lot_in = 0;
         const float lot_y = kCityPlateauY - 0.04f;
-        const float inset = kCityStreetWidth * 0.5f - 0.5f;
+        // Lot starts exactly at the sidewalk outer edge (road_half + sw = 13):
+        // no tuck under the street, no grass where sidewalk/road owns the plan.
+        // The corner quads already cover [10,13]^2, so the ring stays seamless.
+        const float inset = kCityStreetWidth * 0.5f + 3.0f;
         for (u32 bz = 0; bz < kCityBlocks; ++bz) {
             for (u32 bx = 0; bx < kCityBlocks; ++bx) {
                 const float x0 = static_cast<float>(bx) * kCityBlockPitch + inset;
@@ -3574,7 +3577,12 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
     glBindVertexArray(cube_vao);
     glUniform1i(glGetUniformLocation(building_prog, "uUseTex"), 0);
     glUniform1i(glGetUniformLocation(building_prog, "uAlphaLeaf"), 0);
-    const float stripe_y = kCityPlateauY + 0.27f;
+    // Zebra bars sit near-flush (centre +0.25, 0.02 thick: 1 cm embedded, 1 cm
+    // proud) so grazing views show no parallax overshoot past the curb.
+    // Polygon offset around this loop only wins any residual depth ties.
+    const float stripe_y = kCityPlateauY + 0.25f;
+    glEnable(GL_POLYGON_OFFSET_FILL);
+    glPolygonOffset(-1.f, -1.f);
     for (u32 j = 0; j <= kCityBlocks; ++j) {
         for (u32 i = 0; i <= kCityBlocks; ++i) {
             const float cx = static_cast<float>(i) * kCityBlockPitch;
@@ -3588,14 +3596,15 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
             for (u32 s = 0; s < kXwalkCount; ++s) {
                 const float o = -span * 0.5f + static_cast<float>(s) * kXwalkPitch;
                 // N/S approaches: bars long in Z (with traffic), spaced in X.
-                draw_box(building_prog, float3{cx + o, stripe_y, cz + start + kXwalkLen * 0.5f}, kXwalkThick, 0.05f, kXwalkLen, xw, 0.f);
-                draw_box(building_prog, float3{cx + o, stripe_y, cz - start - kXwalkLen * 0.5f}, kXwalkThick, 0.05f, kXwalkLen, xw, 0.f);
+                draw_box(building_prog, float3{cx + o, stripe_y, cz + start + kXwalkLen * 0.5f}, kXwalkThick, 0.02f, kXwalkLen, xw, 0.f);
+                draw_box(building_prog, float3{cx + o, stripe_y, cz - start - kXwalkLen * 0.5f}, kXwalkThick, 0.02f, kXwalkLen, xw, 0.f);
                 // E/W approaches: bars long in X, spaced in Z.
-                draw_box(building_prog, float3{cx + start + kXwalkLen * 0.5f, stripe_y, cz + o}, kXwalkLen, 0.05f, kXwalkThick, xw, 0.f);
-                draw_box(building_prog, float3{cx - start - kXwalkLen * 0.5f, stripe_y, cz + o}, kXwalkLen, 0.05f, kXwalkThick, xw, 0.f);
+                draw_box(building_prog, float3{cx + start + kXwalkLen * 0.5f, stripe_y, cz + o}, kXwalkLen, 0.02f, kXwalkThick, xw, 0.f);
+                draw_box(building_prog, float3{cx - start - kXwalkLen * 0.5f, stripe_y, cz + o}, kXwalkLen, 0.02f, kXwalkThick, xw, 0.f);
             }
         }
     }
+    glDisable(GL_POLYGON_OFFSET_FILL);
     // NOTE: procedural street furniture (hydrant cylinders, mailbox, bench boxes,
     // shrubs, sign poles) was deleted here — replaced by instanced GLB props.
     static bool logged_detail = false;
