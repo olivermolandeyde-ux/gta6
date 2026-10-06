@@ -2470,14 +2470,14 @@ void BuildingGlPass::buildMesh(World& world) {
         // heuristic misfires on the 1.8 m bench (z_up=2) and tree_yaw_mat would
         // stand it on its end; no Rx needed, its local up is already +Y.
         const float sc_bin =
-            1.35f / max_of(0.001f, bin_glb.ymax - bin_glb.ymin);
+            2.4f / max_of(0.001f, bin_glb.ymax - bin_glb.ymin);
         const float sc_hyd =
-            1.15f / max_of(0.001f, hydrant_glb.ymax - hydrant_glb.ymin);
+            2.0f / max_of(0.001f, hydrant_glb.ymax - hydrant_glb.ymin);
         const float bench_len =
             (bench_glb.xmax - bench_glb.xmin) > (bench_glb.zmax - bench_glb.zmin)
                 ? (bench_glb.xmax - bench_glb.xmin)
                 : (bench_glb.zmax - bench_glb.zmin);
-        const float sc_ben = 2.5f / max_of(0.001f, bench_len);
+        const float sc_ben = 4.4f / max_of(0.001f, bench_len);
         std::printf("[props] scales: bin=%.3f hydrant=%.3f bench=%.3f (forced target/model bbox)\n",
                     static_cast<double>(sc_bin), static_cast<double>(sc_hyd),
                     static_cast<double>(sc_ben));
@@ -2529,7 +2529,7 @@ void BuildingGlPass::buildMesh(World& world) {
                     push_prop(&bin_glb, bin_mats, n_bin,
                               static_cast<float>(i) * kCityBlockPitch + sx,
                               static_cast<float>(j) * kCityBlockPitch + sz, sc_bin,
-                              bin_glb.z_up, 1.35f, "bin");
+                              bin_glb.z_up, 2.4f, "bin");
                 }
             }
             tree_glb_set_instances(&bin_glb, bin_mats, n_bin);
@@ -2544,7 +2544,7 @@ void BuildingGlPass::buildMesh(World& world) {
                     const float side = ((j + k) & 1u) ? 11.5f : -11.5f;
                     push_prop(&hydrant_glb, hyd_mats, n_hyd, x,
                               static_cast<float>(j) * kCityBlockPitch + side, sc_hyd,
-                              hydrant_glb.z_up, 1.15f, "hydrant");
+                              hydrant_glb.z_up, 2.0f, "hydrant");
                 }
             }
             tree_glb_set_instances(&hydrant_glb, hyd_mats, n_hyd);
@@ -2579,7 +2579,7 @@ void BuildingGlPass::buildMesh(World& world) {
                         break;
                     }
                     push_prop(&bench_glb, ben_mats, n_ben, x, z, sc_ben,
-                              0, 1.1f,
+                              0, 1.9f,
                               "bench"); // flat as authored; ignore z_up=2 misdetect
                 }
             }
