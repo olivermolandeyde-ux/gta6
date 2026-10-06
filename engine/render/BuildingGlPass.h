@@ -28,6 +28,7 @@ struct BuildingGlPass {
     unsigned skirt_count;
     unsigned tex_sidewalk; // assets/textures/sidewalk.png, or 0 = flat gray fallback
     unsigned tex_grass;    // assets/textures/grass.png, or 0 = flat green fallback
+    unsigned tex_asphalt;  // assets/textures/asphalt.png, or 0 = flat dark-gray fallback
     unsigned tex_flat_n;   // 1x1 flat normal for textured non-facade draws
     unsigned cloud_prog;
     unsigned cyl_vao, cyl_ibo, cyl_count;

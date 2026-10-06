@@ -184,7 +184,10 @@ constexpr const char* kStVs =
 constexpr const char* kStFs =
     "#version 330 core\n"
     "in vec2 UV; in vec3 FragPos; out vec4 FragColor;\n"
-    "void main(){ vec3 asphalt=vec3(0.12,0.12,0.13); vec3 paint=vec3(0.92,0.86,0.35);\n"
+    "uniform sampler2D uAsphaltTex; uniform vec3 uAsphaltTint; uniform int uHasAsphaltTex;\n"
+    "void main(){ vec3 asphalt=vec3(0.12,0.12,0.13);\n"
+    "  if(uHasAsphaltTex==1){ asphalt=texture(uAsphaltTex,FragPos.xz/4.0).rgb*uAsphaltTint; }\n"
+    "  vec3 paint=vec3(0.92,0.86,0.35);\n"
     "  float dash=step(0.45,fract(UV.y*8.0))*(1.0-step(0.04,abs(UV.x-0.5)));\n"
     "  vec2 gmod=min(mod(FragPos.xz,120.0),120.0-mod(FragPos.xz,120.0));\n"
     "  float inBox=(1.0-step(11.0,gmod.x))*(1.0-step(11.0,gmod.y));\n"
@@ -1035,6 +1038,8 @@ u32 report_glb_node_rotations(const char* base, const char* label) {
 const float3 kSidewalkTint{0.52f, 0.52f, 0.50f};
 // Lot grass brightness (one-line knob like the sidewalk tint).
 const float3 kGrassTint{0.55f, 0.65f, 0.50f};
+// Asphalt brightness (one-line knob like the others).
+const float3 kAsphaltTint{1.0f, 1.0f, 1.0f};
 
 // Shared prop spacing + sidewalk helpers (all prop placement loops).
 // Logic mirrors the original per-block lambdas exactly; hoisted so every prop
@@ -1141,6 +1146,7 @@ bool BuildingGlPass::init() {
     skirt_vao = skirt_ibo = skirt_count = 0;
     tex_sidewalk = 0;
     tex_grass = 0;
+    tex_asphalt = 0;
     tex_flat_n = 0;
     street_count = 0;
     num_buildings = 0;
@@ -1323,6 +1329,69 @@ bool BuildingGlPass::init() {
         }
         std::printf("[city] grass tint=(%.2f,%.2f,%.2f)\n", static_cast<double>(kGrassTint.x),
                     static_cast<double>(kGrassTint.y), static_cast<double>(kGrassTint.z));
+        if (file) {
+            std::free(file);
+        }
+        std::fflush(stdout);
+    }
+    // Road asphalt texture (world-space tiled, see the street shader). Same
+    // loader/path rules, mipmaps and clamped anisotropy as the other grounds.
+    {
+        const char* cands[3] = {"assets/textures/asphalt.png", "./assets/textures/asphalt.png",
+                                "build/assets/textures/asphalt.png"};
+        u8* file = nullptr;
+        u32 flen = 0;
+        for (u32 i = 0; i < 3 && !file; ++i) {
+            FILE* f = std::fopen(cands[i], "rb");
+            if (!f) {
+                continue;
+            }
+            std::fseek(f, 0, SEEK_END);
+            const long sz = std::ftell(f);
+            std::fseek(f, 0, SEEK_SET);
+            if (sz > 20 && sz < 16L * 1024L * 1024L) {
+                file = static_cast<u8*>(std::malloc(static_cast<usize>(sz)));
+                if (file && std::fread(file, 1, static_cast<usize>(sz), f) == static_cast<usize>(sz)) {
+                    flen = static_cast<u32>(sz);
+                } else {
+                    std::free(file);
+                    file = nullptr;
+                }
+            }
+            std::fclose(f);
+        }
+        u8* rgba = nullptr;
+        u32 tw = 0, th = 0;
+        if (file && decode_png_file_rgba(file, flen, &rgba, &tw, &th) && rgba && tw && th) {
+            GLfloat max_aniso = 0.f;
+            glGetFloatv(0x84FF /*GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT*/, &max_aniso);
+            GLfloat aniso = max_aniso;
+            if (aniso > 8.f) {
+                aniso = 8.f;
+            }
+            if (aniso < 1.f) {
+                aniso = 1.f;
+            }
+            glGenTextures(1, &tex_asphalt);
+            glBindTexture(GL_TEXTURE_2D, tex_asphalt);
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+            glTexParameterf(GL_TEXTURE_2D, 0x84FE /*GL_TEXTURE_MAX_ANISOTROPY_EXT*/, aniso);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, static_cast<int>(tw), static_cast<int>(th),
+                         0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+            glGenerateMipmap(GL_TEXTURE_2D);
+            std::printf("[city] asphalt texture: %ux%u from PNG (tiled world/4.0 m, aniso %.1f of max %.1f)\n",
+                        tw, th, static_cast<double>(aniso), static_cast<double>(max_aniso));
+            std::free(rgba);
+        } else {
+            tex_asphalt = 0;
+            std::printf("[city] asphalt texture missing, using flat color\n");
+        }
+        std::printf("[city] asphalt tint=(%.2f,%.2f,%.2f)\n", static_cast<double>(kAsphaltTint.x),
+                    static_cast<double>(kAsphaltTint.y), static_cast<double>(kAsphaltTint.z));
         if (file) {
             std::free(file);
         }
@@ -3917,6 +3986,14 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
     glActiveTexture(GL_TEXTURE2);
     glBindTexture(GL_TEXTURE_2D, shadow_tex);
     glUniform1i(glGetUniformLocation(street_prog, "uShadow"), 2);
+    if (tex_asphalt) {
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, tex_asphalt);
+    }
+    glUniform1i(glGetUniformLocation(street_prog, "uAsphaltTex"), 0);
+    glUniform1i(glGetUniformLocation(street_prog, "uHasAsphaltTex"), tex_asphalt ? 1 : 0);
+    glUniform3f(glGetUniformLocation(street_prog, "uAsphaltTint"), kAsphaltTint.x,
+                kAsphaltTint.y, kAsphaltTint.z);
     // Street quads are single-sided (down-facing winding); draw them unculled so the
     // ground never depends on cull state leaked from the instanced/shadow passes.
     glDisable(GL_CULL_FACE);
@@ -4218,6 +4295,10 @@ void BuildingGlPass::shutdown() {
     if (tex_grass) {
         glDeleteTextures(1, &tex_grass);
         tex_grass = 0;
+    }
+    if (tex_asphalt) {
+        glDeleteTextures(1, &tex_asphalt);
+        tex_asphalt = 0;
     }
     if (tex_flat_n) {
         glDeleteTextures(1, &tex_flat_n);

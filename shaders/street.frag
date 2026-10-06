@@ -6,6 +6,9 @@ uniform vec3 uCamPos;
 uniform vec3 uFogColor;
 uniform vec2 uRes;
 uniform sampler2D uShadow;
+uniform sampler2D uAsphaltTex;
+uniform vec3 uAsphaltTint;
+uniform int uHasAsphaltTex;
 out vec4 FragColor;
 
 float hash12(vec2 p) {
@@ -34,7 +37,12 @@ void main() {
     // NOTE: no sidewalk band here on purpose — the sidewalk is its own textured
     // ring mesh. Road quads paint asphalt + centre dash + edge lines only, so no
     // sidewalk band can ever cross an intersection or a crosswalk.
+    // Textured asphalt (world/4.0 m tiles) under the markings; flat legacy gray
+    // when the PNG is missing. Noise/wet variation applies on top either way.
     vec3 asphalt = vec3(0.251, 0.251, 0.251);
+    if (uHasAsphaltTex == 1) {
+        asphalt = texture(uAsphaltTex, FragPos.xz / 4.0).rgb * uAsphaltTint;
+    }
     vec3 yellow = vec3(1.0, 0.843, 0.0);
     vec3 white = vec3(1.0, 1.0, 1.0);
     float ax = abs(UV.x - 0.5);
