@@ -242,16 +242,6 @@ void model_trs(float* m, float3 pos, float sx, float sy, float sz) {
     m[14] = pos.z - sz * 0.5f;
 }
 
-void model_axis(float* m, float3 pos, float sx, float sy, float sz) {
-    mat_ident(m);
-    m[0]  = sx;
-    m[5]  = sy;
-    m[10] = sz;
-    m[12] = pos.x;
-    m[13] = pos.y;
-    m[14] = pos.z;
-}
-
 void mat_ortho(float* m, float s, float n, float f) {
     std::memset(m, 0, 16 * sizeof(float));
     m[0] = 1.f / s;
@@ -389,26 +379,6 @@ void draw_box(unsigned prog, float3 p, float sx, float sy, float sz, float3 albe
     glUniform1f(glGetUniformLocation(prog, "roughness"), 0.5f);
     glUniform1i(glGetUniformLocation(prog, "uFacade"), 0);
     glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, nullptr);
-}
-
-void draw_axis_mesh(unsigned prog, unsigned vao, unsigned nidx, float3 p, float sx, float sy, float sz,
-                    float3 albedo, float emit, unsigned albedo_tex, int leaf) {
-    float m[16];
-    model_axis(m, p, sx, sy, sz);
-    glBindVertexArray(vao);
-    glUniformMatrix4fv(glGetUniformLocation(prog, "model"), 1, GL_FALSE, m);
-    bind_inv_scale(prog, sx, sy, sz);
-    glUniform1i(glGetUniformLocation(prog, "uUseTex"), albedo_tex ? 1 : 0);
-    glUniform1i(glGetUniformLocation(prog, "uAlphaLeaf"), leaf);
-    glUniform3f(glGetUniformLocation(prog, "albedo"), albedo.x, albedo.y, albedo.z);
-    glUniform1f(glGetUniformLocation(prog, "emissionBoost"), emit);
-    glUniform1i(glGetUniformLocation(prog, "uFacade"), 0);
-    if (albedo_tex) {
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, albedo_tex);
-        glUniform1i(glGetUniformLocation(prog, "uAlbedo"), 0);
-    }
-    glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(nidx), GL_UNSIGNED_INT, nullptr);
 }
 
 [[nodiscard]] bool near_xz(float3 a, float3 b, float r) {
@@ -833,10 +803,6 @@ bool load_city_tree(const char* file, TreeGlb* dst) {
 constexpr u32 kReplacedBldCap = 4096;
 u32 g_replaced_n = 0;
 u8 g_replaced_flag[kReplacedBldCap] = {0};
-
-bool is_replaced_building(u32 id) {
-    return id < kReplacedBldCap && g_replaced_flag[id] != 0;
-}
 
 void mark_replaced_building(u32 id) {
     if (id < kReplacedBldCap && !g_replaced_flag[id]) {
@@ -2350,6 +2316,52 @@ void BuildingGlPass::buildMesh(World& world) {
             taken[i] = 0;
         }
 
+        // Shared occupied-footprint list: every placed GLB registers its world
+        // half extents here (2x scale baked in). Mass + density + debug all
+        // check it with a 2 m gap, so no two GLB buildings ever interpenetrate.
+        struct Occ {
+            float x, z, hx, hz;
+        };
+        static Occ occ[4096];
+        u32 n_occ = 0;
+        auto occ_free = [&](float x, float z, float hx, float hz) -> bool {
+            for (u32 i = 0; i < n_occ; ++i) {
+                if (std::fabs(x - occ[i].x) < hx + occ[i].hx + 2.f &&
+                    std::fabs(z - occ[i].z) < hz + occ[i].hz + 2.f) {
+                    return false;
+                }
+            }
+            return true;
+        };
+        auto occ_add = [&](float x, float z, float hx, float hz) {
+            if (n_occ < 4096) {
+                occ[n_occ++] = {x, z, hx, hz};
+            }
+        };
+        // Conservative per-type half extents at sc=2 (max over loaded variants,
+        // yaw-independent square bound) for pre-placement neighbour checks.
+        float type_max_sq[3] = {0.f, 0.f, 0.f};
+        {
+            const TreeGlb* tarr[3] = {shop_glb, apartment_glb, warehouse_glb};
+            for (u32 t = 0; t < 3u; ++t) {
+                for (u32 v = 0; v < 3u; ++v) {
+                    const TreeGlb* g = &tarr[t][v];
+                    if (!g || g->nprims == 0) {
+                        continue;
+                    }
+                    float mx = g->xmax - g->xmin, mz = g->zmax - g->zmin;
+                    if (g->z_up != 0) {
+                        const float m = mx > mz ? mx : mz;
+                        mx = mz = m;
+                    }
+                    const float full = (mx > mz ? mx : mz);
+                    if (full > type_max_sq[t]) {
+                        type_max_sq[t] = full;
+                    }
+                }
+            }
+        }
+
         // Street-facing yaw: model front (+Z) toward the nearest road line,
         // snapped to 90° so buildings stay axis-aligned. World facing of +Z
         // under Ry(yaw) is (sin yaw, 0, cos yaw); atan2 of the axis-aligned
@@ -2387,7 +2399,7 @@ void BuildingGlPass::buildMesh(World& world) {
             {1260.f, 1260.f, 40.f, 30.f, 1, "apartment"},
             {1980.f, 300.f, 60.f, 40.f, 2, "warehouse"},
         };
-        u32 skipped_nomesh = 0, skipped_cap = 0, skipped_fit = 0;
+        u32 skipped_nomesh = 0, skipped_cap = 0, skipped_fit = 0, skipped_overlap = 0;
         u32 lot_ok = 0, lot_fail = 0;
         u32 placed_shop = 0, placed_apt = 0, placed_whs = 0;
         u32 attempted_shop = 0, attempted_apt = 0, attempted_whse = 0;
@@ -2432,9 +2444,23 @@ void BuildingGlPass::buildMesh(World& world) {
                 ++skipped_cap;
                 return false;
             }
+            // Exact footprint vs every placed GLB (2 m gap); register on success.
+            const bool swapped = std::fabs(std::sin(yaw)) > 0.707f;
+            float e0 = g->xmax - g->xmin, e1 = g->zmax - g->zmin;
+            if (g->z_up != 0) {
+                const float m = e0 > e1 ? e0 : e1;
+                e0 = e1 = m;
+            }
+            const float hx = (swapped ? e1 : e0) * sc * 0.5f;
+            const float hz = (swapped ? e0 : e1) * sc * 0.5f;
+            if (!occ_free(x, z, hx, hz)) {
+                ++skipped_overlap;
+                return false;
+            }
             tree_yaw_mat(&var_mats[variant][var_n[variant] * 16], x, y, z, yaw, sc,
                          g->z_up);
             ++var_n[variant];
+            occ_add(x, z, hx, hz);
             return true;
         };
 
@@ -2539,6 +2565,26 @@ void BuildingGlPass::buildMesh(World& world) {
                 (type == 0) ? shop_var_mats : ((type == 2) ? whs_var_mats : apt_var_mats);
             // Existing building's X/Z/scale are the base; front faces the street.
             const float yaw = street_facing_yaw(c.x, c.z);
+            // 2x GLBs overflow natural lots: keep 2 m clearance to neighbouring
+            // procedural boxes (own lot is hidden; taken lots are hidden too).
+            {
+                const float th = type_max_sq[type];
+                bool blocked = false;
+                for (u32 j = 0; j < n_cands && !blocked; ++j) {
+                    if (j == ci || taken[j]) {
+                        continue;
+                    }
+                    const Candidate& o = cands[j];
+                    if (std::fabs(c.x - o.x) < th + o.w * 0.5f + 2.f &&
+                        std::fabs(c.z - o.z) < th + o.d * 0.5f + 2.f) {
+                        blocked = true;
+                    }
+                }
+                if (blocked) {
+                    ++skipped_overlap;
+                    return false;
+                }
+            }
             if (!place_variant_at(c.x, c.z, c.w, c.d, c.id + static_cast<u32>(type) * 7919u,
                                   arr, var_n, var_mats, yaw, "mass")) {
                 return false;
@@ -2647,11 +2693,6 @@ void BuildingGlPass::buildMesh(World& world) {
                 fb[n_fb++] = {b->position.x, b->position.z, b->width * 0.5f, b->depth * 0.5f,
                               b->district, b->building_id};
             }
-            struct Placed {
-                float x, z, hx, hz;
-            };
-            static Placed pd[4096];
-            u32 n_pd = 0;
             auto h3 = [](u32 a, u32 b, u32 c) -> u32 {
                 u32 h = (a * 73856093u) ^ (b * 19349663u) ^ (c * 83492791u);
                 h ^= h >> 15;
@@ -2731,8 +2772,8 @@ void BuildingGlPass::buildMesh(World& world) {
                     for (u32 j = 0; j < nz; ++j) {
                         for (u32 i = 0; i < nx; ++i) {
                             const u32 hh = h3(bx * 64u + i, bz * 64u + j, 99u);
-                            if (hh % 100u >= static_cast<u32>(prob * 100.f)) {
-                                continue; // courtyard / park
+                            if (hh % 100u >= static_cast<u32>(prob * 35.f)) {
+                                continue; // courtyard / park (thinned ~65% for FPS)
                             }
                             const float cx = ox + (i + 0.5f) * pw;
                             const float cz = oz + (j + 0.5f) * pdpt;
@@ -2774,24 +2815,13 @@ void BuildingGlPass::buildMesh(World& world) {
                             const float md = (g->z_up ? g->ymax - g->ymin : g->zmax - g->zmin);
                             const float hx = (swapped ? md : mw) * sc * 0.5f;
                             const float hz = (swapped ? mw : md) * sc * 0.5f;
-                            // >=2 m gap to every placed neighbour.
-                            bool tight = false;
-                            for (u32 p = 0; p < n_pd; ++p) {
-                                const float need =
-                                    (hx > pd[p].hx ? hx : pd[p].hx) +
-                                    (hz > pd[p].hz ? hz : pd[p].hz);
-                                if (std::fabs(cx - pd[p].x) < (hx + pd[p].hx + 2.f) &&
-                                    std::fabs(cz - pd[p].z) < (hz + pd[p].hz + 2.f)) {
-                                    tight = true;
-                                    break;
-                                }
-                                (void)need;
-                            }
-                            if (tight) {
+                            // >=2 m gap to every placed GLB (shared list: mass,
+                            // debug and density all register here).
+                            if (!occ_free(cx, cz, hx, hz)) {
                                 ++den_skip_gap;
                                 continue;
                             }
-                            if (var_n[variant] >= kTreeInstanceCap || n_pd >= 4096) {
+                            if (var_n[variant] >= kTreeInstanceCap) {
                                 ++den_skip_cap;
                                 continue;
                             }
@@ -2800,7 +2830,7 @@ void BuildingGlPass::buildMesh(World& world) {
                             tree_yaw_mat(&var_mats[variant][var_n[variant] * 16], cx, y, cz,
                                          yaw, sc, g->z_up);
                             ++var_n[variant];
-                            pd[n_pd++] = {cx, cz, hx, hz};
+                            occ_add(cx, cz, hx, hz);
                             if (type == 0) {
                                 ++den_shop;
                             } else if (type == 2) {
@@ -2998,6 +3028,10 @@ void BuildingGlPass::buildMesh(World& world) {
         if (skipped_fit) {
             std::printf("[buildings] Skipped %u (lot too small for natural model size)\n",
                         skipped_fit);
+        }
+        if (skipped_overlap) {
+            std::printf("[buildings] Skipped %u (would overlap another building)\n",
+                        skipped_overlap);
         }
         std::printf("[buildings] Total new GLB building instances: %u\n",
                     shop_count + apartment_count + warehouse_count);
@@ -3746,23 +3780,8 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
         glUseProgram(shadow_prog);
         glUniformMatrix4fv(glGetUniformLocation(shadow_prog, "uLightVP"), 1, GL_FALSE, light_vp);
         glBindVertexArray(cube_vao);
-        float sm[16];
-        u32 sc = 0;
-        for (Entity e : world.query<BuildingComponent>()) {
-            BuildingComponent* b = world.get<BuildingComponent>(e);
-            if (!b || !near_xz(b->position, camera_pos, 140.f) || custom_sky_lot(b)) {
-                continue;
-            }
-            if (is_replaced_building(b->building_id)) {
-                continue; // GLB replaces this box; no double shadow
-            }
-            model_trs(sm, b->position, b->width, b->height, b->depth);
-            glUniformMatrix4fv(glGetUniformLocation(shadow_prog, "model"), 1, GL_FALSE, sm);
-            glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, nullptr);
-            if (++sc > 220) {
-                break;
-            }
-        }
+        // PERF: procedural template boxes removed — the city renders GLB
+        // instances only (thousands fewer draw calls, no visual placeholders).
         if (tree_shadow_prog) {
             glUseProgram(tree_shadow_prog);
             glUniformMatrix4fv(glGetUniformLocation(tree_shadow_prog, "uLightVP"), 1, GL_FALSE, light_vp);
@@ -3940,117 +3959,7 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
     glEnable(GL_CULL_FACE); // restore culling for the procedural-box passes
     glUseProgram(building_prog);
     glBindVertexArray(cube_vao);
-    float model[16];
-    u32 drawn = 0;
-    for (Entity e : world.query<BuildingComponent>()) {
-        BuildingComponent* b = world.get<BuildingComponent>(e);
-        if (!b || custom_sky_lot(b)) {
-            continue;
-        }
-        if (is_replaced_building(b->building_id)) {
-            continue; // replaced by a GLB instance
-        }
-        const float dx = b->position.x - camera_pos.x;
-        const float dz = b->position.z - camera_pos.z;
-        if (dx * dx + dz * dz > 1400.f * 1400.f) {
-            continue;
-        }
-        const float brad =
-            0.5f * std::sqrt(b->width * b->width + b->height * b->height + b->depth * b->depth);
-        if (!frustum_holds(&frust, b->position.x, b->position.y + b->height * 0.5f,
-                            b->position.z, brad)) {
-            continue;
-        }
-        model_trs(model, b->position, b->width, b->height, b->depth);
-        glUniformMatrix4fv(glGetUniformLocation(building_prog, "model"), 1, GL_FALSE, model);
-        glUniform3f(glGetUniformLocation(building_prog, "albedo"), b->albedo_color.x, b->albedo_color.y,
-                    b->albedo_color.z);
-        glUniform1f(glGetUniformLocation(building_prog, "roughness"), b->roughness);
-        glUniform1f(glGetUniformLocation(building_prog, "emissionBoost"), 0.f);
-        glUniform1f(glGetUniformLocation(building_prog, "floors"), static_cast<float>(b->num_floors));
-        glUniform1i(glGetUniformLocation(building_prog, "district"), static_cast<int>(b->district));
-        glUniform1i(glGetUniformLocation(building_prog, "windowStyle"), static_cast<int>(b->window_style));
-        unsigned alb = tex_brick;
-        unsigned nrm = tex_brick_n;
-        if (b->district == 0) {
-            alb = tex_conc;
-            nrm = tex_conc_n;
-        } else if (b->district == 1 || b->district == 4) {
-            alb = tex_conc;
-            nrm = tex_conc_n;
-        }
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, alb);
-        glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, nrm);
-        glUniform1i(glGetUniformLocation(building_prog, "uFacade"), 1);
-        glUniform1i(glGetUniformLocation(building_prog, "uUseTex"), 1);
-        glUniform1i(glGetUniformLocation(building_prog, "uAlbedo"), 0);
-        glUniform1i(glGetUniformLocation(building_prog, "uNormalTex"), 1);
-        bind_inv_scale(building_prog, 1.f, 1.f, 1.f);
-        glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, nullptr);
-        glUniform1i(glGetUniformLocation(building_prog, "uUseTex"), 0);
-        if (b->roof_style == 1) {
-            draw_box(building_prog, float3{b->position.x, b->position.y + b->height, b->position.z},
-                     b->width * 1.02f, 1.6f, b->depth * 0.55f, float3{0.45f, 0.22f, 0.16f}, 0.f);
-            draw_box(building_prog,
-                     float3{b->position.x, b->position.y + b->height + 1.5f, b->position.z}, b->width * 0.7f,
-                     1.4f, b->depth * 0.28f, float3{0.42f, 0.20f, 0.14f}, 0.f);
-            draw_box(building_prog,
-                     float3{b->position.x, b->position.y + b->height + 2.6f, b->position.z}, b->width * 0.35f,
-                     1.1f, b->depth * 0.12f, float3{0.40f, 0.18f, 0.12f}, 0.f);
-        } else if (b->roof_style == 2) {
-            float3 step{b->position.x, b->position.y + b->height, b->position.z};
-            model_trs(model, step, b->width * 0.62f, 10.f, b->depth * 0.62f);
-            glUniformMatrix4fv(glGetUniformLocation(building_prog, "model"), 1, GL_FALSE, model);
-            glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, nullptr);
-        }
-        if (b->district == 2) {
-            for (u32 k = 0; k < 4; ++k) {
-                const float fy = b->position.y + 4.5f + static_cast<float>(k) * 3.6f;
-                if (fy > b->position.y + b->height - 3.f) {
-                    break;
-                }
-                draw_box(building_prog,
-                         float3{b->position.x, fy, b->position.z - b->depth * 0.5f - 0.7f}, b->width * 0.18f,
-                         0.8f, 1.2f, float3{0.55f, 0.55f, 0.52f}, 0.f);
-            }
-        }
-        if (b->district == 5) {
-            draw_box(building_prog,
-                     float3{b->position.x, b->position.y + 3.1f, b->position.z - b->depth * 0.5f - 0.9f},
-                     b->width * 0.9f, 0.18f, 1.6f, float3{0.72f, 0.18f, 0.14f}, 0.f);
-        }
-        if (b->district == 4) {
-            draw_box(building_prog,
-                     float3{b->position.x + b->width * 0.5f + 1.2f, b->position.y, b->position.z}, 2.4f, 1.4f,
-                     6.f, float3{0.28f, 0.28f, 0.26f}, 0.f);
-        }
-        if (b->district == 0) {
-            draw_box(building_prog,
-                     float3{b->position.x, b->position.y + b->height + 6.f, b->position.z}, 0.18f, 8.f, 0.18f,
-                     float3{0.3f, 0.3f, 0.32f}, 0.f);
-        }
-        if (b->height > 14.f) {
-            float3 hvac{b->position.x + b->width * 0.18f, b->position.y + b->height,
-                        b->position.z - b->depth * 0.16f};
-            model_trs(model, hvac, 3.4f, 2.2f, 2.6f);
-            glUniformMatrix4fv(glGetUniformLocation(building_prog, "model"), 1, GL_FALSE, model);
-            glUniform3f(glGetUniformLocation(building_prog, "albedo"), 0.34f, 0.34f, 0.35f);
-            glUniform1f(glGetUniformLocation(building_prog, "floors"), 1.f);
-            glUniform1i(glGetUniformLocation(building_prog, "district"), 2);
-            glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, nullptr);
-        }
-        if (b->district == 0 && (b->building_id % 6u) == 0u) {
-            float3 tower{b->position.x - b->width * 0.2f, b->position.y + b->height,
-                         b->position.z + b->depth * 0.12f};
-            model_trs(model, tower, 2.2f, 4.5f, 2.2f);
-            glUniformMatrix4fv(glGetUniformLocation(building_prog, "model"), 1, GL_FALSE, model);
-            glUniform3f(glGetUniformLocation(building_prog, "albedo"), 0.40f, 0.36f, 0.32f);
-            glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, nullptr);
-        }
-        ++drawn;
-    }
+    // PERF: procedural template boxes removed (see shadow pass) — GLB city only.
     const float night = night_glow_amt(time_of_day);
     if (tree_prog) {
         glUseProgram(tree_prog);
@@ -4179,7 +4088,7 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
     glBindVertexArray(0);
     static bool logged = false;
     if (!logged) {
-        std::printf("[gl] drawing %u buildings (GLSL bound) + %u GLB buildings\n", drawn,
+        std::printf("[gl] template boxes removed (GLB city): %u GLB buildings\n",
                     shop_count + apartment_count + warehouse_count);
         std::fflush(stdout);
         logged = true;
