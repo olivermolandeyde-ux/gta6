@@ -1825,13 +1825,15 @@ void BuildingGlPass::buildMesh(World& world) {
     //      else apartment); 35% chance gate per building.
     //   3. building hash picks the variant so all 9 GLBs get used.
     //   4. The EXISTING building's X/Z/footprint is the base (uniform fit keeps the
-    //      GLB on its lot — zero overlap, zero lot errors); yaw stays axis-aligned.
+    //      GLB on its lot — zero overlap, zero lot errors); yaw faces the nearest
+    //      road, snapped to 90° (axis-aligned, audit-clean).
     //   5. Quotas (24 shops, 90 apartments, 86 warehouses) backfill from fitting
     //      lots so the targets are hit; replaced ids go in g_replaced_flag so the
     //      procedural box is skipped in draw() + shadow.
     //   6. Matrices are uploaded once via tree_glb_set_instances (same pipeline as trees/cars).
     {
         std::printf("\n=== [buildings] PLACEMENT START ===\n");
+        std::printf("[buildings] facing rule: model +Z toward nearest road, snapped to 90 deg\n");
 
         // Reset per-build state (buildMesh runs once at startup).
         // NOTE: verification_row is set by the sandbox between init() and buildMesh();
@@ -1911,6 +1913,30 @@ void BuildingGlPass::buildMesh(World& world) {
             taken[i] = 0;
         }
 
+        // Street-facing yaw: model front (+Z) toward the nearest road line,
+        // snapped to 90° so buildings stay axis-aligned. World facing of +Z
+        // under Ry(yaw) is (sin yaw, 0, cos yaw); atan2 of the axis-aligned
+        // road direction is already a multiple of 90° (yaw-only, audit-clean).
+        auto street_facing_yaw = [](float x, float z) -> float {
+            float fx = std::fmod(x, kCityBlockPitch);
+            if (fx < 0.f) {
+                fx += kCityBlockPitch;
+            }
+            float fz = std::fmod(z, kCityBlockPitch);
+            if (fz < 0.f) {
+                fz += kCityBlockPitch;
+            }
+            const float dx_road = fx < kCityBlockPitch - fx ? fx : kCityBlockPitch - fx;
+            const float dz_road = fz < kCityBlockPitch - fz ? fz : kCityBlockPitch - fz;
+            float dirx = 0.f, dirz = 0.f;
+            if (dx_road <= dz_road) {
+                dirx = (fx < kCityBlockPitch * 0.5f) ? -1.f : 1.f;
+            } else {
+                dirz = (fz < kCityBlockPitch * 0.5f) ? -1.f : 1.f;
+            }
+            return std::atan2(dirx, dirz);
+        };
+
         // --- 3 DEBUG placements (fixed positions, proof the loader/render path works) ---
         // Fixed valid-lot coordinates (block centers: 60 + 120*n). Any procedural
         // box within 25 m is hidden via g_replaced_flag so there is zero overlap.
@@ -1977,7 +2003,7 @@ void BuildingGlPass::buildMesh(World& world) {
             u32* var_n = (s.type == 0) ? shop_var_n : ((s.type == 2) ? whs_var_n : apt_var_n);
             float (*var_mats)[kTreeInstanceCap * 16] =
                 (s.type == 0) ? shop_var_mats : ((s.type == 2) ? whs_var_mats : apt_var_mats);
-            if (place_variant_at(s.x, s.z, s.w, s.d, 1000u + di, arr, var_n, var_mats, 0.f,
+            if (place_variant_at(s.x, s.z, s.w, s.d, 1000u + di, arr, var_n, var_mats, street_facing_yaw(s.x, s.z),
                                  s.label)) {
                 std::printf("[buildings] DEBUG: %s placed successfully!\n", s.label);
                 if (s.type == 0) {
@@ -2067,8 +2093,8 @@ void BuildingGlPass::buildMesh(World& world) {
             u32* var_n = (type == 0) ? shop_var_n : ((type == 2) ? whs_var_n : apt_var_n);
             float (*var_mats)[kTreeInstanceCap * 16] =
                 (type == 0) ? shop_var_mats : ((type == 2) ? whs_var_mats : apt_var_mats);
-            // Existing building's X/Z/scale are the base; yaw stays axis-aligned.
-            const float yaw = static_cast<float>(c.id % 4u) * 1.5707963f;
+            // Existing building's X/Z/scale are the base; front faces the street.
+            const float yaw = street_facing_yaw(c.x, c.z);
             if (!place_variant_at(c.x, c.z, c.w, c.d, c.id + static_cast<u32>(type) * 7919u,
                                   arr, var_n, var_mats, yaw, "mass")) {
                 return false;
