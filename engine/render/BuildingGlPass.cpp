@@ -2038,6 +2038,35 @@ void BuildingGlPass::buildMesh(World& world) {
     street_count = n;
     std::printf("[city] gpu mesh buildings=%u street_verts=%u (non-overlapping tiles)\n", num_buildings,
                 n);
+    // Seam diagnosis (road-vs-sidewalk, once): ring bands sit at |d_road| in
+    // [curb, curb+sw] alongside every road centreline. Count street verts
+    // inside that plan region. Overlap here is BY DESIGN (arms span the road
+    // mouths where no ring exists; span edges tuck under the ring) and is
+    // resolved by the +0.15 step (road 5.00 vs ring 5.15) + ring offset.
+    {
+        const float curb = kCityStreetWidth * 0.5f; // 10: asphalt edge
+        const float band = 3.0f;                     // sidewalk width
+        u32 seam_n = 0;
+        for (u32 vi = 0; vi < n; ++vi) {
+            const float vx = verts[vi * 5 + 0];
+            const float vz = verts[vi * 5 + 2];
+            float fx = std::fmod(vx, pitch);
+            if (fx < 0.f) { fx += pitch; }
+            float fz = std::fmod(vz, pitch);
+            if (fz < 0.f) { fz += pitch; }
+            const float ax = fx < pitch - fx ? fx : pitch - fx;
+            const float az = fz < pitch - fz ? fz : pitch - fz;
+            if ((ax >= curb && ax <= curb + band && az >= curb) ||
+                (az >= curb && az <= curb + band && ax >= curb)) {
+                ++seam_n;
+            }
+        }
+        std::printf("[city] seam: road_y=%.2f ring_y=%.2f lot_y=%.2f overlap=%s (%u verts in ring plan; by design, +0.15 step + ring offset wins)\n",
+                    static_cast<double>(kRoadY), static_cast<double>(kTopY),
+                    static_cast<double>(kTopY), seam_n > 0 ? "yes" : "no", seam_n);
+        std::printf("[city] seam: road polygon offset=(-1,-1) around street draw (safety net)\n");
+        std::fflush(stdout);
+    }
     std::fflush(stdout);
 
     // Lot ground: one static quad per block interior. Spans road-half inset with a
@@ -4112,10 +4141,15 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
     // ground never depends on cull state leaked from the instanced/shadow passes.
     glDisable(GL_CULL_FACE);
     glDepthMask(GL_TRUE);
+    // Seam safety net: road wins any exact curb-edge tie with coplanar
+    // geometry (road draw only; ring keeps its own offset).
+    glEnable(GL_POLYGON_OFFSET_FILL);
+    glPolygonOffset(-1.f, -1.f);
     glBindVertexArray(street_vao);
     if (street_prog && street_count > 0) {
         glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(street_count));
     }
+    glDisable(GL_POLYGON_OFFSET_FILL);
     // Lot ground: one static draw, grass green, unlit-detail off. Inherits fog and
     // shadow-map reception from the already-set building_prog uniforms, so trees
     // and buildings shadow the grass for free.
