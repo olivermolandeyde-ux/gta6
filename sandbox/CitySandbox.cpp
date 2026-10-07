@@ -226,8 +226,10 @@ int main(int argc, char** argv) {
                 terrain.cameraPos    = float3{1200.f, 10.f, 130.f};
                 terrain.cameraTarget = float3{1190.f, 500.f, 500.f};
             } else if (frames < 12) {
-                terrain.cameraPos    = float3{1150.f, 12.f, 40.f};
-                terrain.cameraTarget = float3{1250.f, 25.f, 400.f};
+                // Elevated oblique (above the 2x rooftops): streets, buildings
+                // and sky with clouds behind. Road-centre x keeps the lane clear.
+                terrain.cameraPos    = float3{1200.f, 60.f, 0.f};
+                terrain.cameraTarget = float3{1250.f, 20.f, 500.f};
             } else {
                 terrain.cameraPos    = float3{1200.f, 250.f, 121.f};
                 terrain.cameraTarget = float3{1200.f, 5.f, 120.f};
@@ -257,9 +259,12 @@ int main(int argc, char** argv) {
         if (sky_now) {
             terrain.drawSky(*sky_now);
         }
-        terrain.drawTerrain();
         const float tod = sky_now ? sky_now->time_of_day : 21.f;
         const float3 sun = sky_now ? sky_now->sun_direction : float3{0.5f, 0.8f, 0.3f};
+        // Continuous cloud layer first: right after sky/clear, before opaque.
+        buildings.drawClouds(terrain.cameraPos, terrain.cameraTarget, terrain.width,
+                             terrain.height, tod, static_cast<float>(frames) * dt);
+        terrain.drawTerrain();
         buildings.draw(world, terrain.cameraPos, terrain.cameraTarget, terrain.width, terrain.height, tod,
                        sun, static_cast<float>(frames) * dt);
         if (bldg_row && frames == 6) {

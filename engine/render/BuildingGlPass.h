@@ -88,6 +88,10 @@ struct BuildingGlPass {
 
     bool init();
     void buildMesh(World& world);
+    // Continuous sky-direction cloud layer (fullscreen pass, no world quads).
+    // Call between drawSky and drawTerrain: right after the clear, before opaque.
+    void drawClouds(float3 camera_pos, float3 camera_target, int width, int height,
+                    float time_of_day, float clock_s);
     void update_car_instances(float clock_s);
     void draw(World& world, float3 camera_pos, float3 camera_target, int width, int height,
               float time_of_day, float3 sun_dir, float clock_s);

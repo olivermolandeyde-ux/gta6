@@ -3952,6 +3952,56 @@ void BuildingGlPass::update_car_instances(float clock_s) {
     }
 }
 
+void BuildingGlPass::drawClouds(float3 camera_pos, float3 camera_target, int width, int height,
+                                float time_of_day, float clock_s) {
+    if (!ok || !cloud_prog) {
+        return;
+    }
+    if (!tex_clouds) {
+        // No usable texture: plain clear-colour sky, no clouds, no billboards.
+        static bool logged = false;
+        if (!logged) {
+            logged = true;
+            std::printf("[clouds] no texture, plain sky\n");
+            std::fflush(stdout);
+        }
+        return;
+    }
+    float3 look = float3_normalize_or(float3_sub(camera_target, camera_pos), float3{0.f, 0.f, 1.f});
+    float3 right = float3_normalize_or(float3_cross(look, float3{0.f, 1.f, 0.f}), float3{1.f, 0.f, 0.f});
+    float3 upv{0.f, 1.f, 0.f};
+    const float aspect = static_cast<float>(width) / max_of(1, height);
+    const float tanV = std::tan(1.22173047f * 0.5f);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+    glDepthMask(GL_FALSE);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glBindVertexArray(cube_vao);
+    glUseProgram(cloud_prog);
+    glUniform3f(glGetUniformLocation(cloud_prog, "uLook"), look.x, look.y, look.z);
+    glUniform3f(glGetUniformLocation(cloud_prog, "uRight"), right.x, right.y, right.z);
+    glUniform3f(glGetUniformLocation(cloud_prog, "uUpC"), upv.x, upv.y, upv.z);
+    glUniform2f(glGetUniformLocation(cloud_prog, "uTan"), tanV * aspect, tanV);
+    glUniform1f(glGetUniformLocation(cloud_prog, "uTime"), clock_s);
+    glUniform1f(glGetUniformLocation(cloud_prog, "uTimeOfDay"), time_of_day);
+    glUniform1i(glGetUniformLocation(cloud_prog, "uHasAlpha"), cloud_has_alpha);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, tex_clouds);
+    glUniform1i(glGetUniformLocation(cloud_prog, "uCloudTex"), 0);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glDisable(GL_BLEND);
+    glDepthMask(GL_TRUE);
+    glEnable(GL_DEPTH_TEST);
+    static bool cloud_logged = false;
+    if (!cloud_logged) {
+        cloud_logged = true;
+        std::printf("[clouds] mode=skydir layers=2 tex=%ux%u hasAlpha=%d\n", cloud_tex_w,
+                    cloud_tex_h, cloud_has_alpha);
+        std::fflush(stdout);
+    }
+}
+
 void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target, int width, int height,
                           float time_of_day, float3 sun_dir, float clock_s) {
     if (!ok) {
@@ -3968,54 +4018,8 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
 
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_MULTISAMPLE);
-    if (cloud_prog) {
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        glDepthMask(GL_FALSE);
-        glBindVertexArray(cube_vao);
-        glUseProgram(cloud_prog);
-        glUniformMatrix4fv(glGetUniformLocation(cloud_prog, "view"), 1, GL_FALSE, view);
-        glUniformMatrix4fv(glGetUniformLocation(cloud_prog, "projection"), 1, GL_FALSE, proj);
-        float3 look = float3_normalize_or(float3_sub(camera_target, camera_pos), float3{0.f, 0.f, 1.f});
-        float3 right = float3_normalize_or(float3_cross(look, float3{0.f, 1.f, 0.f}), float3{1.f, 0.f, 0.f});
-        float3 upv{0.f, 1.f, 0.f};
-        glUniform3f(glGetUniformLocation(cloud_prog, "uRight"), right.x, right.y, right.z);
-        glUniform3f(glGetUniformLocation(cloud_prog, "uUp"), upv.x, upv.y, upv.z);
-        glUniform3f(glGetUniformLocation(cloud_prog, "uCamPos"), camera_pos.x, camera_pos.y,
-                    camera_pos.z);
-        glUniform1f(glGetUniformLocation(cloud_prog, "uTimeOfDay"), time_of_day);
-        const int use_tex = (tex_clouds != 0) ? 1 : 0;
-        glUniform1i(glGetUniformLocation(cloud_prog, "uUseTex"), use_tex);
-        glUniform1i(glGetUniformLocation(cloud_prog, "uHasAlpha"), cloud_has_alpha);
-        if (use_tex) {
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, tex_clouds);
-            glUniform1i(glGetUniformLocation(cloud_prog, "uCloudTex"), 0);
-        }
-        constexpr u32 kCloudBillboards = 40;
-        for (u32 i = 0; i < kCloudBillboards; ++i) {
-            const float seed = static_cast<float>(i) * 17.13f;
-            float x = std::fmod(120.f + seed * 73.f + clock_s * 0.3f, 2800.f);
-            float z = 80.f + std::fmod(seed * 91.f, 2300.f);
-            float y = 420.f + std::fmod(seed * 37.f, 380.f);
-            float sx = 140.f + std::fmod(seed * 13.f, 320.f);
-            float sy = 40.f + std::fmod(seed * 7.f, 100.f);
-            glUniform3f(glGetUniformLocation(cloud_prog, "uCenter"), x, y, z);
-            glUniform2f(glGetUniformLocation(cloud_prog, "uSize"), sx, sy);
-            glUniform1f(glGetUniformLocation(cloud_prog, "uRot"), static_cast<float>(i & 3u));
-            glUniform1f(glGetUniformLocation(cloud_prog, "uFlip"), static_cast<float>((i >> 2) & 1u));
-            glDrawArrays(GL_TRIANGLES, 0, 6);
-        }
-        glDepthMask(GL_TRUE);
-        glDisable(GL_BLEND);
-        static bool cloud_logged = false;
-        if (!cloud_logged) {
-            cloud_logged = true;
-            std::printf("[clouds] texture=%ux%u hasAlpha=%d billboards=%u\n", cloud_tex_w,
-                        cloud_tex_h, cloud_has_alpha, kCloudBillboards);
-            std::fflush(stdout);
-        }
-    }
+    // NOTE: clouds render via drawClouds() between drawSky and drawTerrain —
+    // nothing cloud-related remains in this pass.
 
     set_building_uniforms(building_prog, view, proj, sun, time_of_day, camera_pos);
     float lview[16], lproj[16], light_vp[16];
