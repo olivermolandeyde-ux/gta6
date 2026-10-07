@@ -2975,8 +2975,9 @@ void BuildingGlPass::buildMesh(World& world) {
                 if (g->nprims == 0) {
                     continue;
                 }
-                const float fw = g->xmax - g->xmin;
-                const float fd = (g->z_up ? g->ymax - g->ymin : g->zmax - g->zmin);
+                const float sc = 2.f; // city-wide doubling like all other buildings
+                const float fw = (g->xmax - g->xmin) * sc;
+                const float fd = (g->z_up ? g->ymax - g->ymin : g->zmax - g->zmin) * sc;
                 if (fw <= 0.001f || fd <= 0.001f || fw > 98.f || fd > 98.f) {
                     std::printf("[landmark] footprint violation %s (%.1fx%.1f)\n",
                                 lm_tag[L], static_cast<double>(fw),
@@ -3086,9 +3087,9 @@ void BuildingGlPass::buildMesh(World& world) {
                             mark_replaced_building(fb[i].id);
                         }
                     }
-                    const float y = kTopY + 0.01f - tree_up_min(g);
+                    const float y = kTopY + 0.01f - tree_up_min(g) * sc;
                     tree_yaw_mat(&landmark_mats[L][landmark_n[L] * 16], cx, y, cz, yaw,
-                                 1.f, g->z_up);
+                                 sc, g->z_up);
                     ++landmark_n[L];
                     occ_add(cx, cz, hx, hz);
                     lm_bx[lm_n] = bx;
@@ -3278,7 +3279,8 @@ void BuildingGlPass::buildMesh(World& world) {
                 tree_glb_set_instances(&landmark_glb[L], landmark_mats[L], landmark_n[L]);
             }
         }
-        // Landmark audit: uniform scale exactly 1.0, Y grounded on the slab.
+        // Landmark audit: uniform scale exactly 2.0 (city-wide doubling),
+        // Y grounded on the slab.
         {
             u32 lm_viol = 0;
             for (u32 L = 0; L < 4u; ++L) {
@@ -3286,14 +3288,14 @@ void BuildingGlPass::buildMesh(World& world) {
                 if (g->nprims == 0) {
                     continue;
                 }
-                const float y_exp = kTopY + 0.01f - tree_up_min(g);
+                const float y_exp = kTopY + 0.01f - tree_up_min(g) * 2.f;
                 for (u32 i = 0; i < landmark_n[L]; ++i) {
                     const float* m = &landmark_mats[L][i * 16];
                     const float sx = std::sqrt(m[0] * m[0] + m[1] * m[1] + m[2] * m[2]);
                     const float sy = std::sqrt(m[4] * m[4] + m[5] * m[5] + m[6] * m[6]);
                     const float sz = std::sqrt(m[8] * m[8] + m[9] * m[9] + m[10] * m[10]);
-                    if (std::fabs(sx - 1.f) > 0.001f || std::fabs(sy - 1.f) > 0.001f ||
-                        std::fabs(sz - 1.f) > 0.001f || std::fabs(m[13] - y_exp) > 0.02f) {
+                    if (std::fabs(sx - 2.f) > 0.001f || std::fabs(sy - 2.f) > 0.001f ||
+                        std::fabs(sz - 2.f) > 0.001f || std::fabs(m[13] - y_exp) > 0.02f) {
                         ++lm_viol;
                     }
                 }

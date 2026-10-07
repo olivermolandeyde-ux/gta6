@@ -268,23 +268,25 @@ int main(int argc, char** argv) {
             // aerial cluster, then street-level fronts (camera on the street
             // the front faces, looking at the landmark).
             if (frames < 8) {
-                // Low chase: gas#4 canopy (1139,626) near, garage#1
-                // (1263,985) mid, hotel#2 towers (1289,1381) far.
-                terrain.cameraPos    = float3{1150.f, 60.f, 550.f};
-                terrain.cameraTarget = float3{1270.f, 10.f, 1100.f};
+                // Top-down over the trio centroid (936,1278) from 700 m:
+                // garage#3 (903,1047), burger#4 (782,1408),
+                // hotel#1 towers (1124,1378) all in frame.
+                terrain.cameraPos    = float3{936.f, 700.f, 1278.f};
+                terrain.cameraTarget = float3{936.f, 5.f, 1278.f};
             } else if (frames < 12) {
                 terrain.cameraPos    = float3{57.f, 6.7f, 1680.f};
-                terrain.cameraTarget = float3{57.f, 9.f, 1654.f};
+                terrain.cameraTarget = float3{57.f, 9.f, 1646.f};
             } else if (frames < 16) {
                 terrain.cameraPos    = float3{782.f, 6.7f, 1440.f};
-                terrain.cameraTarget = float3{782.f, 8.f, 1415.f};
+                terrain.cameraTarget = float3{782.f, 8.f, 1408.f};
             } else if (frames < 20) {
-                // Garage#3 oblique from the EW road (stays on asphalt).
-                terrain.cameraPos    = float3{860.f, 7.f, 1080.f};
-                terrain.cameraTarget = float3{903.f, 10.f, 1054.f};
+                // Garage#3 north front from the next junction north.
+                terrain.cameraPos    = float3{960.f, 10.f, 1200.f};
+                terrain.cameraTarget = float3{903.f, 14.f, 1047.f};
             } else {
-                terrain.cameraPos    = float3{1330.f, 6.7f, 1381.f};
-                terrain.cameraTarget = float3{1289.f, 10.f, 1381.f};
+                // Hotel#1 west front oblique from the NS road.
+                terrain.cameraPos    = float3{1080.f, 8.f, 1420.f};
+                terrain.cameraTarget = float3{1124.f, 15.f, 1378.f};
             }
         }
 
