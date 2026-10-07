@@ -54,6 +54,7 @@ int main(int argc, char** argv) {
     bool forever = true;
     bool bldg_row = false;
     bool xwalk = false;
+    bool xwalk_dist = false;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--once") == 0) {
             forever = false;
@@ -63,6 +64,9 @@ int main(int argc, char** argv) {
         }
         if (std::strcmp(argv[i], "--xwalk") == 0) {
             xwalk = true;
+        }
+        if (std::strcmp(argv[i], "--xwalk-dist") == 0) {
+            xwalk_dist = true;
         }
     }
 
@@ -234,6 +238,23 @@ int main(int argc, char** argv) {
                 terrain.cameraPos    = float3{1200.f, 250.f, 121.f};
                 terrain.cameraTarget = float3{1200.f, 5.f, 120.f};
             }
+        } else if (xwalk_dist) {
+            // Same-intersection distance ladder: junction (5,5) at (600,600),
+            // N-crossing bars at z~611-616. Road-centre sightlines (x=600/604)
+            // stay over asphalt so 2x buildings never block the view.
+            if (frames < 8) {
+                // (a) ~10 m street level, just south of the N crossing.
+                terrain.cameraPos    = float3{604.f, 6.7f, 603.f};
+                terrain.cameraTarget = float3{600.f, 5.f, 613.f};
+            } else if (frames < 12) {
+                // (b) ~160 m down the road corridor.
+                terrain.cameraPos    = float3{600.f, 30.f, 450.f};
+                terrain.cameraTarget = float3{600.f, 5.f, 612.f};
+            } else {
+                // (c) ~335 m elevated down the corridor.
+                terrain.cameraPos    = float3{600.f, 120.f, 300.f};
+                terrain.cameraTarget = float3{600.f, 5.f, 612.f};
+            }
         }
 
         world.begin_frame(frames);
@@ -291,6 +312,24 @@ int main(int argc, char** argv) {
                         frames);
             std::fflush(stdout);
         }
+        if (xwalk_dist && frames == 6) {
+            save_screenshot_ppm("build/xdist_near.ppm", terrain.width, terrain.height);
+            std::printf("[city] screenshot: build/xdist_near.ppm (xwalk ~10 m, frame %u)\n",
+                        frames);
+            std::fflush(stdout);
+        }
+        if (xwalk_dist && frames == 10) {
+            save_screenshot_ppm("build/xdist_mid.ppm", terrain.width, terrain.height);
+            std::printf("[city] screenshot: build/xdist_mid.ppm (xwalk ~160 m, frame %u)\n",
+                        frames);
+            std::fflush(stdout);
+        }
+        if (xwalk_dist && frames == 14) {
+            save_screenshot_ppm("build/xdist_far.ppm", terrain.width, terrain.height);
+            std::printf("[city] screenshot: build/xdist_far.ppm (xwalk ~335 m, frame %u)\n",
+                        frames);
+            std::fflush(stdout);
+        }
         window.swap();
         ++frames;
 
@@ -317,7 +356,7 @@ int main(int argc, char** argv) {
         if (frames > 60u * 60u * 8u) {
             break;
         }
-        if (xwalk && frames > 16) {
+        if ((xwalk || xwalk_dist) && frames > 16) {
             break; // scripted shots done
         }
     }

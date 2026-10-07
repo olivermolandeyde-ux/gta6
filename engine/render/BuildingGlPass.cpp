@@ -4039,7 +4039,15 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
     update_car_instances(clock_s); // before the shadow pass, so car shadows match the cars
     float view[16], proj[16];
     mat_look(view, camera_pos, camera_target, float3{0.f, 1.f, 0.f});
-    mat_persp(proj, 1.22173047f, static_cast<float>(width) / max_of(1, height), 0.15f, 8000.f);
+    // Tightened depth range for decal precision (was 0.15/8000): city spans
+    // 2400 m and the sky/cloud passes ignore depth, so 4000 far is safe.
+    mat_persp(proj, 1.22173047f, static_cast<float>(width) / max_of(1, height), 0.30f, 4000.f);
+    static bool logged_depth = false;
+    if (!logged_depth) {
+        std::printf("[city] depth: near 0.15->0.30 far 8000->4000\n");
+        std::fflush(stdout);
+        logged_depth = true;
+    }
     CamFrustum frust;
     frustum_from_clip(&frust, view, proj); // once per frame; main pass only
     (void)sun_dir;
@@ -4337,17 +4345,21 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
     glBindVertexArray(cube_vao);
     glUniform1i(glGetUniformLocation(building_prog, "uUseTex"), 0);
     glUniform1i(glGetUniformLocation(building_prog, "uAlphaLeaf"), 0);
-    // Zebra bars sit near-flush (centre +0.25, 0.02 thick: 1 cm embedded, 1 cm
+    // Zebra bars sit near-flush (centre +0.02, 0.02 thick: 1 cm embedded, 1 cm
     // proud) so grazing views show no parallax overshoot past the curb.
-    // Polygon offset around this loop only wins any residual depth ties.
+    // Decal-style polygon offset (-2,-2) wins the depth test at ALL distances
+    // (2 cm of height alone is inside depth error at 150-300 m); the offset,
+    // not the height, holds the bars on the asphalt far away.
     const float stripe_y = kRoadY + 0.02f;
     glEnable(GL_POLYGON_OFFSET_FILL);
-    glPolygonOffset(-1.f, -1.f);
+    glPolygonOffset(-2.f, -2.f);
     for (u32 j = 0; j <= kCityBlocks; ++j) {
         for (u32 i = 0; i <= kCityBlocks; ++i) {
             const float cx = static_cast<float>(i) * kCityBlockPitch;
             const float cz = static_cast<float>(j) * kCityBlockPitch;
-            if (!near_xz(float3{cx, 0.f, cz}, camera_pos, 180.f)) {
+            // 350 m so distant verification views (150-300 m) keep their bars;
+            // frustum_holds below still gates off-screen junctions.
+            if (!near_xz(float3{cx, 0.f, cz}, camera_pos, 350.f)) {
                 continue;
             }
             if (!frustum_holds(&frust, cx, kRoadY + 2.f, cz, 30.f)) {

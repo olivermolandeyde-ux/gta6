@@ -316,7 +316,7 @@ void TerrainGlPass::drawSky(const SkyComponent& sky) {
     }
     float view[16], proj[16], vp[16], inv[16];
     mat_look(view, cameraPos, cameraTarget, float3{0.f, 1.f, 0.f});
-    mat_persp(proj, 1.22173047f, static_cast<float>(width) / max_of(1, height), 0.15f, 8000.f);
+    mat_persp(proj, 1.22173047f, static_cast<float>(width) / max_of(1, height), 0.30f, 4000.f);
     mat_mul(vp, proj, view);
     mat_invert(inv, vp);
     glDisable(GL_DEPTH_TEST);
@@ -337,7 +337,7 @@ void TerrainGlPass::drawTerrain() {
     }
     float view[16], proj[16], vp[16];
     mat_look(view, cameraPos, cameraTarget, float3{0.f, 1.f, 0.f});
-    mat_persp(proj, 1.22173047f, static_cast<float>(width) / max_of(1, height), 0.15f, 8000.f);
+    mat_persp(proj, 1.22173047f, static_cast<float>(width) / max_of(1, height), 0.30f, 4000.f);
     mat_mul(vp, proj, view);
     glUseProgram(terrain_prog);
     glBindVertexArray(grid_vao);
