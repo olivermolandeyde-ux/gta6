@@ -250,10 +250,14 @@ int main(int argc, char** argv) {
                 // (b) ~160 m down the road corridor.
                 terrain.cameraPos    = float3{600.f, 30.f, 450.f};
                 terrain.cameraTarget = float3{600.f, 5.f, 612.f};
-            } else {
+            } else if (frames < 16) {
                 // (c) ~335 m elevated down the corridor.
                 terrain.cameraPos    = float3{600.f, 120.f, 300.f};
                 terrain.cameraTarget = float3{600.f, 5.f, 612.f};
+            } else {
+                // (d) grazing along the road at driver eye height.
+                terrain.cameraPos    = float3{600.f, 6.0f, 545.f};
+                terrain.cameraTarget = float3{600.f, 5.2f, 612.f};
             }
         }
 
@@ -330,6 +334,12 @@ int main(int argc, char** argv) {
                         frames);
             std::fflush(stdout);
         }
+        if (xwalk_dist && frames == 18) {
+            save_screenshot_ppm("build/xdist_graze.ppm", terrain.width, terrain.height);
+            std::printf("[city] screenshot: build/xdist_graze.ppm (xwalk grazing, frame %u)\n",
+                        frames);
+            std::fflush(stdout);
+        }
         window.swap();
         ++frames;
 
@@ -356,7 +366,7 @@ int main(int argc, char** argv) {
         if (frames > 60u * 60u * 8u) {
             break;
         }
-        if ((xwalk || xwalk_dist) && frames > 16) {
+        if ((xwalk || xwalk_dist) && frames > 20) {
             break; // scripted shots done
         }
     }

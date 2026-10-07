@@ -4342,44 +4342,10 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
         glDisable(GL_BLEND);
         glUseProgram(building_prog);
     }
-    glBindVertexArray(cube_vao);
-    glUniform1i(glGetUniformLocation(building_prog, "uUseTex"), 0);
-    glUniform1i(glGetUniformLocation(building_prog, "uAlphaLeaf"), 0);
-    // Zebra bars sit near-flush (centre +0.02, 0.02 thick: 1 cm embedded, 1 cm
-    // proud) so grazing views show no parallax overshoot past the curb.
-    // Decal-style polygon offset (-2,-2) wins the depth test at ALL distances
-    // (2 cm of height alone is inside depth error at 150-300 m); the offset,
-    // not the height, holds the bars on the asphalt far away.
-    const float stripe_y = kRoadY + 0.02f;
-    glEnable(GL_POLYGON_OFFSET_FILL);
-    glPolygonOffset(-2.f, -2.f);
-    for (u32 j = 0; j <= kCityBlocks; ++j) {
-        for (u32 i = 0; i <= kCityBlocks; ++i) {
-            const float cx = static_cast<float>(i) * kCityBlockPitch;
-            const float cz = static_cast<float>(j) * kCityBlockPitch;
-            // 350 m so distant verification views (150-300 m) keep their bars;
-            // frustum_holds below still gates off-screen junctions.
-            if (!near_xz(float3{cx, 0.f, cz}, camera_pos, 350.f)) {
-                continue;
-            }
-            if (!frustum_holds(&frust, cx, kRoadY + 2.f, cz, 30.f)) {
-                continue;
-            }
-            const float start = kXwalkStart; // 11: just outside the junction box
-            const float span = (static_cast<float>(kXwalkCount) - 1.f) * kXwalkPitch;
-            const float3 xw{0.94f, 0.94f, 0.94f};
-            for (u32 s = 0; s < kXwalkCount; ++s) {
-                const float o = -span * 0.5f + static_cast<float>(s) * kXwalkPitch;
-                // N/S approaches: bars long in Z (with traffic), spaced in X.
-                draw_box(building_prog, float3{cx + o, stripe_y, cz + start + kXwalkLen * 0.5f}, kXwalkThick, 0.02f, kXwalkLen, xw, 0.f);
-                draw_box(building_prog, float3{cx + o, stripe_y, cz - start - kXwalkLen * 0.5f}, kXwalkThick, 0.02f, kXwalkLen, xw, 0.f);
-                // E/W approaches: bars long in X, spaced in Z.
-                draw_box(building_prog, float3{cx + start + kXwalkLen * 0.5f, stripe_y, cz + o}, kXwalkLen, 0.02f, kXwalkThick, xw, 0.f);
-                draw_box(building_prog, float3{cx - start - kXwalkLen * 0.5f, stripe_y, cz + o}, kXwalkLen, 0.02f, kXwalkThick, xw, 0.f);
-            }
-        }
-    }
-    glDisable(GL_POLYGON_OFFSET_FILL);
+    // Zebra lives in the asphalt shader now (street.frag paints the bars from
+    // world position, same footprint: setback 11, barlen 4.5, thick 0.9, pitch
+    // 1.8): road + crosswalk are ONE surface, so no depth conflict is possible.
+    // No stop-line draw_box geometry ever existed; nothing else to bake.
     // NOTE: procedural street furniture (hydrant cylinders, mailbox, bench boxes,
     // shrubs, sign poles) was deleted here — replaced by instanced GLB props.
     static bool logged_detail = false;

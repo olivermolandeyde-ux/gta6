@@ -68,9 +68,40 @@ void main() {
     float edgeLine = (1.0 - step(0.008, abs(ax - 0.355)));
     edgeLine *= (1.0 - max(bandZ, bandX));
 
+    // Baked zebra: the old geometry bars painted from world position
+    // (setback 11.0, barlen 4.5, thick 0.9, pitch 1.8), so road + crosswalk
+    // are ONE surface and no depth conflict is possible. Stripe/zone edges
+    // are fwidth anti-aliased; far away the pattern dissolves into its mean
+    // coverage (0.9/1.8 = 0.5) instead of moire. The |across| < 9.7 clamp
+    // keeps paint off the sidewalk (curb at 10).
+    float zebra = 0.0;
+    {
+        vec2 lp = mod(FragPos.xz + 60.0, 120.0) - 60.0; // signed dist to centreline
+        // N/S arms: zone along z, stripes across x.
+        float az = abs(lp.y);
+        float fwz = fwidth(az) + 1e-4;
+        float zoneNS = smoothstep(11.0 - fwz, 11.0 + fwz, az)
+                     * (1.0 - smoothstep(15.5 - fwz, 15.5 + fwz, az));
+        float fwx = fwidth(lp.x) + 1e-4;
+        float stripeNS = 1.0 - smoothstep(0.9 - fwx, 0.9 + fwx, mod(lp.x + 0.9, 1.8));
+        stripeNS = mix(0.5, stripeNS, 1.0 - smoothstep(0.45, 0.9, fwx));
+        float acrossNS = 1.0 - smoothstep(9.7 - fwx, 9.7 + fwx, abs(lp.x));
+        // E/W arms: mirrored (zone along x, stripes across z).
+        float ax = abs(lp.x);
+        float fwx2 = fwidth(ax) + 1e-4;
+        float zoneEW = smoothstep(11.0 - fwx2, 11.0 + fwx2, ax)
+                     * (1.0 - smoothstep(15.5 - fwx2, 15.5 + fwx2, ax));
+        float fwy = fwidth(lp.y) + 1e-4;
+        float stripeEW = 1.0 - smoothstep(0.9 - fwy, 0.9 + fwy, mod(lp.y + 0.9, 1.8));
+        stripeEW = mix(0.5, stripeEW, 1.0 - smoothstep(0.45, 0.9, fwy));
+        float acrossEW = 1.0 - smoothstep(9.7 - fwy, 9.7 + fwy, abs(lp.y));
+        zebra = max(zoneNS * stripeNS * acrossNS, zoneEW * stripeEW * acrossEW);
+    }
+
     vec3 c = asphalt;
     c = mix(c, yellow, centerDash);
     c = mix(c, white, edgeLine);
+    c = mix(c, vec3(0.94), zebra);
     c *= (0.55 + 0.45 * shadow_at());
 
     float d = length(FragPos.xz - uCamPos.xz);
