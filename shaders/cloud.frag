@@ -11,13 +11,13 @@ void main() {
         discard; // below horizon: leave the clear/sky colour alone
     }
     vec2 plan = dir.xz / max(dir.y, 1e-3);
-    // Layer A: full scale, drifting slowly.
-    vec2 uvA = plan / 900.0 + vec2(0.008, 0.003) * uTime;
+    // Layer A: full scale, drifting slowly (~1.8 m/s at 900 m tiles).
+    vec2 uvA = plan / 900.0 + vec2(0.002, 0.0008) * uTime;
     vec4 tA = texture(uCloudTex, uvA);
     float aA = (uHasAlpha == 1) ? tA.a : dot(tA.rgb, vec3(0.299, 0.587, 0.114));
     // Layer B: ~0.45x scale, UV rotated 90 deg + offset, slower drift, weaker.
     vec2 planB = vec2(-plan.y, plan.x) + vec2(0.37, 0.73);
-    vec2 uvB = planB / (900.0 * 0.45) + vec2(0.008, 0.003) * (uTime * 0.6);
+    vec2 uvB = planB / (900.0 * 0.45) + vec2(0.002, 0.0008) * (uTime * 0.6);
     vec4 tB = texture(uCloudTex, uvB);
     float aB = (uHasAlpha == 1) ? tB.a : dot(tB.rgb, vec3(0.299, 0.587, 0.114));
     vec3 colA = (uHasAlpha == 1) ? tA.rgb : vec3(1.0);
