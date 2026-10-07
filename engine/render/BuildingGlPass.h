@@ -50,6 +50,12 @@ struct BuildingGlPass {
     TreeGlb  shop_glb[3];               // shop_small_variant_a/b/c.glb
     TreeGlb  apartment_glb[3];         // apartment_5story_variant_a/b/c.glb
     TreeGlb  warehouse_glb[3];         // warehouse_industrial_variant_a/b/c.glb
+    // Landmarks: one instanced family each (gas, burger, garage, hotel).
+    TreeGlb  landmark_glb[4];
+    float    landmark_mats[4][kTreeInstanceCap * 16];
+    u32      landmark_n[4];
+    u32      landmarks_loaded; // 0..4 GLB files with valid mesh data
+    u32      lm_cleared;       // mass-placed parcels removed for landmarks
     // Instance matrices for new buildings
     float    shop_mats[kTreeInstanceCap * 16];
     float    apartment_mats[kTreeInstanceCap * 16];

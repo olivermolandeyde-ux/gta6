@@ -1110,6 +1110,11 @@ bool BuildingGlPass::init() {
     corolla_glb.wheel_axis = sports_glb.wheel_axis = suv_glb.wheel_axis = -1;
     std::memset(shop_glb, 0, sizeof(shop_glb));
     std::memset(apartment_glb, 0, sizeof(apartment_glb));
+    std::memset(landmark_glb, 0, sizeof(landmark_glb));
+    for (u32 L = 0; L < 4u; ++L) {
+        landmark_n[L] = 0;
+    }
+    lm_cleared = 0;
     std::memset(&hydrant_glb, 0, sizeof(hydrant_glb));
     std::memset(&bench_glb, 0, sizeof(bench_glb));
     std::memset(&bin_glb, 0, sizeof(bin_glb));
@@ -1744,6 +1749,24 @@ bool BuildingGlPass::init() {
     load_building_model("buildings/warehouse_industrial_variant_b.glb", &warehouse_glb[1], "warehouse_industrial_variant_b");
     load_building_model("buildings/warehouse_industrial_variant_c.glb", &warehouse_glb[2], "warehouse_industrial_variant_c");
 
+    // Landmarks (same loader call as the shops above; emissive signs/neon
+    // come free via tex_emit like shop windows).
+    std::printf("[buildings] --- LANDMARK MODELS ---\n");
+    load_building_model("landmarks/prop_gas_station.glb", &landmark_glb[0], "prop_gas_station");
+    load_building_model("landmarks/prop_burger_joint.glb", &landmark_glb[1], "prop_burger_joint");
+    load_building_model("landmarks/prop_parking_garage.glb", &landmark_glb[2], "prop_parking_garage");
+    load_building_model("landmarks/prop_hotel.glb", &landmark_glb[3], "prop_hotel");
+    const char* landmark_names[4] = {"prop_gas_station", "prop_burger_joint",
+                                     "prop_parking_garage", "prop_hotel"};
+    u32 landmarks_loaded = 0;
+    for (u32 L = 0; L < 4u; ++L) {
+        if (landmark_glb[L].nprims > 0) {
+            ++landmarks_loaded;
+        } else {
+            std::printf("[landmark] missing %s (skipped)\n", landmark_names[L]);
+        }
+    }
+    this->landmarks_loaded = landmarks_loaded;
     // Street props (same loader call as the shops above)
     std::printf("[buildings] --- STREET PROP MODELS ---\n");
     load_building_model("props/prop_hydrant_red.glb", &hydrant_glb, "prop_hydrant_red");
@@ -2935,6 +2958,149 @@ void BuildingGlPass::buildMesh(World& world) {
                 border[b] = border[j];
                 border[j] = t;
             }
+            // Landmarks: deterministic hash spread (gas 5, burger 4, garage 3,
+            // hotel 3). gas = avenue blocks (bx%3==0||bz%3==0, any district);
+            // burger = retail/commercial; garage+hotel = downtown/commercial.
+            // >=3 blocks Chebyshev spacing between any two landmarks. Front
+            // (+Z) faces the nearest street via street_facing_yaw; front edge
+            // 5 m behind the ring inner edge (13 m), centred with jitter.
+            // Scale 1.0 (authored real-size). occ_add first so later parcels
+            // avoid the rect; mass-placed parcels on the block are removed and
+            // intersecting procedurals are marked replaced.
+            lm_cleared = 0;            u32 lm_bx[15], lm_bz[15], lm_n = 0;
+            const u32 lm_want[4] = {5u, 4u, 3u, 3u};
+            const char* lm_tag[4] = {"gas", "burger", "garage", "hotel"};
+            for (u32 L = 0; L < 4u && lm_n < 15u; ++L) {
+                TreeGlb* g = &landmark_glb[L];
+                if (g->nprims == 0) {
+                    continue;
+                }
+                const float fw = g->xmax - g->xmin;
+                const float fd = (g->z_up ? g->ymax - g->ymin : g->zmax - g->zmin);
+                if (fw <= 0.001f || fd <= 0.001f || fw > 98.f || fd > 98.f) {
+                    std::printf("[landmark] footprint violation %s (%.1fx%.1f)\n",
+                                lm_tag[L], static_cast<double>(fw),
+                                static_cast<double>(fd));
+                    continue;
+                }
+                u32 got = 0;
+                for (u32 pass = 0; pass < 2u && got < lm_want[L]; ++pass) {
+                    for (u32 ob = 0; ob < kCityBlocks * kCityBlocks && got < lm_want[L]; ++ob) {
+                    const u32 bx = border[ob] % kCityBlocks;
+                    const u32 bz = border[ob] / kCityBlocks;
+                    u32 votes[6] = {0, 0, 0, 0, 0, 0};
+                    for (u32 i = 0; i < n_fb; ++i) {
+                        if (fb[i].x >= bx * 120.f && fb[i].x < (bx + 1u) * 120.f &&
+                            fb[i].z >= bz * 120.f && fb[i].z < (bz + 1u) * 120.f &&
+                            fb[i].district < 6u) {
+                            ++votes[fb[i].district];
+                        }
+                    }
+                    u32 district = 3u;
+                    u32 best = 0;
+                    for (u32 d = 0; d < 6u; ++d) {
+                        if (votes[d] > best) {
+                            best = votes[d];
+                            district = d;
+                        }
+                    }
+                    bool ok = false;
+                    if (pass == 0u) {
+                        if (L == 0) {
+                            ok = (bx % 3u == 0u || bz % 3u == 0u);
+                        } else if (L == 1) {
+                            ok = (district == kDistrictRetail || district == kDistrictCommercial);
+                        } else {
+                            ok = (district == kDistrictDowntown || district == kDistrictCommercial);
+                        }
+                    } else {
+                        // Fallback: any non-industrial block keeps quotas fillable.
+                        ok = (district != kDistrictIndustrial);
+                    }
+                    if (!ok) {
+                        continue;
+                    }
+                    bool spaced = true;
+                    for (u32 k = 0; k < lm_n; ++k) {
+                        const u32 dx = bx > lm_bx[k] ? bx - lm_bx[k] : lm_bx[k] - bx;
+                        const u32 dz = bz > lm_bz[k] ? bz - lm_bz[k] : lm_bz[k] - bz;
+                        if (dx < 3u && dz < 3u) {
+                            spaced = false;
+                            break;
+                        }
+                    }
+                    if (!spaced) {
+                        continue;
+                    }
+                    const u32 side = h3(bx, bz, 100u + L) % 4u; // 0 N(+z) 1 E 2 S 3 W
+                    const float jit =
+                        static_cast<float>(h3(bx, bz, 200u + L) % 7u) - 3.f;
+                    const float ox = static_cast<float>(bx) * 120.f;
+                    const float oz = static_cast<float>(bz) * 120.f;
+                    float cx = ox + 60.f + jit, cz = oz + 60.f + jit;
+                    if (side == 0u) {
+                        cz = oz + 120.f - 18.f - fd * 0.5f;
+                    } else if (side == 2u) {
+                        cz = oz + 18.f + fd * 0.5f;
+                    } else if (side == 1u) {
+                        cx = ox + 120.f - 18.f - fw * 0.5f;
+                    } else {
+                        cx = ox + 18.f + fw * 0.5f;
+                    }
+                    const float hx = (side == 1u || side == 3u) ? fd * 0.5f : fw * 0.5f;
+                    const float hz = (side == 1u || side == 3u) ? fw * 0.5f : fd * 0.5f;
+                    if (!occ_free(cx, cz, hx, hz)) {
+                        continue;
+                    }
+                    const float yaw = street_facing_yaw(cx, cz);
+                    // Remove mass-placed parcels on this block inside rect+2 m.
+                    float (*pm[3])[kTreeInstanceCap * 16] = {shop_var_mats, apt_var_mats,
+                                                             whs_var_mats};
+                    u32* pn[3] = {shop_var_n, apt_var_n, whs_var_n};
+                    for (u32 t = 0; t < 3u; ++t) {
+                        for (u32 v = 0; v < 3u; ++v) {
+                            u32 i = 0;
+                            while (i < pn[t][v]) {
+                                const float* m = &pm[t][v][i * 16];
+                                const float px = m[12], pz = m[14];
+                                if (px >= ox && px < ox + 120.f && pz >= oz && pz < oz + 120.f &&
+                                    std::fabs(px - cx) < hx + 2.f &&
+                                    std::fabs(pz - cz) < hz + 2.f) {
+                                    // Swap-remove parcel instance (copy full matrix).
+                                    for (u32 k = 0; k < 16u; ++k) {
+                                        pm[t][v][i * 16 + k] =
+                                            pm[t][v][(pn[t][v] - 1u) * 16 + k];
+                                    }
+                                    --pn[t][v];
+                                    ++lm_cleared;
+                                } else {
+                                    ++i;
+                                }
+                            }
+                        }
+                    }
+                    // Skip procedurals intersecting rect+2 m (no draw).
+                    for (u32 i = 0; i < n_fb; ++i) {
+                        if (std::fabs(fb[i].x - cx) < fb[i].hw + hx + 2.f &&
+                            std::fabs(fb[i].z - cz) < fb[i].hd + hz + 2.f) {
+                            mark_replaced_building(fb[i].id);
+                        }
+                    }
+                    const float y = kTopY + 0.01f - tree_up_min(g);
+                    tree_yaw_mat(&landmark_mats[L][landmark_n[L] * 16], cx, y, cz, yaw,
+                                 1.f, g->z_up);
+                    ++landmark_n[L];
+                    occ_add(cx, cz, hx, hz);
+                    lm_bx[lm_n] = bx;
+                    lm_bz[lm_n] = bz;
+                    ++lm_n;
+                    ++got;
+                    std::printf("[landmark] %s #%u block=(%u,%u) pos=(%.1f,%.1f) yaw=%.2f side=%u\n",
+                                lm_tag[L], got, bx, bz, static_cast<double>(cx),
+                                static_cast<double>(cz), static_cast<double>(yaw), side);
+                    } // ob
+                } // pass
+            }
             for (u32 ob = 0; ob < kCityBlocks * kCityBlocks; ++ob) {
                 const u32 bx = border[ob] % kCityBlocks;
                 const u32 bz = border[ob] / kCityBlocks;
@@ -3106,6 +3272,36 @@ void BuildingGlPass::buildMesh(World& world) {
             if (warehouse_glb[v].nprims > 0) {
                 tree_glb_set_instances(&warehouse_glb[v], whs_var_mats[v], whs_var_n[v]);
             }
+        }
+        for (u32 L = 0; L < 4u; ++L) {
+            if (landmark_glb[L].nprims > 0) {
+                tree_glb_set_instances(&landmark_glb[L], landmark_mats[L], landmark_n[L]);
+            }
+        }
+        // Landmark audit: uniform scale exactly 1.0, Y grounded on the slab.
+        {
+            u32 lm_viol = 0;
+            for (u32 L = 0; L < 4u; ++L) {
+                TreeGlb* g = &landmark_glb[L];
+                if (g->nprims == 0) {
+                    continue;
+                }
+                const float y_exp = kTopY + 0.01f - tree_up_min(g);
+                for (u32 i = 0; i < landmark_n[L]; ++i) {
+                    const float* m = &landmark_mats[L][i * 16];
+                    const float sx = std::sqrt(m[0] * m[0] + m[1] * m[1] + m[2] * m[2]);
+                    const float sy = std::sqrt(m[4] * m[4] + m[5] * m[5] + m[6] * m[6]);
+                    const float sz = std::sqrt(m[8] * m[8] + m[9] * m[9] + m[10] * m[10]);
+                    if (std::fabs(sx - 1.f) > 0.001f || std::fabs(sy - 1.f) > 0.001f ||
+                        std::fabs(sz - 1.f) > 0.001f || std::fabs(m[13] - y_exp) > 0.02f) {
+                        ++lm_viol;
+                    }
+                }
+            }
+            std::printf("[landmark] loaded %u/4, instances gas=%u burger=%u garage=%u hotel=%u, cleared=%u parcels, audit_viol=%u\n",
+                        landmarks_loaded, landmark_n[0], landmark_n[1], landmark_n[2],
+                        landmark_n[3], lm_cleared, lm_viol);
+            std::fflush(stdout);
         }
         // Row base indices: audit below skips these debug instances.
         u32 row_base_n[3][3];
@@ -4296,6 +4492,12 @@ void BuildingGlPass::draw(World& world, float3 camera_pos, float3 camera_target,
             }
             if (warehouse_glb[v].instance_count > 0) {
                 draw_instanced_glb(&warehouse_glb[v], tree_prog);
+            }
+        }
+        // Landmarks: same opaque instanced slot (4 extra draw calls max).
+        for (u32 L = 0; L < 4u; ++L) {
+            if (landmark_glb[L].instance_count > 0) {
+                draw_instanced_glb(&landmark_glb[L], tree_prog);
             }
         }
         // Street props ride the same opaque instanced pass (uNightGlow off).

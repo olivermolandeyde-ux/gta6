@@ -55,6 +55,7 @@ int main(int argc, char** argv) {
     bool bldg_row = false;
     bool xwalk = false;
     bool xwalk_dist = false;
+    bool xwalk_lm = false;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--once") == 0) {
             forever = false;
@@ -67,6 +68,9 @@ int main(int argc, char** argv) {
         }
         if (std::strcmp(argv[i], "--xwalk-dist") == 0) {
             xwalk_dist = true;
+        }
+        if (std::strcmp(argv[i], "--landmark") == 0) {
+            xwalk_lm = true;
         }
     }
 
@@ -259,9 +263,39 @@ int main(int argc, char** argv) {
                 terrain.cameraPos    = float3{600.f, 6.0f, 545.f};
                 terrain.cameraTarget = float3{600.f, 5.2f, 612.f};
             }
+        } else if (xwalk_lm) {
+            // Landmark tour (positions from the [landmark] placement log):
+            // aerial cluster, then street-level fronts (camera on the street
+            // the front faces, looking at the landmark).
+            if (frames < 8) {
+                // Low chase: gas#4 canopy (1139,626) near, garage#1
+                // (1263,985) mid, hotel#2 towers (1289,1381) far.
+                terrain.cameraPos    = float3{1150.f, 60.f, 550.f};
+                terrain.cameraTarget = float3{1270.f, 10.f, 1100.f};
+            } else if (frames < 12) {
+                terrain.cameraPos    = float3{57.f, 6.7f, 1680.f};
+                terrain.cameraTarget = float3{57.f, 9.f, 1654.f};
+            } else if (frames < 16) {
+                terrain.cameraPos    = float3{782.f, 6.7f, 1440.f};
+                terrain.cameraTarget = float3{782.f, 8.f, 1415.f};
+            } else if (frames < 20) {
+                // Garage#3 oblique from the EW road (stays on asphalt).
+                terrain.cameraPos    = float3{860.f, 7.f, 1080.f};
+                terrain.cameraTarget = float3{903.f, 10.f, 1054.f};
+            } else {
+                terrain.cameraPos    = float3{1330.f, 6.7f, 1381.f};
+                terrain.cameraTarget = float3{1289.f, 10.f, 1381.f};
+            }
         }
 
         world.begin_frame(frames);
+        // Landmark street shots at dusk (before the sky update so the sun
+        // follows); aerial stays day. Dusk => emissive signs read.
+        if (xwalk_lm) {
+            if (SkyComponent* s = find_sky(world)) {
+                s->time_of_day = (frames < 8) ? 12.f : 20.5f;
+            }
+        }
         UpdateSkySystem(world, dt, world.frame_commands());
         UpdateCloudSystem(world, dt, world.frame_commands());
         SkyComponent* sky_now = find_sky(world);
@@ -340,6 +374,36 @@ int main(int argc, char** argv) {
                         frames);
             std::fflush(stdout);
         }
+        if (xwalk_lm && frames == 6) {
+            save_screenshot_ppm("build/lm_aerial.ppm", terrain.width, terrain.height);
+            std::printf("[city] screenshot: build/lm_aerial.ppm (landmarks aerial, frame %u)\n",
+                        frames);
+            std::fflush(stdout);
+        }
+        if (xwalk_lm && frames == 10) {
+            save_screenshot_ppm("build/lm_gas.ppm", terrain.width, terrain.height);
+            std::printf("[city] screenshot: build/lm_gas.ppm (gas station, frame %u)\n",
+                        frames);
+            std::fflush(stdout);
+        }
+        if (xwalk_lm && frames == 14) {
+            save_screenshot_ppm("build/lm_burger.ppm", terrain.width, terrain.height);
+            std::printf("[city] screenshot: build/lm_burger.ppm (burger joint, frame %u)\n",
+                        frames);
+            std::fflush(stdout);
+        }
+        if (xwalk_lm && frames == 18) {
+            save_screenshot_ppm("build/lm_garage.ppm", terrain.width, terrain.height);
+            std::printf("[city] screenshot: build/lm_garage.ppm (parking garage, frame %u)\n",
+                        frames);
+            std::fflush(stdout);
+        }
+        if (xwalk_lm && frames == 22) {
+            save_screenshot_ppm("build/lm_hotel.ppm", terrain.width, terrain.height);
+            std::printf("[city] screenshot: build/lm_hotel.ppm (hotel, frame %u)\n",
+                        frames);
+            std::fflush(stdout);
+        }
         window.swap();
         ++frames;
 
@@ -366,7 +430,7 @@ int main(int argc, char** argv) {
         if (frames > 60u * 60u * 8u) {
             break;
         }
-        if ((xwalk || xwalk_dist) && frames > 20) {
+        if ((xwalk || xwalk_dist || xwalk_lm) && frames > 24) {
             break; // scripted shots done
         }
     }
